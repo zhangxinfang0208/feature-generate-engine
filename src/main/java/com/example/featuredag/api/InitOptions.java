@@ -1,0 +1,90 @@
+package com.example.featuredag.api;
+
+import com.example.featuredag.definition.EntityScope;
+import com.example.featuredag.physical.ExecutionEnvironment;
+
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+public final class InitOptions {
+    private final ExecutionEnvironment environment;
+    private final String planId;
+    private final Set<String> targetFeatures;
+    private final Map<String, Set<EntityScope>> rawFeatureScopes;
+
+    private InitOptions(Builder builder) {
+        this.environment = Objects.requireNonNull(builder.environment, "environment");
+        this.planId = blankToNull(builder.planId);
+        this.targetFeatures = Collections.unmodifiableSet(
+                new LinkedHashSet<>(builder.targetFeatures));
+        Map<String, Set<EntityScope>> scopes = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<EntityScope>> entry : builder.rawFeatureScopes.entrySet()) {
+            String name = requireText(entry.getKey(), "raw feature scope name");
+            scopes.put(name, Collections.unmodifiableSet(
+                    new LinkedHashSet<>(Objects.requireNonNull(entry.getValue(), "scope set"))));
+        }
+        this.rawFeatureScopes = Collections.unmodifiableMap(scopes);
+    }
+
+    public static Builder builder() { return new Builder(); }
+
+    public static InitOptions offline(String planId) {
+        return builder().environment(ExecutionEnvironment.OFFLINE).planId(planId).build();
+    }
+
+    public static InitOptions online(String planId) {
+        return builder().environment(ExecutionEnvironment.ONLINE).planId(planId).build();
+    }
+
+    public ExecutionEnvironment environment() { return environment; }
+    public String planId() { return planId; }
+    public Set<String> targetFeatures() { return targetFeatures; }
+    public Map<String, Set<EntityScope>> rawFeatureScopes() { return rawFeatureScopes; }
+
+    private static String blankToNull(String value) {
+        if (value == null) return null;
+        String result = value.trim();
+        return result.isEmpty() ? null : result;
+    }
+
+    private static String requireText(String value, String field) {
+        String result = blankToNull(value);
+        if (result == null) throw new IllegalArgumentException(field + " must not be blank");
+        return result;
+    }
+
+    public static final class Builder {
+        private ExecutionEnvironment environment;
+        private String planId;
+        private final Set<String> targetFeatures = new LinkedHashSet<>();
+        private final Map<String, Set<EntityScope>> rawFeatureScopes = new LinkedHashMap<>();
+
+        public Builder environment(ExecutionEnvironment value) {
+            this.environment = value;
+            return this;
+        }
+
+        public Builder planId(String value) {
+            this.planId = value;
+            return this;
+        }
+
+        public Builder targetFeatures(Set<String> values) {
+            this.targetFeatures.clear();
+            if (values != null) this.targetFeatures.addAll(values);
+            return this;
+        }
+
+        public Builder rawFeatureScopes(Map<String, Set<EntityScope>> values) {
+            this.rawFeatureScopes.clear();
+            if (values != null) this.rawFeatureScopes.putAll(values);
+            return this;
+        }
+
+        public InitOptions build() { return new InitOptions(this); }
+    }
+}

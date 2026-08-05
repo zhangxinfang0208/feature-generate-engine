@@ -1,0 +1,252 @@
+package com.example.featuredag.expression;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Small dependency-free parser for function-style feature expressions.
+ * Supported examples:
+ *   count(extractIndustry(user_seq1, item_industry))
+ *   normalize(coalesce(user_click_count, 0), {"method":"min_max","min":0,"max":100})
+ */
+public final class ExpressionParser {
+
+    public AstNode parse(String expression) {
+        if (expression == null || expression.isBlank()) {
+            throw new ExpressionParseException("Expression must not be blank");
+        }
+        Parser parser = new Parser(expression);
+        AstNode result = parser.parseExpression();
+        parser.expect(TokenType.EOF);
+        return result;
+    }
+
+    private enum TokenType {
+        IDENTIFIER,
+        NUMBER,
+        STRING,
+        LPAREN,
+        RPAREN,
+        LBRACE,
+        RBRACE,
+        COMMA,
+        COLON,
+        EOF
+    }
+
+    private record Token(TokenType type, String text, int start, int end) {}
+
+    private static final class Lexer {
+        private final String source;
+        private int index;
+
+        private Lexer(String source) {
+            this.source = source;
+        }
+
+        Token next() {
+            skipWhitespace();
+            if (index >= source.length()) {
+                return new Token(TokenType.EOF, "", index, index);
+            }
+            int start = index;
+            char ch = source.charAt(index);
+            return switch (ch) {
+                case '(' -> single(TokenType.LPAREN);
+                case ')' -> single(TokenType.RPAREN);
+                case '{' -> single(TokenType.LBRACE);
+                case '}' -> single(TokenType.RBRACE);
+                case ',' -> single(TokenType.COMMA);
+                case ':' -> single(TokenType.COLON);
+                case '"', '\'' -> stringToken(ch);
+                default -> {
+                    if (isIdentifierStart(ch)) yield identifierToken();
+                    if (Character.isDigit(ch) || (ch == '-' && index + 1 < source.length()
+                            && Character.isDigit(source.charAt(index + 1)))) {
+                        yield numberToken();
+                    }
+                    throw error("Unexpected character '" + ch + "'", start);
+                }
+            };
+        }
+
+        private Token single(TokenType type) {
+            int start = index++;
+            return new Token(type, source.substring(start, index), start, index);
+        }
+
+        private Token identifierToken() {
+            int start = index++;
+            while (index < source.length()) {
+                char ch = source.charAt(index);
+                if (!Character.isLetterOrDigit(ch) && ch != '_' && ch != '.') break;
+                index++;
+            }
+            return new Token(TokenType.IDENTIFIER, source.substring(start, index), start, index);
+        }
+
+        private Token numberToken() {
+            int start = index;
+            if (source.charAt(index) == '-') index++;
+            boolean dotSeen = false;
+            while (index < source.length()) {
+                char ch = source.charAt(index);
+                if (Character.isDigit(ch)) {
+                    index++;
+                } else if (ch == '.' && !dotSeen) {
+                    dotSeen = true;
+                    index++;
+                } else {
+                    break;
+                }
+            }
+            return new Token(TokenType.NUMBER, source.substring(start, index), start, index);
+        }
+
+        private Token stringToken(char quote) {
+            int start = index++;
+            StringBuilder value = new StringBuilder();
+            while (index < source.length()) {
+                char ch = source.charAt(index++);
+                if (ch == quote) {
+                    return new Token(TokenType.STRING, value.toString(), start, index);
+                }
+                if (ch == '\\') {
+                    if (index >= source.length()) throw error("Unterminated escape sequence", index);
+                    char escaped = source.charAt(index++);
+                    value.append(switch (escaped) {
+                        case 'n' -> '\n';
+                        case 'r' -> '\r';
+                        case 't' -> '\t';
+                        case '\\' -> '\\';
+                        case '"' -> '"';
+                        case '\'' -> '\'';
+                        default -> escaped;
+                    });
+                } else {
+                    value.append(ch);
+                }
+            }
+            throw error("Unterminated string literal", start);
+        }
+
+        private void skipWhitespace() {
+            while (index < source.length() && Character.isWhitespace(source.charAt(index))) index++;
+        }
+
+        private static boolean isIdentifierStart(char ch) {
+            return Character.isLetter(ch) || ch == '_';
+        }
+
+        private ExpressionParseException error(String message, int position) {
+            return new ExpressionParseException(message + " at offset " + position + " in: " + source);
+        }
+    }
+
+    private static final class Parser {
+        private final String source;
+        private final Lexer lexer;
+        private Token current;
+
+        private Parser(String source) {
+            this.source = source;
+            this.lexer = new Lexer(source);
+            this.current = lexer.next();
+        }
+
+        private AstNode parseExpression() {
+            return switch (current.type()) {
+                case IDENTIFIER -> parseIdentifierOrCall();
+                case NUMBER -> parseNumber();
+                case STRING -> parseString();
+                case LBRACE -> parseObject();
+                default -> throw error("Expected expression but found " + current.type());
+            };
+        }
+
+        private AstNode parseIdentifierOrCall() {
+            Token identifier = consume(TokenType.IDENTIFIER);
+            if (current.type() == TokenType.LPAREN) {
+                consume(TokenType.LPAREN);
+                List<AstNode> arguments = new ArrayList<>();
+                if (current.type() != TokenType.RPAREN) {
+                    do {
+                        arguments.add(parseExpression());
+                        if (current.type() != TokenType.COMMA) break;
+                        consume(TokenType.COMMA);
+                    } while (true);
+                }
+                Token end = consume(TokenType.RPAREN);
+                return new AstCall(identifier.text(), arguments, new SourceSpan(identifier.start(), end.end()));
+            }
+            return switch (identifier.text()) {
+                case "true" -> new AstLiteral(Boolean.TRUE, new SourceSpan(identifier.start(), identifier.end()));
+                case "false" -> new AstLiteral(Boolean.FALSE, new SourceSpan(identifier.start(), identifier.end()));
+                case "null" -> new AstLiteral(null, new SourceSpan(identifier.start(), identifier.end()));
+                default -> new AstFeatureRef(identifier.text(), new SourceSpan(identifier.start(), identifier.end()));
+            };
+        }
+
+        private AstNode parseNumber() {
+            Token token = consume(TokenType.NUMBER);
+            Object value;
+            try {
+                value = token.text().contains(".")
+                        ? Double.parseDouble(token.text())
+                        : Integer.parseInt(token.text());
+            } catch (NumberFormatException ex) {
+                throw error("Invalid numeric literal: " + token.text());
+            }
+            return new AstLiteral(value, new SourceSpan(token.start(), token.end()));
+        }
+
+        private AstNode parseString() {
+            Token token = consume(TokenType.STRING);
+            return new AstLiteral(token.text(), new SourceSpan(token.start(), token.end()));
+        }
+
+        private AstNode parseObject() {
+            Token start = consume(TokenType.LBRACE);
+            Map<String, AstNode> fields = new LinkedHashMap<>();
+            if (current.type() != TokenType.RBRACE) {
+                do {
+                    Token key;
+                    if (current.type() == TokenType.STRING) {
+                        key = consume(TokenType.STRING);
+                    } else if (current.type() == TokenType.IDENTIFIER) {
+                        key = consume(TokenType.IDENTIFIER);
+                    } else {
+                        throw error("Expected object key");
+                    }
+                    consume(TokenType.COLON);
+                    fields.put(key.text(), parseExpression());
+                    if (current.type() != TokenType.COMMA) break;
+                    consume(TokenType.COMMA);
+                } while (true);
+            }
+            Token end = consume(TokenType.RBRACE);
+            return new AstObjectLiteral(fields, new SourceSpan(start.start(), end.end()));
+        }
+
+        private Token consume(TokenType expected) {
+            if (current.type() != expected) {
+                throw error("Expected " + expected + " but found " + current.type());
+            }
+            Token token = current;
+            current = lexer.next();
+            return token;
+        }
+
+        private void expect(TokenType expected) {
+            if (current.type() != expected) {
+                throw error("Expected " + expected + " but found " + current.type());
+            }
+        }
+
+        private ExpressionParseException error(String message) {
+            return new ExpressionParseException(message + " at offset " + current.start() + " in: " + source);
+        }
+    }
+}

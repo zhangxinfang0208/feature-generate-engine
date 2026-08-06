@@ -72,6 +72,7 @@ public final class DagEngineSelfTest {
         testExtendedExpressionParsing();
         testArrayLiteralDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
+        testBusinessOperatorRegistry();
         testBusinessJsonParsing();
         testUnifiedFeatureJsonParsing();
         testLegacyDerivedFeaturesRejected();
@@ -219,6 +220,159 @@ public final class DagEngineSelfTest {
                 () -> FeatureConfigMapper.map(config, ExecutionEnvironment.OFFLINE, Set.of(), Map.of()));
         assert error.getMessage().contains("hidden") && error.getMessage().contains("disabled")
                 : error.getMessage();
+    }
+
+    private static void testBusinessOperatorRegistry() {
+        List<String> names = List.of(
+                "64", "find_list_index_typed", "list_index_typed",
+                "greater_in_sequence_typed", "greater_than_index_typed", "reverse_typed",
+                "slice_v3_typed", "intersection_typed", "uniq_key_index", "list_2_map",
+                "thf_default_", "value2key", "k2v", "k2v_f", "v2v", "multi_v2",
+                "sub", "add", "sign", "list_multi", "div_num", "round", "dis2xl",
+                "default_key_if", "discrete", "log_base", "slice_by_indices",
+                "find_indices", "get_seq_length", "count_distinct", "zip_concat",
+                "calc_delta_seq");
+        Map<String, List<Integer>> arities = Map.ofEntries(
+                Map.entry("64", List.of(1, 1)),
+                Map.entry("find_list_index_typed", List.of(2, 2)),
+                Map.entry("list_index_typed", List.of(2, 2)),
+                Map.entry("greater_in_sequence_typed", List.of(3, 3)),
+                Map.entry("greater_than_index_typed", List.of(3, 3)),
+                Map.entry("reverse_typed", List.of(1, 1)),
+                Map.entry("slice_v3_typed", List.of(2, 2)),
+                Map.entry("intersection_typed", List.of(2, 2)),
+                Map.entry("uniq_key_index", List.of(1, 1)),
+                Map.entry("list_2_map", List.of(2, 2)),
+                Map.entry("thf_default_", List.of(2, 2)),
+                Map.entry("value2key", List.of(1, 1)),
+                Map.entry("k2v", List.of(1, 1)),
+                Map.entry("k2v_f", List.of(1, 1)),
+                Map.entry("v2v", List.of(1, 1)),
+                Map.entry("multi_v2", List.of(1, 1)),
+                Map.entry("sub", List.of(2, 2)),
+                Map.entry("add", List.of(2, Integer.MAX_VALUE)),
+                Map.entry("sign", List.of(1, 1)),
+                Map.entry("list_multi", List.of(3, 3)),
+                Map.entry("div_num", List.of(2, 2)),
+                Map.entry("round", List.of(1, 1)),
+                Map.entry("dis2xl", List.of(2, 2)),
+                Map.entry("default_key_if", List.of(2, 2)),
+                Map.entry("discrete", List.of(2, 2)),
+                Map.entry("log_base", List.of(3, 3)),
+                Map.entry("slice_by_indices", List.of(2, 2)),
+                Map.entry("find_indices", List.of(2, 2)),
+                Map.entry("get_seq_length", List.of(1, 1)),
+                Map.entry("count_distinct", List.of(1, 1)),
+                Map.entry("zip_concat", List.of(2, Integer.MAX_VALUE)),
+                Map.entry("calc_delta_seq", List.of(2, 2)));
+
+        OperatorRegistry registry = OperatorRegistry.standard();
+        for (String name : names) {
+            OperatorDefinition definition = registry.require(name);
+            assert definition != null : name;
+            assert definition.minArguments() == arities.get(name).get(0)
+                    : name + " min arity=" + definition.minArguments();
+            assert definition.maxArguments() == arities.get(name).get(1)
+                    : name + " max arity=" + definition.maxArguments();
+        }
+
+        assert ((Number) registry.evaluate("add", List.of(1, 2, 3))).doubleValue() == 6.0;
+        assert ((Number) registry.evaluate("sub", List.of(5, 2))).doubleValue() == 3.0;
+        assert registry.evaluate("sign", List.of(-5)).equals(-1);
+        assert ((Number) registry.evaluate("div_num", List.of(9, Map.of("divisor", 2))))
+                .doubleValue() == 4.5;
+        assert registry.evaluate("round", List.of(4.6)).equals(5);
+        assert Math.abs(((Number) registry.evaluate("log_base", List.of(8, 2, 1000)))
+                .doubleValue() - 3.0) < 1e-9;
+        assert Math.abs(((Number) registry.evaluate("log_base", List.of(2000, 10, 1000)))
+                .doubleValue() - 3.0) < 1e-9;
+        assert registry.evaluate("calc_delta_seq", List.of(List.of(2, 5, 9), 10))
+                .equals(List.of(8.0, 5.0, 1.0));
+
+        IllegalArgumentException zeroDivisor = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate("div_num", List.of(9, Map.of("divisor", 0))));
+        assert zeroDivisor.getMessage().contains("divisor") : zeroDivisor.getMessage();
+        IllegalArgumentException invalidBase = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate("log_base", List.of(8, 1, 1000)));
+        assert invalidBase.getMessage().contains("base") : invalidBase.getMessage();
+        UnsupportedOperationException sequenceDelta = expectThrows(
+                UnsupportedOperationException.class,
+                () -> registry.evaluate("calc_delta_seq", List.of(sequence(), 10)));
+        assert sequenceDelta.getMessage().contains("calc_delta_seq") : sequenceDelta.getMessage();
+
+        List<FeatureDefinition> inferenceDefinitions = new ArrayList<>(List.of(
+                FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 0.0),
+                FeatureDefinition.raw("b", DataType.DOUBLE, EntityScope.USER, 0.0),
+                FeatureDefinition.raw("c", DataType.DOUBLE, EntityScope.SCENE, 0.0),
+                FeatureDefinition.raw("target", DataType.INT, EntityScope.ITEM, 0),
+                FeatureDefinition.raw("seq", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                FeatureDefinition.raw("seq2", DataType.EVENT_SEQUENCE, EntityScope.ITEM, null),
+                FeatureDefinition.raw("mapping", DataType.OBJECT, EntityScope.SCENE, Map.of())));
+        inferenceDefinitions.addAll(List.of(
+                FeatureDefinition.derived(
+                        "cast64", DataType.DOUBLE, "64(a)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "matching_indices", DataType.INT,
+                        "find_list_index_typed(seq, target)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "sliced", DataType.EVENT_SEQUENCE,
+                        "slice_v3_typed({\"start\": 2})(seq)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "mapped", DataType.OBJECT, "list_2_map(seq, seq2)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "defaulted", DataType.EVENT_SEQUENCE,
+                        "thf_default_(mapping, seq)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "float_sequence", DataType.DOUBLE, "k2v_f(seq)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "sum", DataType.DOUBLE, "add(a, b, c)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "product_sequence", DataType.DOUBLE,
+                        "list_multi(seq, seq2, {\"multi_factor\": -1})", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "bucket", DataType.INT, "discrete(a, [1, 10, 100])", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "indexed_slice", DataType.EVENT_SEQUENCE,
+                        "slice_by_indices(seq, [1, 3])", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "zipped", DataType.STRING, "zip_concat(seq, seq2)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "delta", DataType.DOUBLE, "calc_delta_seq(seq, a)", OutputPolicy.OUTPUT)));
+
+        LogicalDag inferenceDag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                inferenceDefinitions,
+                linkedSet(
+                        "cast64", "matching_indices", "sliced", "mapped", "defaulted",
+                        "float_sequence", "sum", "product_sequence", "bucket",
+                        "indexed_slice", "zipped", "delta"));
+        assertOutput(inferenceDag, "cast64", DataType.DOUBLE, ValueShape.SCALAR);
+        assertOutput(inferenceDag, "matching_indices", DataType.INT, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "sliced", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "mapped", DataType.OBJECT, ValueShape.OBJECT);
+        assertOutput(inferenceDag, "defaulted", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "float_sequence", DataType.DOUBLE, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "sum", DataType.DOUBLE, ValueShape.SCALAR);
+        assert inferenceDag.featureOutput("sum").entityScopes()
+                .equals(Set.of(EntityScope.ITEM, EntityScope.USER, EntityScope.SCENE))
+                : inferenceDag.featureOutput("sum").entityScopes();
+        assertOutput(inferenceDag, "product_sequence", DataType.DOUBLE, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "bucket", DataType.INT, ValueShape.SCALAR);
+        assertOutput(inferenceDag, "indexed_slice", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "zipped", DataType.STRING, ValueShape.SEQUENCE);
+        assertOutput(inferenceDag, "delta", DataType.DOUBLE, ValueShape.SEQUENCE);
+    }
+
+    private static void assertOutput(
+            LogicalDag dag,
+            String featureName,
+            DataType outputType,
+            ValueShape valueShape) {
+        assert dag.featureOutput(featureName).outputType() == outputType
+                : featureName + " type=" + dag.featureOutput(featureName).outputType();
+        assert dag.featureOutput(featureName).valueShape() == valueShape
+                : featureName + " shape=" + dag.featureOutput(featureName).valueShape();
     }
 
     private static void testBusinessJsonParsing() {

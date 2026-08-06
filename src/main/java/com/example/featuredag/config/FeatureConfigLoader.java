@@ -23,7 +23,12 @@ public final class FeatureConfigLoader {
             throw new IllegalArgumentException("Feature config JSON must not be blank");
         }
         try {
-            return OBJECT_MAPPER.readValue(json, FeatureSetConfig.class);
+            FeatureSetConfig config = OBJECT_MAPPER.readValue(json, FeatureSetConfig.class);
+            if (config.additionalProperties().containsKey("derivedFeatures")) {
+                throw new IllegalArgumentException(
+                        "Obsolete top-level property derivedFeatures is not supported; use features");
+            }
+            return config;
         } catch (JsonProcessingException error) {
             throw new IllegalArgumentException(
                     "Invalid feature config JSON: " + error.getOriginalMessage(), error);

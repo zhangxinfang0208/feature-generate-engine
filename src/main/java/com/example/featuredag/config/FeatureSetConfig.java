@@ -10,10 +10,7 @@ import java.util.Map;
 
 public final class FeatureSetConfig {
     @JsonProperty("features")
-    private List<RawFeatureConfig> features = List.of();
-
-    @JsonProperty("derivedFeatures")
-    private List<DerivedFeatureConfig> derivedFeatures = List.of();
+    private List<FeatureConfig> features = List.of();
 
     @JsonProperty("feature_set_name")
     private String featureSetName;
@@ -23,12 +20,8 @@ public final class FeatureSetConfig {
 
     private final Map<String, Object> additionalProperties = new LinkedHashMap<>();
 
-    public List<RawFeatureConfig> features() {
+    public List<FeatureConfig> features() {
         return features == null ? List.of() : List.copyOf(features);
-    }
-
-    public List<DerivedFeatureConfig> derivedFeatures() {
-        return derivedFeatures == null ? List.of() : List.copyOf(derivedFeatures);
     }
 
     public String featureSetName() {

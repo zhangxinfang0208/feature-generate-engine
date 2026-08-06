@@ -11,7 +11,7 @@ import com.example.featuredag.config.FeatureConfigLoader;
 import com.example.featuredag.config.FeatureConfigMapper;
 import com.example.featuredag.config.FeatureSetConfig;
 import com.example.featuredag.config.MappedFeatureSet;
-import com.example.featuredag.config.RawFeatureConfig;
+import com.example.featuredag.config.FeatureConfig;
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.FeatureDefinition;
@@ -60,6 +60,8 @@ import java.util.stream.IntStream;
 public final class DagEngineSelfTest {
     public static void main(String[] args) throws Exception {
         testBusinessJsonParsing();
+        testUnifiedFeatureJsonParsing();
+        testLegacyDerivedFeaturesRejected();
         testIntermediateFeatureMapping();
         testOfflinePublicApi();
         testConfigPathInit();
@@ -142,11 +144,11 @@ public final class DagEngineSelfTest {
                     "is_feedback": "true",
                     "entity_scopes": ["ITEM"],
                     "future_business_field": "kept"
-                  }],
-                  "derivedFeatures": [{
+                  }, {
                     "name": "price_present",
                     "store_name": "price_present_out",
                     "type": "STRING",
+                    "definition_type": "DERIVED",
                     "expression": "coalesce(price_type1, \\\"missing\\\")",
                     "to_use": true,
                     "output_policy": "OUTPUT",
@@ -158,15 +160,45 @@ public final class DagEngineSelfTest {
                 """;
 
         FeatureSetConfig config = FeatureConfigLoader.load(json);
-        assert config.features().size() == 1 : config.features();
-        RawFeatureConfig raw = config.features().getFirst();
+        assert config.features().size() == 2 : config.features();
+        FeatureConfig raw = config.features().getFirst();
         assert raw.name().equals("price_type1") : raw.name();
         assert raw.rawName().equals("price_type") : raw.rawName();
         assert Boolean.TRUE.equals(raw.isFeedback()) : raw.isFeedback();
         assert raw.additionalProperties().get("future_business_field").equals("kept")
                 : raw.additionalProperties();
-        assert config.derivedFeatures().getFirst().outputPolicy().equals("OUTPUT");
+        assert config.features().get(1).outputPolicy().equals("OUTPUT");
         assert config.featureSetName().equals(" test_001 ") : config.featureSetName();
+    }
+
+    private static void testUnifiedFeatureJsonParsing() {
+        FeatureSetConfig config = FeatureConfigLoader.load("""
+                {
+                  "features": [
+                    {"name":"price","raw_name":"raw_price","type":"DOUBLE",
+                     "definition_type":null,"value_shape":"SCALAR","future_business_field":"kept"},
+                    {"name":"price_score","type":"DOUBLE","definition_type":"DERIVED",
+                     "expression":"multiply(price, price)","output_policy":"OUTPUT"}
+                  ],
+                  "feature_set_name":"test_001","version":"latest"
+                }
+                """);
+        assert config.features().size() == 2 : config.features();
+        FeatureConfig base = config.features().getFirst();
+        assert base.definitionType() == null : base.definitionType();
+        assert base.valueShape().equals("SCALAR") : base.valueShape();
+        assert base.additionalProperties().get("future_business_field").equals("kept");
+        assert config.features().get(1).expression().equals("multiply(price, price)");
+    }
+
+    private static void testLegacyDerivedFeaturesRejected() {
+        IllegalArgumentException error = expectThrows(
+                IllegalArgumentException.class,
+                () -> FeatureConfigLoader.load("""
+                        {"features":[],"derivedFeatures":[],
+                         "feature_set_name":"legacy","version":"latest"}
+                        """));
+        assert error.getMessage().contains("derivedFeatures") : error.getMessage();
     }
 
     private static void testIntermediateFeatureMapping() {
@@ -216,13 +248,12 @@ public final class DagEngineSelfTest {
                       "dft": 0.0,
                       "to_use": true,
                       "order": 2
-                    }
-                  ],
-                  "derivedFeatures": [
+                    },
                     {
                       "name": "normalized_price",
                       "store_name": "normalized_price",
                       "type": "DOUBLE",
+                      "definition_type": "DERIVED",
                       "expression": "normalize(price, {\\\"method\\\":\\\"min_max\\\",\\\"min\\\":0,\\\"max\\\":1000})",
                       "to_use": true,
                       "output_policy": "INTERNAL_ONLY",
@@ -232,6 +263,7 @@ public final class DagEngineSelfTest {
                       "name": "price_score",
                       "store_name": "price_score_out",
                       "type": "DOUBLE",
+                      "definition_type": "DERIVED",
                       "expression": "multiply(normalized_price, quality_score)",
                       "to_use": true,
                       "output_policy": "OUTPUT",
@@ -336,18 +368,18 @@ public final class DagEngineSelfTest {
                     {"name":"user_click_count","raw_name":"user_click_count","type":"INT","dft":0,"entity_scopes":["USER"]},
                     {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE","entity_scopes":["USER"]},
                     {"name":"item_industry","raw_name":"item_industry","type":"STRING","dft":"unknown","entity_scopes":["ITEM"]},
-                    {"name":"item_price","raw_name":"item_price","type":"DOUBLE","dft":0.0,"entity_scopes":["ITEM"]}
-                  ],
-                  "derivedFeatures": [
+                    {"name":"item_price","raw_name":"item_price","type":"DOUBLE","dft":0.0,"entity_scopes":["ITEM"]},
                     {
                       "name":"user_click_score",
                       "type":"DOUBLE",
+                      "definition_type":"DERIVED",
                       "expression":"normalize(coalesce(user_click_count, 0), {\\\"method\\\":\\\"min_max\\\",\\\"min\\\":0,\\\"max\\\":100})",
                       "output_policy":"INTERNAL_ONLY"
                     },
                     {
                       "name":"same_industry_seq",
                       "type":"EVENT_SEQUENCE",
+                      "definition_type":"DERIVED",
                       "expression":"extractIndustry(user_seq1, item_industry)",
                       "output_policy":"INTERNAL_ONLY"
                     },
@@ -355,6 +387,7 @@ public final class DagEngineSelfTest {
                       "name":"same_industry_count",
                       "store_name":"same_industry_count",
                       "type":"INT",
+                      "definition_type":"DERIVED",
                       "expression":"count(same_industry_seq)",
                       "output_policy":"OUTPUT",
                       "order":1
@@ -362,6 +395,7 @@ public final class DagEngineSelfTest {
                     {
                       "name":"item_price_log",
                       "type":"DOUBLE",
+                      "definition_type":"DERIVED",
                       "expression":"log(add(item_price, 1))",
                       "output_policy":"INTERNAL_ONLY"
                     },
@@ -369,6 +403,7 @@ public final class DagEngineSelfTest {
                       "name":"final_score",
                       "store_name":"final_score",
                       "type":"DOUBLE",
+                      "definition_type":"DERIVED",
                       "expression":"multiply(user_click_score, item_price_log)",
                       "output_policy":"OUTPUT",
                       "order":2
@@ -385,12 +420,11 @@ public final class DagEngineSelfTest {
                 {
                   "features": [
                     {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE"},
-                    {"name":"item_industry","raw_name":"item_industry","type":"STRING"}
-                  ],
-                  "derivedFeatures": [{
+                    {"name":"item_industry","raw_name":"item_industry","type":"STRING"}, {
                     "name":"same_industry_seq",
                     "store_name":"same_industry_events",
                     "type":"EVENT_SEQUENCE",
+                    "definition_type":"DERIVED",
                     "expression":"extractIndustry(user_seq1, item_industry)",
                     "output_policy":"OUTPUT"
                   }],

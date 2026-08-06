@@ -38,54 +38,62 @@ public final class FeatureConfigMapper {
 
         String featureSetName = requireText(config.featureSetName(), "feature_set_name");
         String version = requireText(config.version(), "version");
-        Map<String, DefinitionEntry> entries = collectEntries(config);
+        Map<String, DefinitionEntry> entries = new LinkedHashMap<>();
         List<FeatureDefinition> definitions = new ArrayList<>();
+        List<DerivedEntry> enabledDerived = new ArrayList<>();
         Set<String> unresolvedOnlineScopes = new LinkedHashSet<>();
 
-        for (RawFeatureConfig raw : config.features()) {
-            String name = requireText(raw.name(), "features[].name");
-            if (!isEnabled(raw.toUse())) continue;
-            DataType type = parseEnum(DataType.class, raw.type(), "type for raw feature " + name);
-            String sourceBinding = requireText(raw.rawName(), "raw_name for raw feature " + name);
-            Set<EntityScope> scopes = resolveScopes(name, raw.entityScopes(), scopeOverrides);
-            if (scopes.isEmpty()) {
-                scopes = Set.of(EntityScope.USER);
-                if (environment == ExecutionEnvironment.ONLINE) unresolvedOnlineScopes.add(name);
-            }
-            FeatureDefinition definition = FeatureDefinition.builder()
-                    .name(name)
-                    .role(FeatureRole.RAW)
-                    .dataType(type)
-                    .entityScopes(scopes)
-                    .defaultValue(convertDefault(raw.defaultValue(), type, name))
-                    .sourceBinding(sourceBinding)
-                    .outputPolicy(OutputPolicy.OUTPUT)
-                    .build();
-            definitions.add(definition);
-        }
+        int declarationIndex = 0;
+        for (FeatureConfig feature : config.features()) {
+            String name = requireText(feature.name(), "features[].name");
+            DefinitionType definitionType = parseDefinitionType(feature.definitionType(), name);
+            boolean enabled = isEnabled(feature.toUse());
+            OutputPolicy outputPolicy = definitionType == DefinitionType.BASE
+                    ? OutputPolicy.OUTPUT
+                    : parseOutputPolicy(feature.outputPolicy(), name);
+            putUnique(entries, name, new DefinitionEntry(
+                    definitionType, enabled, outputPolicy, declarationIndex));
 
-        List<DerivedEntry> enabledDerived = new ArrayList<>();
-        int derivedIndex = 0;
-        for (DerivedFeatureConfig derived : config.derivedFeatures()) {
-            String name = requireText(derived.name(), "derivedFeatures[].name");
-            int declarationIndex = derivedIndex++;
-            if (!isEnabled(derived.toUse())) continue;
-            DataType type = parseEnum(DataType.class, derived.type(), "type for derived feature " + name);
-            OutputPolicy policy = parseEnum(
-                    OutputPolicy.class, derived.outputPolicy(), "output_policy for derived feature " + name);
-            String expression = requireText(
-                    derived.expression(), "expression for derived feature " + name);
-            FeatureDefinition definition = FeatureDefinition.builder()
-                    .name(name)
-                    .role(FeatureRole.DERIVED)
-                    .dataType(type)
-                    .expressionContent(expression)
-                    .defaultValue(convertDefault(derived.defaultValue(), type, name))
-                    .outputPolicy(policy)
-                    .description(derived.description())
-                    .build();
-            definitions.add(definition);
-            enabledDerived.add(new DerivedEntry(derived, definition, declarationIndex));
+            if (definitionType == DefinitionType.BASE) {
+                requireBlank(feature.expression(), "expression for BASE feature " + name);
+                String sourceBinding = requireText(feature.rawName(), "raw_name for BASE feature " + name);
+                Set<EntityScope> scopes = resolveScopes(name, feature.entityScopes(), scopeOverrides);
+                if (scopes.isEmpty()) {
+                    scopes = Set.of(EntityScope.USER);
+                    if (environment == ExecutionEnvironment.ONLINE) unresolvedOnlineScopes.add(name);
+                }
+                if (enabled) {
+                    DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
+                    definitions.add(FeatureDefinition.builder()
+                            .name(name)
+                            .role(FeatureRole.RAW)
+                            .dataType(type)
+                            .entityScopes(scopes)
+                            .defaultValue(convertDefault(feature.defaultValue(), type, name))
+                            .sourceBinding(sourceBinding)
+                            .outputPolicy(OutputPolicy.OUTPUT)
+                            .build());
+                }
+            } else {
+                String expression = requireText(feature.expression(), "expression for DERIVED feature " + name);
+                Set<EntityScope> configuredScopes = resolveScopes(name, feature.entityScopes(), Map.of());
+                if (enabled) {
+                    DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
+                    FeatureDefinition definition = FeatureDefinition.builder()
+                            .name(name)
+                            .role(FeatureRole.DERIVED)
+                            .dataType(type)
+                            .entityScopes(configuredScopes)
+                            .expressionContent(expression)
+                            .defaultValue(convertDefault(feature.defaultValue(), type, name))
+                            .outputPolicy(outputPolicy)
+                            .description(feature.description())
+                            .build();
+                    definitions.add(definition);
+                    enabledDerived.add(new DerivedEntry(feature, definition, declarationIndex));
+                }
+            }
+            declarationIndex++;
         }
 
         validateDisabledReferences(entries, enabledDerived);
@@ -112,23 +120,15 @@ public final class FeatureConfigMapper {
                 unresolvedOnlineScopes);
     }
 
-    private static Map<String, DefinitionEntry> collectEntries(FeatureSetConfig config) {
-        Map<String, DefinitionEntry> entries = new LinkedHashMap<>();
-        int index = 0;
-        for (RawFeatureConfig raw : config.features()) {
-            String name = requireText(raw.name(), "features[].name");
-            putUnique(entries, name, new DefinitionEntry(true, isEnabled(raw.toUse()), null, index++));
-        }
-        index = 0;
-        for (DerivedFeatureConfig derived : config.derivedFeatures()) {
-            String name = requireText(derived.name(), "derivedFeatures[].name");
-            OutputPolicy policy = derived.outputPolicy() == null ? null
-                    : parseEnum(OutputPolicy.class, derived.outputPolicy(),
-                            "output_policy for derived feature " + name);
-            putUnique(entries, name,
-                    new DefinitionEntry(false, isEnabled(derived.toUse()), policy, index++));
-        }
-        return entries;
+    private static DefinitionType parseDefinitionType(String value, String featureName) {
+        if (value == null || value.isBlank()) return DefinitionType.BASE;
+        return parseEnum(DefinitionType.class, value,
+                "definition_type for feature " + featureName);
+    }
+
+    private static OutputPolicy parseOutputPolicy(String value, String featureName) {
+        if (value == null || value.isBlank()) return OutputPolicy.OUTPUT;
+        return parseEnum(OutputPolicy.class, value, "output_policy for feature " + featureName);
     }
 
     private static void putUnique(
@@ -154,7 +154,7 @@ public final class FeatureConfigMapper {
             String name = requireText(requested, "target feature");
             DefinitionEntry entry = entries.get(name);
             if (entry == null) throw new IllegalArgumentException("Target feature is not defined: " + name);
-            if (entry.raw()) throw new IllegalArgumentException("Target feature must be derived: " + name);
+            if (entry.base()) throw new IllegalArgumentException("Target feature must be derived: " + name);
             if (!entry.enabled()) throw new IllegalArgumentException("Target feature is disabled: " + name);
             if (entry.outputPolicy() != OutputPolicy.OUTPUT) {
                 throw new IllegalArgumentException("Target feature is INTERNAL_ONLY: " + name);
@@ -197,7 +197,7 @@ public final class FeatureConfigMapper {
     }
 
     private static FeatureOutputDescriptor toOutputDescriptor(DerivedEntry entry) {
-        DerivedFeatureConfig config = entry.config();
+        FeatureConfig config = entry.config();
         String name = entry.definition().name();
         String storeName = config.storeName() == null || config.storeName().isBlank()
                 ? name : config.storeName().trim();
@@ -230,7 +230,7 @@ public final class FeatureConfigMapper {
         }
         Set<EntityScope> result = new LinkedHashSet<>();
         for (String scope : configuredScopes) {
-            result.add(parseEnum(EntityScope.class, scope, "entity scope for raw feature " + featureName));
+            result.add(parseEnum(EntityScope.class, scope, "entity scope for feature " + featureName));
         }
         return Collections.unmodifiableSet(result);
     }
@@ -278,6 +278,12 @@ public final class FeatureConfigMapper {
         return value == null || value;
     }
 
+    private static void requireBlank(String value, String field) {
+        if (value != null && !value.isBlank()) {
+            throw new IllegalArgumentException(field + " must be blank");
+        }
+    }
+
     private static String requireText(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");
@@ -296,13 +302,15 @@ public final class FeatureConfigMapper {
     }
 
     private record DefinitionEntry(
-            boolean raw,
+            DefinitionType definitionType,
             boolean enabled,
             OutputPolicy outputPolicy,
-            int declarationIndex) {}
+            int declarationIndex) {
+        boolean base() { return definitionType == DefinitionType.BASE; }
+    }
 
     private record DerivedEntry(
-            DerivedFeatureConfig config,
+            FeatureConfig config,
             FeatureDefinition definition,
             int declarationIndex) {}
 }

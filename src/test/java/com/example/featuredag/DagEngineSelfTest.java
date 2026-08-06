@@ -78,6 +78,7 @@ public final class DagEngineSelfTest {
         testCandidateCardinalityAndDefaults();
         testEmptySequenceAndOfflineOutputSet();
         testCandidateDeduplicationAndFusion();
+        testDirectNestedCountIndustryFusion();
         testSequenceSelectionStrategies();
         testOfflineOnlineConsistency();
 
@@ -982,6 +983,68 @@ public final class DagEngineSelfTest {
         assert view.size() == 2 : view.size();
         assert ((Number) offline.feature("same_industry_count").raw()).intValue() == 2;
         assert view.baseBlock().sequenceId().equals("seq-test") : view.baseBlock().sequenceId();
+    }
+
+    private static void testDirectNestedCountIndustryFusion() {
+        OperatorRegistry operators = OperatorRegistry.standard();
+        LogicalDagBuilder builder = new LogicalDagBuilder(new ExpressionParser(), operators);
+        LogicalDagOptimizer optimizer = new LogicalDagOptimizer();
+        PhysicalPlanner planner = new PhysicalPlanner();
+        DagRuntime runtime = new DagRuntime(operators);
+
+        List<FeatureDefinition> directDefinitions = List.of(
+                FeatureDefinition.raw("user_seq1", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                FeatureDefinition.raw("item_industry", DataType.STRING, EntityScope.ITEM, "unknown"),
+                FeatureDefinition.derived(
+                        "same_industry_count",
+                        DataType.INT,
+                        "count(extractIndustry(user_seq1, item_industry))",
+                        OutputPolicy.OUTPUT));
+        LogicalDag directDag = builder.build(directDefinitions, Set.of("same_industry_count"));
+        PhysicalPlan onlinePlan = planner.plan(
+                optimizer.analyze(directDag), ExecutionEnvironment.ONLINE, "direct-nested-online");
+        assert onlinePlan.nodes().stream()
+                .anyMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                : "Direct nested count/extractIndustry should fuse online";
+
+        ExecutionResult result = runtime.execute(
+                onlinePlan,
+                ExecutionContext.onlineRequest(
+                        "direct-nested-request",
+                        Map.of("user_seq1", sequence()),
+                        fourCandidates()));
+        CandidateVectorValue counts = (CandidateVectorValue) result.feature("same_industry_count");
+        assert counts.values().equals(List.of(3, 1, 3, 0)) : counts.values();
+        assert result.nodeStates().values().stream()
+                .anyMatch(state -> state.dedupInputCount() == 4 && state.uniqueInputCount() == 3)
+                : "Direct nested fusion should deduplicate candidate industries";
+
+        PhysicalPlan offlinePlan = planner.plan(
+                optimizer.analyze(directDag), ExecutionEnvironment.OFFLINE, "direct-nested-offline");
+        assert offlinePlan.nodes().stream()
+                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                : "Direct nested count/extractIndustry must remain unfused offline";
+
+        List<FeatureDefinition> sharedDefinitions = List.of(
+                FeatureDefinition.raw("user_seq1", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                FeatureDefinition.raw("item_industry", DataType.STRING, EntityScope.ITEM, "unknown"),
+                FeatureDefinition.derived(
+                        "same_industry_seq",
+                        DataType.EVENT_SEQUENCE,
+                        "extractIndustry(user_seq1, item_industry)",
+                        OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "same_industry_count",
+                        DataType.INT,
+                        "count(extractIndustry(user_seq1, item_industry))",
+                        OutputPolicy.OUTPUT));
+        LogicalDag sharedDag = builder.build(
+                sharedDefinitions, linkedSet("same_industry_seq", "same_industry_count"));
+        PhysicalPlan sharedPlan = planner.plan(
+                optimizer.analyze(sharedDag), ExecutionEnvironment.ONLINE, "shared-extract-online");
+        assert sharedPlan.nodes().stream()
+                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                : "A shared extractIndustry operator must not be eliminated by fusion";
     }
 
     private static void testSequenceSelectionStrategies() {

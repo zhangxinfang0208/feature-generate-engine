@@ -8,6 +8,7 @@ import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.logical.SourceNode;
 import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.planning.CountExtractIndustryMatch;
 import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.planning.NodePlanningMetadata;
 import com.example.featuredag.planning.OptimizedLogicalPlan;
@@ -25,12 +26,12 @@ public final class PhysicalPlanner {
 
     public PhysicalPlan plan(OptimizedLogicalPlan optimized, ExecutionEnvironment environment, String planId) {
         LogicalDag dag = optimized.dag();
-        Map<String, FusionMatch> fusionByCountNode = environment == ExecutionEnvironment.ONLINE
+        Map<String, CountExtractIndustryMatch> fusionByCountNode = environment == ExecutionEnvironment.ONLINE
                 ? findOnlineFusionMatches(optimized) : Map.of();
         Set<String> skippedLogicalNodes = new LinkedHashSet<>();
-        for (FusionMatch match : fusionByCountNode.values()) {
+        for (CountExtractIndustryMatch match : fusionByCountNode.values()) {
             skippedLogicalNodes.add(match.extractNodeId());
-            skippedLogicalNodes.add(match.intermediateFeatureNodeId());
+            skippedLogicalNodes.addAll(match.intermediateNodeIds());
         }
 
         Map<String, String> logicalSlots = new HashMap<>();
@@ -41,7 +42,7 @@ public final class PhysicalPlanner {
         for (String logicalNodeId : dag.topologicalOrder()) {
             if (skippedLogicalNodes.contains(logicalNodeId)) continue;
             LogicalNode logicalNode = dag.node(logicalNodeId);
-            FusionMatch fusion = fusionByCountNode.get(logicalNodeId);
+            CountExtractIndustryMatch fusion = fusionByCountNode.get(logicalNodeId);
             PhysicalNode physicalNode;
             if (fusion != null) {
                 OperatorNode extract = (OperatorNode) dag.node(fusion.extractNodeId());
@@ -49,9 +50,13 @@ public final class PhysicalPlanner {
                         .map(input -> requireSlot(logicalSlots, input.nodeId()))
                         .toList();
                 String outputSlot = "slot:" + (++sequence);
+                List<String> fusedLogicalNodeIds = new ArrayList<>();
+                fusedLogicalNodeIds.add(fusion.extractNodeId());
+                fusedLogicalNodeIds.addAll(fusion.intermediateNodeIds());
+                fusedLogicalNodeIds.add(logicalNodeId);
                 physicalNode = new PhysicalNode(
                         "physical:countIndustry:" + sequence,
-                        List.of(fusion.extractNodeId(), fusion.intermediateFeatureNodeId(), logicalNodeId),
+                        fusedLogicalNodeIds,
                         ExecutorType.COUNT_INDUSTRY_BATCH,
                         ExecutionStage.CANDIDATE_BATCH,
                         ExecutionMode.CANDIDATE_KEY,
@@ -159,21 +164,22 @@ public final class PhysicalPlanner {
         return MaterializationPolicy.LAZY;
     }
 
-    private Map<String, FusionMatch> findOnlineFusionMatches(OptimizedLogicalPlan optimized) {
+    private Map<String, CountExtractIndustryMatch> findOnlineFusionMatches(OptimizedLogicalPlan optimized) {
         LogicalDag dag = optimized.dag();
-        Map<String, FusionMatch> result = new LinkedHashMap<>();
+        Map<String, CountExtractIndustryMatch> result = new LinkedHashMap<>();
         for (String nodeId : dag.topologicalOrder()) {
             LogicalNode node = dag.node(nodeId);
             if (!(node instanceof OperatorNode countNode)) continue;
             NodePlanningMetadata metadata = optimized.metadata().node(nodeId);
             if (!"COUNT_EXTRACT_INDUSTRY".equals(metadata.fusionCandidate())) continue;
-            if (!optimizer.matchesCountExtractIndustry(dag, countNode)) continue;
-
-            FeatureOutputNode intermediate = (FeatureOutputNode) dag.node(countNode.inputs().get(0).nodeId());
-            OperatorNode extract = (OperatorNode) dag.node(intermediate.producerNodeId());
-            if (dag.rootNodeIds().contains(intermediate.nodeId())) continue;
-            if (optimized.metadata().node(intermediate.nodeId()).referenceCount() != 1) continue;
-            result.put(nodeId, new FusionMatch(nodeId, intermediate.nodeId(), extract.nodeId()));
+            CountExtractIndustryMatch match = optimizer.matchCountExtractIndustry(dag, countNode).orElse(null);
+            if (match == null) continue;
+            if (optimized.metadata().node(match.extractNodeId()).referenceCount() != 1) continue;
+            boolean unsafeIntermediate = match.intermediateNodeIds().stream().anyMatch(intermediateNodeId ->
+                    dag.rootNodeIds().contains(intermediateNodeId)
+                            || optimized.metadata().node(intermediateNodeId).referenceCount() != 1);
+            if (unsafeIntermediate) continue;
+            result.put(nodeId, match);
         }
         return result;
     }
@@ -183,6 +189,4 @@ public final class PhysicalPlanner {
         if (slot == null) throw new IllegalStateException("No physical slot for logical node: " + logicalNodeId);
         return slot;
     }
-
-    private record FusionMatch(String countNodeId, String intermediateFeatureNodeId, String extractNodeId) {}
 }

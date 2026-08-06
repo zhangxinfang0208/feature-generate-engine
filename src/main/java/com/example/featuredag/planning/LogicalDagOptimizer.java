@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -63,13 +64,33 @@ public final class LogicalDagOptimizer {
     }
 
     public boolean matchesCountExtractIndustry(LogicalDag dag, OperatorNode countNode) {
-        if (!"count".equals(countNode.operatorName()) || countNode.inputs().size() != 1) return false;
+        return matchCountExtractIndustry(dag, countNode).isPresent();
+    }
+
+    public Optional<CountExtractIndustryMatch> matchCountExtractIndustry(
+            LogicalDag dag, OperatorNode countNode) {
+        if (!"count".equals(countNode.operatorName()) || countNode.inputs().size() != 1) {
+            return Optional.empty();
+        }
         LogicalNode input = dag.node(countNode.inputs().get(0).nodeId());
-        if (!(input instanceof FeatureOutputNode featureOutput)) return false;
-        LogicalNode producer = dag.node(featureOutput.producerNodeId());
-        return producer instanceof OperatorNode operator
-                && "extractIndustry".equals(operator.operatorName())
-                && operator.inputs().size() == 2;
+        OperatorNode extract;
+        List<String> intermediateNodeIds;
+        if (input instanceof OperatorNode directOperator) {
+            extract = directOperator;
+            intermediateNodeIds = List.of();
+        } else if (input instanceof FeatureOutputNode featureOutput) {
+            LogicalNode producer = dag.node(featureOutput.producerNodeId());
+            if (!(producer instanceof OperatorNode producerOperator)) return Optional.empty();
+            extract = producerOperator;
+            intermediateNodeIds = List.of(featureOutput.nodeId());
+        } else {
+            return Optional.empty();
+        }
+        if (!"extractIndustry".equals(extract.operatorName()) || extract.inputs().size() != 2) {
+            return Optional.empty();
+        }
+        return Optional.of(new CountExtractIndustryMatch(
+                countNode.nodeId(), extract.nodeId(), intermediateNodeIds));
     }
 
     private static Map<String, Integer> computeReferenceCounts(LogicalDag dag) {

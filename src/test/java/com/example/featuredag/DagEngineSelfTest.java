@@ -70,6 +70,7 @@ public final class DagEngineSelfTest {
         testOnlineEngineConcurrentReuse();
         testConfigurationAndRequestValidation();
         testBaseOutputPolicyIsValidated();
+        testDerivedOutputPolicyDefaults();
         testDeclaredScopeIsValidatedBeforeOverride();
         testDeclaredValueShapeAndScopeSemantics();
         testDagBusinessSemantics();
@@ -594,6 +595,53 @@ public final class DagEngineSelfTest {
         assert error.getMessage().contains("output_policy") : error.getMessage();
     }
 
+    private static void testDerivedOutputPolicyDefaults() {
+        assertDefaultDerivedOutputPolicy(null, "missing_output_policy", "missing_policy_output");
+        assertDefaultDerivedOutputPolicy("   ", "blank_output_policy", "blank_policy_output");
+    }
+
+    private static void assertDefaultDerivedOutputPolicy(
+            String outputPolicy,
+            String featureName,
+            String storeName) {
+        String json = configWithDefaultDerivedOutputPolicy(outputPolicy, featureName, storeName);
+        MappedFeatureSet mapped = FeatureConfigMapper.map(
+                FeatureConfigLoader.load(json),
+                ExecutionEnvironment.OFFLINE,
+                Set.of(),
+                Map.of());
+
+        assert mapped.targetFeatures().equals(Set.of(featureName)) : mapped.targetFeatures();
+        assert mapped.outputs().size() == 1 : mapped.outputs();
+        assert mapped.outputs().getFirst().featureName().equals(featureName) : mapped.outputs();
+        assert mapped.outputs().getFirst().storeName().equals(storeName) : mapped.outputs();
+
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                json, InitOptions.offline("default-output-policy-" + featureName));
+        GenerateResult result = engine.generate(new OfflineGenerateRequest(
+                "default-output-policy-row-" + featureName,
+                Map.of("source_value", 41)));
+        assert result.featureValues().equals(Map.of(storeName, 42.0)) : result.featureValues();
+    }
+
+    private static String configWithDefaultDerivedOutputPolicy(
+            String outputPolicy,
+            String featureName,
+            String storeName) {
+        String policyField = outputPolicy == null ? "" : ",\"output_policy\":\"" + outputPolicy + "\"";
+        return """
+                {
+                  "features": [
+                    {"name":"source","raw_name":"source_value","type":"INT",
+                     "definition_type":"BASE","entity_scopes":["USER"]},
+                    {"name":"%s","store_name":"%s","type":"DOUBLE",
+                     "definition_type":"DERIVED","expression":"add(source, 1)"%s}
+                  ],
+                  "feature_set_name":"default_output_policy","version":"1"
+                }
+                """.formatted(featureName, storeName, policyField);
+    }
+
     private static void testDeclaredValueShapeAndScopeSemantics() {
         LogicalDag dag = buildDag(configWithDerivedShapeAndScopes("VECTOR", "[\"USER\", \"ITEM\"]"));
         assert dag.node(dag.featureOutputNodeIds().get("candidate_score")).valueShape()
@@ -601,7 +649,20 @@ public final class DagEngineSelfTest {
         assert dag.node("source:user_score").valueShape() == ValueShape.SCALAR;
         assert dag.node("source:user_history").valueShape() == ValueShape.SEQUENCE;
 
-        LogicalDag inferredBaseShapes = buildDag(configWithoutBaseValueShapes());
+        String configWithoutShapes = configWithoutBaseValueShapes();
+        FeatureSetConfig configWithoutShapesFixture = FeatureConfigLoader.load(configWithoutShapes);
+        FeatureConfig userScore = configWithoutShapesFixture.features().stream()
+                .filter(feature -> feature.name().equals("user_score"))
+                .findFirst()
+                .orElseThrow();
+        FeatureConfig userHistory = configWithoutShapesFixture.features().stream()
+                .filter(feature -> feature.name().equals("user_history"))
+                .findFirst()
+                .orElseThrow();
+        assert userScore.valueShape() == null : userScore.valueShape();
+        assert userHistory.valueShape() == null : userHistory.valueShape();
+
+        LogicalDag inferredBaseShapes = buildDag(configWithoutShapes);
         assert inferredBaseShapes.node("source:user_score").valueShape() == ValueShape.SCALAR;
         assert inferredBaseShapes.node("source:user_history").valueShape() == ValueShape.SEQUENCE;
 

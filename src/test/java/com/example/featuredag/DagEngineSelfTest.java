@@ -21,6 +21,7 @@ import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstCall;
 import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstLiteral;
+import com.example.featuredag.expression.AstNode;
 import com.example.featuredag.expression.AstObjectLiteral;
 import com.example.featuredag.expression.ExpressionParseException;
 import com.example.featuredag.expression.ExpressionParser;
@@ -70,7 +71,9 @@ import java.util.stream.IntStream;
 public final class DagEngineSelfTest {
     public static void main(String[] args) throws Exception {
         testExtendedExpressionParsing();
+        testCompleteBusinessExpressionParsing();
         testArrayLiteralDagConstruction();
+        testDiscreteFeatureDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
         testBusinessOperatorRegistry();
         testBusinessJsonParsing();
@@ -172,6 +175,67 @@ public final class DagEngineSelfTest {
         expectThrows(ExpressionParseException.class, () -> parser.parse("f(a,)"));
     }
 
+    private static void testCompleteBusinessExpressionParsing() {
+        // The supplied fixture omitted two terminal ')' characters; this is its balanced form.
+        String expression = """
+                default_key_if(
+                  dis2xl(
+                    round(
+                      div_num(
+                        add(
+                          list_multi(
+                            k2v_f(list_index_typed(staytimes, reverse_typed(slice_v3_typed({"start": 4})(reverse_typed(
+                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
+                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
+                                find_list_index_typed(action_types, 1)
+                              )))
+                            )))),
+                            multi_v2(sign(add(list_index_typed(action_times, reverse_typed(slice_v3_typed({"start": 4})(reverse_typed(
+                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
+                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
+                                find_list_index_typed(action_types, 1)
+                              )))
+                            ))), 1)))),
+                            {"multi_factor": -1}
+                          ),
+                          list_multi(
+                            k2v_f(list_index_typed(staytimes, reverse_typed(slice_v3_typed({"start": 0})(reverse_typed(
+                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
+                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
+                                find_list_index_typed(action_types, 1)
+                              )))
+                            )))),
+                            multi_v2(sign(add(list_index_typed(action_times, reverse_typed(slice_v3_typed({"start": 0})(reverse_typed(
+                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
+                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
+                                find_list_index_typed(action_types, 1)
+                              )))
+                            ))), 1)))),
+                            {"multi_factor": 1}
+                          )
+                        ),
+                        {"divisor": 2}
+                      )
+                    ),
+                    {"divisor": 1000, "discrete_key": "ntg_impr_seq_f_1h_sec_disc_rt"}
+                  ),
+                  {"default_key": -1}
+                )))
+                """;
+
+        AstCall parsed = (AstCall) new ExpressionParser().parse(expression);
+        assert parsed.functionName().equals("default_key_if") : parsed.functionName();
+
+        Set<String> functionNames = new LinkedHashSet<>();
+        collectCallFunctionNames(parsed, functionNames);
+        Set<String> expectedNames = Set.of(
+                "default_key_if", "dis2xl", "round", "div_num", "add", "list_multi",
+                "k2v_f", "list_index_typed", "reverse_typed", "slice_v3_typed",
+                "uniq_key_index", "intersection_typed", "greater_in_sequence_typed",
+                "find_list_index_typed", "multi_v2", "sign");
+        assert functionNames.containsAll(expectedNames) : functionNames;
+    }
+
     private static void testArrayLiteralDagConstruction() {
         OperatorRegistry registry = new OperatorRegistry().register(new OperatorDefinition() {
             public String name() { return "arrayProbe"; }
@@ -200,6 +264,24 @@ public final class DagEngineSelfTest {
                 Set.of("bucket"));
 
         assert dag.featureOutputNodeIds().containsKey("bucket") : dag.featureOutputNodeIds();
+    }
+
+    private static void testDiscreteFeatureDagConstruction() {
+        FeatureDefinition discretePrice = FeatureDefinition.builder()
+                .name("discrete_price")
+                .dataType(DataType.INT)
+                .addEntityScope(EntityScope.ITEM)
+                .declaredValueShape(ValueShape.SCALAR)
+                .expressionContent("discrete(item_price, [0, 100, 1000])")
+                .outputPolicy(OutputPolicy.OUTPUT)
+                .build();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), OperatorRegistry.standard()).build(
+                List.of(
+                        FeatureDefinition.raw("item_price", DataType.DOUBLE, EntityScope.ITEM, 0.0),
+                        discretePrice),
+                Set.of("discrete_price"));
+
+        assertOutput(dag, "discrete_price", DataType.INT, ValueShape.SCALAR);
     }
 
     private static void testArrayLiteralDisabledFeatureReferenceValidation() {
@@ -363,6 +445,23 @@ public final class DagEngineSelfTest {
         assertOutput(inferenceDag, "indexed_slice", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
         assertOutput(inferenceDag, "zipped", DataType.STRING, ValueShape.SEQUENCE);
         assertOutput(inferenceDag, "delta", DataType.DOUBLE, ValueShape.SEQUENCE);
+    }
+
+    private static void collectCallFunctionNames(AstNode node, Set<String> functionNames) {
+        if (node instanceof AstCall call) {
+            functionNames.add(call.functionName());
+            for (AstNode argument : call.arguments()) {
+                collectCallFunctionNames(argument, functionNames);
+            }
+        } else if (node instanceof AstObjectLiteral objectLiteral) {
+            for (AstNode fieldValue : objectLiteral.fields().values()) {
+                collectCallFunctionNames(fieldValue, functionNames);
+            }
+        } else if (node instanceof AstArrayLiteral arrayLiteral) {
+            for (AstNode element : arrayLiteral.elements()) {
+                collectCallFunctionNames(element, functionNames);
+            }
+        }
     }
 
     private static void assertOutput(

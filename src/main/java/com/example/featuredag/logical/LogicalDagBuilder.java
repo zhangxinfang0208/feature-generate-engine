@@ -95,6 +95,7 @@ public final class LogicalDagBuilder {
 
             LogicalNode producer = context.nodes.get(producerId);
             validateDeclaredType(definition, producer.outputType());
+            validateDeclaredShapeAndScopes(definition, producer);
             OutputRole role = switch (definition.role()) {
                 case MODEL_INPUT -> OutputRole.MODEL_INPUT;
                 case INTERMEDIATE -> OutputRole.INTERNAL;
@@ -125,7 +126,9 @@ public final class LogicalDagBuilder {
         String existing = context.canonicalNodeIds.get(signature);
         if (existing != null) return existing;
         String nodeId = "source:" + definition.name();
-        ValueShape shape = shapeForType(definition.dataType());
+        ValueShape shape = definition.declaredValueShape() == null
+                ? shapeForType(definition.dataType())
+                : definition.declaredValueShape();
         SourceNode node = new SourceNode(
                 nodeId,
                 definition.name(),
@@ -244,6 +247,25 @@ public final class LogicalDagBuilder {
             throw new DagBuildException(
                     "Declared type mismatch for feature " + definition.name()
                             + ": declared=" + definition.dataType() + ", inferred=" + inferredType);
+        }
+    }
+
+    private static void validateDeclaredShapeAndScopes(
+            FeatureDefinition definition, LogicalNode producer) {
+        if (definition.isRaw()) return;
+        if (definition.declaredValueShape() != null
+                && definition.declaredValueShape() != producer.valueShape()) {
+            throw new DagBuildException(
+                    "Declared value shape mismatch for feature " + definition.name()
+                            + ": declared=" + definition.declaredValueShape()
+                            + ", inferred=" + producer.valueShape());
+        }
+        if (!definition.entityScopes().isEmpty()
+                && !definition.entityScopes().equals(producer.entityScopes())) {
+            throw new DagBuildException(
+                    "Declared entity scopes mismatch for feature " + definition.name()
+                            + ": declared=" + definition.entityScopes()
+                            + ", inferred=" + producer.entityScopes());
         }
     }
 

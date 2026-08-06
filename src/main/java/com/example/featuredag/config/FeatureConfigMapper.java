@@ -10,6 +10,7 @@ import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstNode;
 import com.example.featuredag.expression.AstObjectLiteral;
 import com.example.featuredag.expression.ExpressionParser;
+import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.physical.ExecutionEnvironment;
 
 import java.util.ArrayList;
@@ -49,6 +50,7 @@ public final class FeatureConfigMapper {
             DefinitionType definitionType = parseDefinitionType(feature.definitionType(), name);
             boolean enabled = isEnabled(feature.toUse());
             OutputPolicy configuredOutputPolicy = parseOutputPolicy(feature.outputPolicy(), name);
+            ValueShape declaredValueShape = parseValueShape(feature.valueShape(), name);
             OutputPolicy outputPolicy = definitionType == DefinitionType.BASE
                     ? OutputPolicy.OUTPUT : configuredOutputPolicy;
             putUnique(entries, name, new DefinitionEntry(
@@ -72,6 +74,7 @@ public final class FeatureConfigMapper {
                             .defaultValue(convertDefault(feature.defaultValue(), type, name))
                             .sourceBinding(sourceBinding)
                             .outputPolicy(OutputPolicy.OUTPUT)
+                            .declaredValueShape(declaredValueShape)
                             .build());
                 }
             } else {
@@ -87,6 +90,7 @@ public final class FeatureConfigMapper {
                             .expressionContent(expression)
                             .defaultValue(convertDefault(feature.defaultValue(), type, name))
                             .outputPolicy(outputPolicy)
+                            .declaredValueShape(declaredValueShape)
                             .description(feature.description())
                             .build();
                     definitions.add(definition);
@@ -129,6 +133,17 @@ public final class FeatureConfigMapper {
     private static OutputPolicy parseOutputPolicy(String value, String featureName) {
         if (value == null || value.isBlank()) return OutputPolicy.OUTPUT;
         return parseEnum(OutputPolicy.class, value, "output_policy for feature " + featureName);
+    }
+
+    private static ValueShape parseValueShape(String value, String featureName) {
+        if (value == null || value.isBlank()) return null;
+        return switch (value.trim().toUpperCase(Locale.ROOT)) {
+            case "SCALAR" -> ValueShape.SCALAR;
+            case "SEQUENCE" -> ValueShape.SEQUENCE;
+            case "VECTOR" -> ValueShape.CANDIDATE_VECTOR;
+            default -> throw new IllegalArgumentException(
+                    "Invalid value_shape for feature " + featureName + ": " + value);
+        };
     }
 
     private static void putUnique(

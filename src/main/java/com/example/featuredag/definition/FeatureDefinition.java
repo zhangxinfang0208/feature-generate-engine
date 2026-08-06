@@ -1,5 +1,7 @@
 package com.example.featuredag.definition;
 
+import com.example.featuredag.logical.ValueShape;
+
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -18,6 +20,7 @@ public final class FeatureDefinition {
     private final Object defaultValue;
     private final String sourceBinding;
     private final OutputPolicy outputPolicy;
+    private final ValueShape declaredValueShape;
     private final String description;
 
     private FeatureDefinition(Builder builder) {
@@ -29,6 +32,7 @@ public final class FeatureDefinition {
         this.defaultValue = builder.defaultValue;
         this.sourceBinding = blankToNull(builder.sourceBinding);
         this.outputPolicy = Objects.requireNonNull(builder.outputPolicy, "outputPolicy");
+        this.declaredValueShape = builder.declaredValueShape;
         this.description = blankToNull(builder.description);
         validate();
     }
@@ -88,6 +92,7 @@ public final class FeatureDefinition {
     public Object defaultValue() { return defaultValue; }
     public String sourceBinding() { return sourceBinding; }
     public OutputPolicy outputPolicy() { return outputPolicy; }
+    public ValueShape declaredValueShape() { return declaredValueShape; }
     public String description() { return description; }
     public boolean isRaw() { return role == FeatureRole.RAW; }
 
@@ -114,6 +119,7 @@ public final class FeatureDefinition {
         private Object defaultValue;
         private String sourceBinding;
         private OutputPolicy outputPolicy = OutputPolicy.OUTPUT;
+        private ValueShape declaredValueShape;
         private String description;
 
         public Builder name(String value) { this.name = value; return this; }
@@ -132,6 +138,7 @@ public final class FeatureDefinition {
         public Builder defaultValue(Object value) { this.defaultValue = value; return this; }
         public Builder sourceBinding(String value) { this.sourceBinding = value; return this; }
         public Builder outputPolicy(OutputPolicy value) { this.outputPolicy = value; return this; }
+        public Builder declaredValueShape(ValueShape value) { this.declaredValueShape = value; return this; }
         public Builder description(String value) { this.description = value; return this; }
         public FeatureDefinition build() { return new FeatureDefinition(this); }
     }

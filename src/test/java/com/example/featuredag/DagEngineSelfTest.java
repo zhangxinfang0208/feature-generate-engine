@@ -71,6 +71,7 @@ public final class DagEngineSelfTest {
         testConfigurationAndRequestValidation();
         testBaseOutputPolicyIsValidated();
         testDeclaredScopeIsValidatedBeforeOverride();
+        testDeclaredValueShapeAndScopeSemantics();
         testDagBusinessSemantics();
         testExecutionStagesAndTargetSelection();
         testCandidateCardinalityAndDefaults();
@@ -573,6 +574,78 @@ public final class DagEngineSelfTest {
                 FeatureDagInitializationException.class,
                 () -> FeatureDagEngine.init(invalidOutputPolicyJson, InitOptions.offline("invalid-base-policy")));
         assert error.getMessage().contains("output_policy") : error.getMessage();
+    }
+
+    private static void testDeclaredValueShapeAndScopeSemantics() {
+        LogicalDag dag = buildDag(configWithDerivedShapeAndScopes("VECTOR", "[\"USER\", \"ITEM\"]"));
+        assert dag.node(dag.featureOutputNodeIds().get("candidate_score")).valueShape()
+                == ValueShape.CANDIDATE_VECTOR;
+        assert dag.node("source:user_score").valueShape() == ValueShape.SCALAR;
+        assert dag.node("source:user_history").valueShape() == ValueShape.SEQUENCE;
+
+        LogicalDag inferredBaseShapes = buildDag(configWithoutBaseValueShapes());
+        assert inferredBaseShapes.node("source:user_score").valueShape() == ValueShape.SCALAR;
+        assert inferredBaseShapes.node("source:user_history").valueShape() == ValueShape.SEQUENCE;
+
+        DagBuildException shapeError = expectThrows(DagBuildException.class,
+                () -> buildDag(configWithDerivedShapeAndScopes("SCALAR", "[\"USER\", \"ITEM\"]")));
+        assert shapeError.getMessage().contains(
+                "Declared value shape mismatch for feature candidate_score") : shapeError.getMessage();
+
+        DagBuildException scopeError = expectThrows(DagBuildException.class,
+                () -> buildDag(configWithDerivedShapeAndScopes("VECTOR", "[\"USER\"]")));
+        assert scopeError.getMessage().contains(
+                "Declared entity scopes mismatch for feature candidate_score") : scopeError.getMessage();
+
+        IllegalArgumentException enumError = expectThrows(IllegalArgumentException.class,
+                () -> FeatureConfigMapper.map(
+                        FeatureConfigLoader.load(configWithValueShape("MATRIX")),
+                        ExecutionEnvironment.ONLINE,
+                        Set.of(),
+                        Map.of()));
+        assert enumError.getMessage().contains("Invalid value_shape for feature") : enumError.getMessage();
+    }
+
+    private static LogicalDag buildDag(String json) {
+        MappedFeatureSet mapped = FeatureConfigMapper.map(
+                FeatureConfigLoader.load(json),
+                ExecutionEnvironment.ONLINE,
+                Set.of(),
+                Map.of());
+        return new LogicalDagBuilder(new ExpressionParser(), OperatorRegistry.standard())
+                .build(mapped.definitions(), mapped.targetFeatures());
+    }
+
+    private static String configWithDerivedShapeAndScopes(String valueShape, String scopesJson) {
+        return """
+                {
+                  "features": [
+                    {"name":"user_score","raw_name":"user_score","type":"INT",
+                     "entity_scopes":["USER"],"value_shape":"SCALAR"},
+                    {"name":"user_history","raw_name":"user_history","type":"EVENT_SEQUENCE",
+                     "entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"item_score","raw_name":"item_score","type":"DOUBLE",
+                     "entity_scopes":["ITEM"],"value_shape":"VECTOR"},
+                    {"name":"candidate_score","type":"DOUBLE","definition_type":"DERIVED",
+                     "expression":"coalesce(item_score, user_score, 0)","output_policy":"OUTPUT",
+                     "entity_scopes":%s,"value_shape":"%s"},
+                    {"name":"history_output","type":"EVENT_SEQUENCE","definition_type":"DERIVED",
+                     "expression":"coalesce(user_history, user_history)","output_policy":"OUTPUT",
+                     "entity_scopes":["USER"],"value_shape":"SEQUENCE"}
+                  ],
+                  "feature_set_name":"declared_shape","version":"1"
+                }
+                """.formatted(scopesJson, valueShape);
+    }
+
+    private static String configWithoutBaseValueShapes() {
+        return configWithDerivedShapeAndScopes("VECTOR", "[\"USER\", \"ITEM\"]")
+                .replaceFirst(",\"value_shape\":\"SCALAR\"", "")
+                .replaceFirst(",\"value_shape\":\"SEQUENCE\"", "");
+    }
+
+    private static String configWithValueShape(String valueShape) {
+        return configWithDerivedShapeAndScopes(valueShape, "[\"USER\", \"ITEM\"]");
     }
 
     private static void testDagBusinessSemantics() {

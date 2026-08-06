@@ -21,6 +21,7 @@ import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.DagBuildException;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
+import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
@@ -79,6 +80,7 @@ public final class DagEngineSelfTest {
         testEmptySequenceAndOfflineOutputSet();
         testCandidateDeduplicationAndFusion();
         testDirectNestedCountIndustryFusion();
+        testObservableExtractIndustryPreventsFusion();
         testSequenceSelectionStrategies();
         testOfflineOnlineConsistency();
 
@@ -1045,6 +1047,42 @@ public final class DagEngineSelfTest {
         assert sharedPlan.nodes().stream()
                 .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
                 : "A shared extractIndustry operator must not be eliminated by fusion";
+    }
+
+    private static void testObservableExtractIndustryPreventsFusion() {
+        OperatorRegistry operators = OperatorRegistry.standard();
+        LogicalDagBuilder builder = new LogicalDagBuilder(new ExpressionParser(), operators);
+        LogicalDagOptimizer optimizer = new LogicalDagOptimizer();
+        PhysicalPlanner planner = new PhysicalPlanner();
+        List<FeatureDefinition> definitions = List.of(
+                FeatureDefinition.raw("user_seq1", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                FeatureDefinition.raw("item_industry", DataType.STRING, EntityScope.ITEM, "unknown"),
+                FeatureDefinition.derived(
+                        "same_industry_count",
+                        DataType.INT,
+                        "count(extractIndustry(user_seq1, item_industry))",
+                        OutputPolicy.OUTPUT));
+        LogicalDag directDag = builder.build(definitions, Set.of("same_industry_count"));
+        String extractNodeId = directDag.nodes().values().stream()
+                .filter(node -> node instanceof com.example.featuredag.logical.OperatorNode operator
+                        && "extractIndustry".equals(operator.operatorName()))
+                .map(LogicalNode::nodeId)
+                .findFirst()
+                .orElseThrow();
+        Set<String> roots = new LinkedHashSet<>(directDag.rootNodeIds());
+        roots.add(extractNodeId);
+        LogicalDag observableExtractDag = new LogicalDag(
+                directDag.nodes(), roots, directDag.featureOutputNodeIds(), directDag.topologicalOrder());
+
+        PhysicalPlan plan = planner.plan(
+                optimizer.analyze(observableExtractDag), ExecutionEnvironment.ONLINE, "observable-extract");
+        assert plan.nodes().stream()
+                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                : "An observable extractIndustry operator must prevent count fusion";
+        assert plan.nodes().stream()
+                .anyMatch(node -> node.logicalNodeIds().equals(List.of(extractNodeId))
+                        && node.executorType() == ExecutorType.GENERIC_OPERATOR)
+                : "Observable extractIndustry must be planned generically";
     }
 
     private static void testSequenceSelectionStrategies() {

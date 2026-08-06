@@ -174,7 +174,8 @@ public final class PhysicalPlanner {
             if (!"COUNT_EXTRACT_INDUSTRY".equals(metadata.fusionCandidate())) continue;
             CountExtractIndustryMatch match = optimizer.matchCountExtractIndustry(dag, countNode).orElse(null);
             if (match == null) continue;
-            if (optimized.metadata().node(match.extractNodeId()).referenceCount() != 1) continue;
+            if (dag.rootNodeIds().contains(match.extractNodeId())
+                    || optimized.metadata().node(match.extractNodeId()).referenceCount() != 1) continue;
             boolean unsafeIntermediate = match.intermediateNodeIds().stream().anyMatch(intermediateNodeId ->
                     dag.rootNodeIds().contains(intermediateNodeId)
                             || optimized.metadata().node(intermediateNodeId).referenceCount() != 1);

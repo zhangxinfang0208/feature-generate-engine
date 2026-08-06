@@ -226,8 +226,7 @@ public final class OperatorRegistry {
                 args -> {
                     Object input = args.getFirst();
                     if (input instanceof SequenceValue) {
-                        throw new UnsupportedOperationException(
-                                "TODO: calc_delta_seq does not support SequenceValue inputs");
+                        throw new UnsupportedOperationException("TODO: calc_delta_seq");
                     }
                     if (!(input instanceof Collection<?> collection)) {
                         throw new IllegalArgumentException(

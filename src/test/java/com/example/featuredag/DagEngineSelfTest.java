@@ -300,7 +300,8 @@ public final class DagEngineSelfTest {
         UnsupportedOperationException sequenceDelta = expectThrows(
                 UnsupportedOperationException.class,
                 () -> registry.evaluate("calc_delta_seq", List.of(sequence(), 10)));
-        assert sequenceDelta.getMessage().contains("calc_delta_seq") : sequenceDelta.getMessage();
+        assert sequenceDelta.getMessage().equals("TODO: calc_delta_seq")
+                : sequenceDelta.getMessage();
 
         List<FeatureDefinition> inferenceDefinitions = new ArrayList<>(List.of(
                 FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 0.0),

@@ -48,9 +48,9 @@ public final class FeatureConfigMapper {
             String name = requireText(feature.name(), "features[].name");
             DefinitionType definitionType = parseDefinitionType(feature.definitionType(), name);
             boolean enabled = isEnabled(feature.toUse());
+            OutputPolicy configuredOutputPolicy = parseOutputPolicy(feature.outputPolicy(), name);
             OutputPolicy outputPolicy = definitionType == DefinitionType.BASE
-                    ? OutputPolicy.OUTPUT
-                    : parseOutputPolicy(feature.outputPolicy(), name);
+                    ? OutputPolicy.OUTPUT : configuredOutputPolicy;
             putUnique(entries, name, new DefinitionEntry(
                     definitionType, enabled, outputPolicy, declarationIndex));
 
@@ -223,14 +223,14 @@ public final class FeatureConfigMapper {
             String featureName,
             List<String> configuredScopes,
             Map<String, Set<EntityScope>> overrides) {
+        Set<EntityScope> result = new LinkedHashSet<>();
+        for (String scope : configuredScopes) {
+            result.add(parseEnum(EntityScope.class, scope, "entity scope for feature " + featureName));
+        }
         Set<EntityScope> override = overrides.get(featureName);
         if (override != null) {
             if (override.isEmpty()) return Set.of();
             return Collections.unmodifiableSet(new LinkedHashSet<>(override));
-        }
-        Set<EntityScope> result = new LinkedHashSet<>();
-        for (String scope : configuredScopes) {
-            result.add(parseEnum(EntityScope.class, scope, "entity scope for feature " + featureName));
         }
         return Collections.unmodifiableSet(result);
     }

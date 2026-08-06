@@ -69,6 +69,8 @@ public final class DagEngineSelfTest {
         testOnlinePublicApi();
         testOnlineEngineConcurrentReuse();
         testConfigurationAndRequestValidation();
+        testBaseOutputPolicyIsValidated();
+        testDeclaredScopeIsValidatedBeforeOverride();
         testDagBusinessSemantics();
         testExecutionStagesAndTargetSelection();
         testCandidateCardinalityAndDefaults();
@@ -545,6 +547,32 @@ public final class DagEngineSelfTest {
                         "explicit-null", explicitNullRow)));
         assert !explicitNull.getMessage().contains("Missing source feature")
                 : explicitNull.getMessage();
+    }
+
+    private static void testDeclaredScopeIsValidatedBeforeOverride() {
+        String invalidDeclaredScopeJson = onlineConfigJson().replace(
+                "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",\"dft\":0.0,\"entity_scopes\":[\"ITEM\"]",
+                "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",\"dft\":0.0,\"entity_scopes\":[\"OTHER\"]");
+        InitOptions override = InitOptions.builder()
+                .environment(ExecutionEnvironment.ONLINE)
+                .planId("invalid-declared-scope")
+                .rawFeatureScopes(Map.of("item_price", Set.of(EntityScope.ITEM)))
+                .build();
+
+        FeatureDagInitializationException error = expectThrows(
+                FeatureDagInitializationException.class,
+                () -> FeatureDagEngine.init(invalidDeclaredScopeJson, override));
+        assert error.getMessage().contains("OTHER") : error.getMessage();
+    }
+
+    private static void testBaseOutputPolicyIsValidated() {
+        String invalidOutputPolicyJson = intermediateConfigJson().replaceFirst(
+                "\"order\": 1", "\"order\": 1,\n                      \"output_policy\": \"BAD\"");
+
+        FeatureDagInitializationException error = expectThrows(
+                FeatureDagInitializationException.class,
+                () -> FeatureDagEngine.init(invalidOutputPolicyJson, InitOptions.offline("invalid-base-policy")));
+        assert error.getMessage().contains("output_policy") : error.getMessage();
     }
 
     private static void testDagBusinessSemantics() {

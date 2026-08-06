@@ -5,6 +5,7 @@ import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.FeatureRole;
 import com.example.featuredag.definition.OutputPolicy;
 import com.example.featuredag.expression.AstCall;
+import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstLiteral;
 import com.example.featuredag.expression.AstNode;
@@ -149,6 +150,13 @@ public final class LogicalDagBuilder {
         if (ast instanceof AstLiteral literal) {
             return createLiteralNode(literal.value(), owner, context);
         }
+        if (ast instanceof AstArrayLiteral arrayLiteral) {
+            List<Object> values = new ArrayList<>();
+            for (AstNode element : arrayLiteral.elements()) {
+                values.add(toLiteralValue(element));
+            }
+            return createLiteralNode(List.copyOf(values), owner, context);
+        }
         if (ast instanceof AstObjectLiteral objectLiteral) {
             Map<String, Object> value = new LinkedHashMap<>();
             for (Map.Entry<String, AstNode> entry : objectLiteral.fields().entrySet()) {
@@ -168,6 +176,13 @@ public final class LogicalDagBuilder {
 
     private Object toLiteralValue(AstNode node) {
         if (node instanceof AstLiteral literal) return literal.value();
+        if (node instanceof AstArrayLiteral arrayLiteral) {
+            List<Object> values = new ArrayList<>();
+            for (AstNode element : arrayLiteral.elements()) {
+                values.add(toLiteralValue(element));
+            }
+            return List.copyOf(values);
+        }
         if (node instanceof AstObjectLiteral objectLiteral) {
             Map<String, Object> map = new LinkedHashMap<>();
             for (Map.Entry<String, AstNode> entry : objectLiteral.fields().entrySet()) {
@@ -324,6 +339,11 @@ public final class LogicalDagBuilder {
     }
 
     private static String canonicalValue(Object value) {
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .map(LogicalDagBuilder::canonicalValue)
+                    .collect(Collectors.joining(",", "[", "]"));
+        }
         if (value instanceof Map<?, ?> map) {
             return map.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey((a, b) -> String.valueOf(a).compareTo(String.valueOf(b))))

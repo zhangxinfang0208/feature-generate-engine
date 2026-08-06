@@ -27,7 +27,11 @@ import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.DagBuildException;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
+import com.example.featuredag.logical.LogicalNode;
+import com.example.featuredag.logical.LiteralNode;
 import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.operator.OperatorDefinition;
+import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutionStage;
@@ -66,6 +70,8 @@ import java.util.stream.IntStream;
 public final class DagEngineSelfTest {
     public static void main(String[] args) throws Exception {
         testExtendedExpressionParsing();
+        testArrayLiteralDagConstruction();
+        testArrayLiteralDisabledFeatureReferenceValidation();
         testBusinessJsonParsing();
         testUnifiedFeatureJsonParsing();
         testLegacyDerivedFeaturesRejected();
@@ -163,6 +169,56 @@ public final class DagEngineSelfTest {
         assert ((AstLiteral) parser.parse("3.14")).value() instanceof Double;
         expectThrows(ExpressionParseException.class, () -> parser.parse("[1, 2"));
         expectThrows(ExpressionParseException.class, () -> parser.parse("f(a,)"));
+    }
+
+    private static void testArrayLiteralDagConstruction() {
+        OperatorRegistry registry = new OperatorRegistry().register(new OperatorDefinition() {
+            public String name() { return "arrayProbe"; }
+            public int minArguments() { return 2; }
+            public int maxArguments() { return 2; }
+            public boolean deterministic() { return true; }
+            public boolean parameterized() { return true; }
+            public boolean supportsSequenceView() { return false; }
+            public OperatorInference infer(List<LogicalNode> inputs) {
+                assert inputs.get(1) instanceof LiteralNode;
+                LiteralNode array = (LiteralNode) inputs.get(1);
+                assert array.value().equals(List.of(1, 10, 100));
+                assert array.outputType() == DataType.OBJECT;
+                assert array.valueShape() == ValueShape.OBJECT;
+                return new OperatorInference(DataType.INT, Set.of(EntityScope.ITEM), ValueShape.SCALAR);
+            }
+            public Object evaluate(List<Object> arguments) { return 0; }
+        });
+
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw("a", DataType.INT, EntityScope.ITEM, 0),
+                        FeatureDefinition.derived(
+                                "bucket", DataType.INT,
+                                "arrayProbe(a, [1, 10, 100])", OutputPolicy.OUTPUT)),
+                Set.of("bucket"));
+
+        assert dag.featureOutputNodeIds().containsKey("bucket") : dag.featureOutputNodeIds();
+    }
+
+    private static void testArrayLiteralDisabledFeatureReferenceValidation() {
+        FeatureSetConfig config = FeatureConfigLoader.load("""
+                {
+                  "features": [
+                    {"name":"a","raw_name":"a","type":"INT","definition_type":"BASE","to_use":true},
+                    {"name":"hidden","raw_name":"hidden","type":"INT","definition_type":"BASE","to_use":false},
+                    {"name":"bucket","type":"INT","definition_type":"DERIVED",
+                     "expression":"arrayProbe(a, [[hidden]])","to_use":true,"output_policy":"OUTPUT"}
+                  ],
+                  "feature_set_name":"array-reference-validation","version":"latest"
+                }
+                """);
+
+        IllegalArgumentException error = expectThrows(
+                IllegalArgumentException.class,
+                () -> FeatureConfigMapper.map(config, ExecutionEnvironment.OFFLINE, Set.of(), Map.of()));
+        assert error.getMessage().contains("hidden") && error.getMessage().contains("disabled")
+                : error.getMessage();
     }
 
     private static void testBusinessJsonParsing() {

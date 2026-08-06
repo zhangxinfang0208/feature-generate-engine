@@ -6,6 +6,7 @@ import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.FeatureRole;
 import com.example.featuredag.definition.OutputPolicy;
 import com.example.featuredag.expression.AstCall;
+import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstNode;
 import com.example.featuredag.expression.AstObjectLiteral;
@@ -203,6 +204,10 @@ public final class FeatureConfigMapper {
         } else if (node instanceof AstCall call) {
             for (AstNode argument : call.arguments()) {
                 collectFeatureReferences(argument, references);
+            }
+        } else if (node instanceof AstArrayLiteral arrayLiteral) {
+            for (AstNode element : arrayLiteral.elements()) {
+                collectFeatureReferences(element, references);
             }
         } else if (node instanceof AstObjectLiteral objectLiteral) {
             for (AstNode field : objectLiteral.fields().values()) {

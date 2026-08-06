@@ -31,6 +31,8 @@ public final class ExpressionParser {
         RPAREN,
         LBRACE,
         RBRACE,
+        LBRACKET,
+        RBRACKET,
         COMMA,
         COLON,
         EOF
@@ -58,11 +60,16 @@ public final class ExpressionParser {
                 case ')' -> single(TokenType.RPAREN);
                 case '{' -> single(TokenType.LBRACE);
                 case '}' -> single(TokenType.RBRACE);
+                case '[' -> single(TokenType.LBRACKET);
+                case ']' -> single(TokenType.RBRACKET);
                 case ',' -> single(TokenType.COMMA);
                 case ':' -> single(TokenType.COLON);
                 case '"', '\'' -> stringToken(ch);
                 default -> {
                     if (isIdentifierStart(ch)) yield identifierToken();
+                    if (Character.isDigit(ch) && digitsAreFollowedByLeftParenthesis()) {
+                        yield identifierToken();
+                    }
                     if (Character.isDigit(ch) || (ch == '-' && index + 1 < source.length()
                             && Character.isDigit(source.charAt(index + 1)))) {
                         yield numberToken();
@@ -85,6 +92,12 @@ public final class ExpressionParser {
                 index++;
             }
             return new Token(TokenType.IDENTIFIER, source.substring(start, index), start, index);
+        }
+
+        private boolean digitsAreFollowedByLeftParenthesis() {
+            int end = index;
+            while (end < source.length() && Character.isDigit(source.charAt(end))) end++;
+            return end < source.length() && source.charAt(end) == '(';
         }
 
         private Token numberToken() {
@@ -162,15 +175,19 @@ public final class ExpressionParser {
                 case NUMBER -> parseNumber();
                 case STRING -> parseString();
                 case LBRACE -> parseObject();
+                case LBRACKET -> parseArray();
                 default -> throw error("Expected expression but found " + current.type());
             };
         }
 
         private AstNode parseIdentifierOrCall() {
             Token identifier = consume(TokenType.IDENTIFIER);
-            if (current.type() == TokenType.LPAREN) {
+            List<AstNode> arguments = new ArrayList<>();
+            Token end = identifier;
+            boolean hasCall = false;
+            while (current.type() == TokenType.LPAREN) {
+                hasCall = true;
                 consume(TokenType.LPAREN);
-                List<AstNode> arguments = new ArrayList<>();
                 if (current.type() != TokenType.RPAREN) {
                     do {
                         arguments.add(parseExpression());
@@ -178,7 +195,9 @@ public final class ExpressionParser {
                         consume(TokenType.COMMA);
                     } while (true);
                 }
-                Token end = consume(TokenType.RPAREN);
+                end = consume(TokenType.RPAREN);
+            }
+            if (hasCall) {
                 return new AstCall(identifier.text(), arguments, new SourceSpan(identifier.start(), end.end()));
             }
             return switch (identifier.text()) {
@@ -193,9 +212,11 @@ public final class ExpressionParser {
             Token token = consume(TokenType.NUMBER);
             Object value;
             try {
-                value = token.text().contains(".")
-                        ? Double.parseDouble(token.text())
-                        : Integer.parseInt(token.text());
+                if (token.text().contains(".")) {
+                    value = Double.parseDouble(token.text());
+                } else {
+                    value = Integer.parseInt(token.text());
+                }
             } catch (NumberFormatException ex) {
                 throw error("Invalid numeric literal: " + token.text());
             }
@@ -228,6 +249,20 @@ public final class ExpressionParser {
             }
             Token end = consume(TokenType.RBRACE);
             return new AstObjectLiteral(fields, new SourceSpan(start.start(), end.end()));
+        }
+
+        private AstNode parseArray() {
+            Token start = consume(TokenType.LBRACKET);
+            List<AstNode> elements = new ArrayList<>();
+            if (current.type() != TokenType.RBRACKET) {
+                do {
+                    elements.add(parseExpression());
+                    if (current.type() != TokenType.COMMA) break;
+                    consume(TokenType.COMMA);
+                } while (true);
+            }
+            Token end = consume(TokenType.RBRACKET);
+            return new AstArrayLiteral(elements, new SourceSpan(start.start(), end.end()));
         }
 
         private Token consume(TokenType expected) {

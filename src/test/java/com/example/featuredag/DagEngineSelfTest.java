@@ -17,6 +17,12 @@ import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.OutputPolicy;
 import com.example.featuredag.demo.ExampleFeatures;
+import com.example.featuredag.expression.AstArrayLiteral;
+import com.example.featuredag.expression.AstCall;
+import com.example.featuredag.expression.AstFeatureRef;
+import com.example.featuredag.expression.AstLiteral;
+import com.example.featuredag.expression.AstObjectLiteral;
+import com.example.featuredag.expression.ExpressionParseException;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.DagBuildException;
 import com.example.featuredag.logical.LogicalDag;
@@ -59,6 +65,7 @@ import java.util.stream.IntStream;
 /** Dependency-free self test. Run with java -ea. */
 public final class DagEngineSelfTest {
     public static void main(String[] args) throws Exception {
+        testExtendedExpressionParsing();
         testBusinessJsonParsing();
         testUnifiedFeatureJsonParsing();
         testLegacyDerivedFeaturesRejected();
@@ -130,6 +137,32 @@ public final class DagEngineSelfTest {
         assert ((Number) offlineResult.feature("same_industry_count").raw()).intValue() == 3;
 
         System.out.println("All DAG engine self tests passed.");
+    }
+
+    private static void testExtendedExpressionParsing() {
+        ExpressionParser parser = new ExpressionParser();
+        AstCall discrete = (AstCall) parser.parse("discrete(a, [1, 10, 100])");
+        AstArrayLiteral points = (AstArrayLiteral) discrete.arguments().get(1);
+        assert points.elements().stream()
+                .map(AstLiteral.class::cast)
+                .map(AstLiteral::value)
+                .toList().equals(List.of(1, 10, 100));
+
+        AstCall curried = (AstCall) parser.parse(
+                "slice_v3_typed({\"start\": 4})(time_impr_seq_th_f_1)");
+        assert curried.functionName().equals("slice_v3_typed");
+        assert curried.arguments().size() == 2;
+        assert curried.arguments().get(0) instanceof AstObjectLiteral;
+        assert curried.arguments().get(1) instanceof AstFeatureRef;
+
+        AstCall cast = (AstCall) parser.parse("64(CONTEXT.request_time)");
+        assert cast.functionName().equals("64");
+        assert ((AstFeatureRef) cast.arguments().getFirst()).featureName()
+                .equals("CONTEXT.request_time");
+        assert ((AstLiteral) parser.parse("42")).value() instanceof Integer;
+        assert ((AstLiteral) parser.parse("3.14")).value() instanceof Double;
+        expectThrows(ExpressionParseException.class, () -> parser.parse("[1, 2"));
+        expectThrows(ExpressionParseException.class, () -> parser.parse("f(a,)"));
     }
 
     private static void testBusinessJsonParsing() {

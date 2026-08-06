@@ -145,6 +145,7 @@ public final class DagEngineSelfTest {
                     "to_use": true,
                     "order": 3,
                     "is_feedback": "true",
+                    "definition_type": " ",
                     "entity_scopes": ["ITEM"],
                     "future_business_field": "kept"
                   }, {
@@ -239,8 +240,11 @@ public final class DagEngineSelfTest {
                       "raw_name": "raw_price",
                       "store_name": "price",
                       "type": "DOUBLE",
+                      "definition_type": "BASE",
                       "dft": 0.0,
                       "to_use": true,
+                      "entity_scopes": ["ITEM"],
+                      "value_shape": "SCALAR",
                       "order": 1
                     },
                     {
@@ -260,6 +264,8 @@ public final class DagEngineSelfTest {
                       "expression": "normalize(price, {\\\"method\\\":\\\"min_max\\\",\\\"min\\\":0,\\\"max\\\":1000})",
                       "to_use": true,
                       "output_policy": "INTERNAL_ONLY",
+                      "entity_scopes": ["ITEM"],
+                      "value_shape": "SCALAR",
                       "order": 1000
                     },
                     {
@@ -270,6 +276,8 @@ public final class DagEngineSelfTest {
                       "expression": "multiply(normalized_price, quality_score)",
                       "to_use": true,
                       "output_policy": "OUTPUT",
+                      "entity_scopes": ["ITEM", "USER"],
+                      "value_shape": "SCALAR",
                       "order": 1001
                     }
                   ],
@@ -368,23 +376,27 @@ public final class DagEngineSelfTest {
         return """
                 {
                   "features": [
-                    {"name":"user_click_count","raw_name":"user_click_count","type":"INT","dft":0,"entity_scopes":["USER"]},
-                    {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE","entity_scopes":["USER"]},
-                    {"name":"item_industry","raw_name":"item_industry","type":"STRING","dft":"unknown","entity_scopes":["ITEM"]},
-                    {"name":"item_price","raw_name":"item_price","type":"DOUBLE","dft":0.0,"entity_scopes":["ITEM"]},
+                    {"name":"user_click_count","raw_name":"user_click_count","type":"INT","definition_type":"BASE","dft":0,"entity_scopes":["USER"],"value_shape":"SCALAR"},
+                    {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE","definition_type":" ","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"item_industry","raw_name":"item_industry","type":"STRING","definition_type":null,"dft":"unknown","entity_scopes":["ITEM"],"value_shape":"SCALAR"},
+                    {"name":"item_price","raw_name":"item_price","type":"DOUBLE","dft":0.0,"entity_scopes":["ITEM"],"value_shape":"SCALAR"},
                     {
                       "name":"user_click_score",
                       "type":"DOUBLE",
                       "definition_type":"DERIVED",
                       "expression":"normalize(coalesce(user_click_count, 0), {\\\"method\\\":\\\"min_max\\\",\\\"min\\\":0,\\\"max\\\":100})",
-                      "output_policy":"INTERNAL_ONLY"
+                      "output_policy":"INTERNAL_ONLY",
+                      "entity_scopes":["USER"],
+                      "value_shape":"SCALAR"
                     },
                     {
                       "name":"same_industry_seq",
                       "type":"EVENT_SEQUENCE",
                       "definition_type":"DERIVED",
                       "expression":"extractIndustry(user_seq1, item_industry)",
-                      "output_policy":"INTERNAL_ONLY"
+                      "output_policy":"INTERNAL_ONLY",
+                      "entity_scopes":["USER", "ITEM"],
+                      "value_shape":"SEQUENCE"
                     },
                     {
                       "name":"same_industry_count",
@@ -393,6 +405,8 @@ public final class DagEngineSelfTest {
                       "definition_type":"DERIVED",
                       "expression":"count(same_industry_seq)",
                       "output_policy":"OUTPUT",
+                      "entity_scopes":["USER", "ITEM"],
+                      "value_shape":"SCALAR",
                       "order":1
                     },
                     {
@@ -400,7 +414,9 @@ public final class DagEngineSelfTest {
                       "type":"DOUBLE",
                       "definition_type":"DERIVED",
                       "expression":"log(add(item_price, 1))",
-                      "output_policy":"INTERNAL_ONLY"
+                      "output_policy":"INTERNAL_ONLY",
+                      "entity_scopes":["ITEM"],
+                      "value_shape":"SCALAR"
                     },
                     {
                       "name":"final_score",
@@ -409,6 +425,8 @@ public final class DagEngineSelfTest {
                       "definition_type":"DERIVED",
                       "expression":"multiply(user_click_score, item_price_log)",
                       "output_policy":"OUTPUT",
+                      "entity_scopes":["USER", "ITEM"],
+                      "value_shape":"SCALAR",
                       "order":2
                     }
                   ],
@@ -483,8 +501,8 @@ public final class DagEngineSelfTest {
         assert internalTarget.getMessage().contains("normalized_price") : internalTarget.getMessage();
 
         String disabledDependencyJson = intermediateConfigJson().replaceFirst(
-                "\"to_use\": true,\\R\\s+\"output_policy\": \"INTERNAL_ONLY\"",
-                "\"to_use\": false,\n                      \"output_policy\": \"INTERNAL_ONLY\"");
+                "(?s)(\"name\": \"normalized_price\".*?\"definition_type\": \"DERIVED\".*?\"to_use\": )true",
+                "$1false");
         FeatureDagInitializationException disabledDependency = expectThrows(
                 FeatureDagInitializationException.class,
                 () -> FeatureDagEngine.init(

@@ -62,7 +62,8 @@ java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar
 
 ## JSON 配置与公共 API
 
-配置沿用业务侧 `features`，并增加 `derivedFeatures`：
+配置使用单一的 `features` 数组；BASE 和 DERIVED 声明按依赖顺序共同放入其中。旧顶层
+`derivedFeatures` 格式会在加载时被拒绝。
 
 ```json
 {
@@ -72,31 +73,38 @@ java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar
       "raw_name": "raw_price",
       "store_name": "price",
       "type": "DOUBLE",
+      "definition_type": "BASE",
       "dft": 0.0,
       "to_use": true,
-      "entity_scopes": ["ITEM"]
+      "entity_scopes": ["ITEM"],
+      "value_shape": "SCALAR"
     },
     {
       "name": "quality_score",
       "raw_name": "quality_score",
       "type": "DOUBLE",
       "dft": 0.0,
-      "entity_scopes": ["ITEM"]
-    }
-  ],
-  "derivedFeatures": [
+      "entity_scopes": ["ITEM"],
+      "value_shape": "SCALAR"
+    },
     {
       "name": "normalized_price",
       "type": "DOUBLE",
+      "definition_type": "DERIVED",
       "expression": "normalize(price, {\"min\":0,\"max\":1000})",
-      "output_policy": "INTERNAL_ONLY"
+      "output_policy": "INTERNAL_ONLY",
+      "entity_scopes": ["ITEM"],
+      "value_shape": "SCALAR"
     },
     {
       "name": "price_score",
       "store_name": "price_score_out",
       "type": "DOUBLE",
+      "definition_type": "DERIVED",
       "expression": "multiply(normalized_price, quality_score)",
-      "output_policy": "OUTPUT"
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["ITEM"],
+      "value_shape": "SCALAR"
     }
   ],
   "feature_set_name": "test_001",
@@ -107,6 +115,10 @@ java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar
 - `name` 是表达式引用的逻辑名。
 - `raw_name` 是 `generate` 输入 Map 中的字段名。
 - `store_name` 是最终结果 Map 中的字段名。
+- `definition_type` 明确枚举为 `BASE` 或 `DERIVED`；BASE 省略、`null` 或空白时，为兼容历史配置仍按 `BASE` 处理。DERIVED 必须提供 `expression`，BASE 的 `expression` 必须为空。
+- `entity_scopes` 可声明 `USER`、`SCENE`、`ITEM`。BASE 的范围用于源特征；DERIVED 的非空声明会与表达式推导结果校验一致。
+- `value_shape` 可声明 `SCALAR`、`SEQUENCE`、`VECTOR`。`VECTOR` 是配置边界的名称，内部映射为候选维度向量；DERIVED 的声明同样会与推导形状校验一致。
+- `expression` 是 DERIVED 特征的表达式文本；`output_policy` 使用 `OUTPUT` 或 `INTERNAL_ONLY` 控制最终输出边界。
 - `INTERNAL_ONLY` 特征会进入依赖闭包，但不会出现在结果中。
 - 在线依赖到的原始特征必须通过 JSON 或 `InitOptions.rawFeatureScopes` 声明 `USER`、`SCENE` 或 `ITEM`。
 

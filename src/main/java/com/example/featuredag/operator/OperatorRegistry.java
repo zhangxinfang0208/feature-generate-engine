@@ -100,9 +100,13 @@ public final class OperatorRegistry {
                     throw new IllegalArgumentException("count does not support: " + value.getClass());
                 }));
 
-        registry.register(simple("add", 2, 2, true, false, false,
+        registry.register(simple("add", 2, Integer.MAX_VALUE, true, false, false,
                 inputs -> new OperatorInference(DataType.DOUBLE, unionScopes(inputs), ValueShape.SCALAR),
-                args -> asNumber(args.get(0)).doubleValue() + asNumber(args.get(1)).doubleValue()));
+                args -> {
+                    double result = 0.0;
+                    for (Object arg : args) result += asNumber(arg).doubleValue();
+                    return result;
+                }));
 
         registry.register(simple("log", 1, 1, true, false, false,
                 inputs -> new OperatorInference(DataType.DOUBLE, unionScopes(inputs), ValueShape.SCALAR),
@@ -112,7 +116,149 @@ public final class OperatorRegistry {
                 inputs -> new OperatorInference(DataType.DOUBLE, unionScopes(inputs), ValueShape.SCALAR),
                 args -> asNumber(args.get(0)).doubleValue() * asNumber(args.get(1)).doubleValue()));
 
+        registerSequenceOperators(registry);
+        registerConversionOperators(registry);
+        registerScalarOperators(registry);
+        registerOpsListOperators(registry);
         return registry;
+    }
+
+    private static void registerSequenceOperators(OperatorRegistry registry) {
+        registry.register(simple("find_list_index_typed", 2, 2, true, false, true,
+                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("find_list_index_typed")));
+        registry.register(simple("list_index_typed", 2, 2, true, false, true,
+                passThrough(0), unsupported("list_index_typed")));
+        registry.register(simple("greater_in_sequence_typed", 3, 3, true, true, true,
+                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("greater_in_sequence_typed")));
+        registry.register(simple("greater_than_index_typed", 3, 3, true, true, true,
+                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("greater_than_index_typed")));
+        registry.register(simple("reverse_typed", 1, 1, true, false, true,
+                passThrough(0), unsupported("reverse_typed")));
+        registry.register(simple("slice_v3_typed", 2, 2, true, true, true,
+                passThrough(1), unsupported("slice_v3_typed")));
+        registry.register(simple("intersection_typed", 2, 2, true, false, true,
+                passThrough(0), unsupported("intersection_typed")));
+        registry.register(simple("uniq_key_index", 1, 1, true, false, true,
+                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("uniq_key_index")));
+        registry.register(simple("list_2_map", 2, 2, true, false, false,
+                fixed(DataType.OBJECT, ValueShape.OBJECT), unsupported("list_2_map")));
+        registry.register(simple("thf_default_", 2, 2, true, false, true,
+                passThrough(1), unsupported("thf_default_")));
+    }
+
+    private static void registerConversionOperators(OperatorRegistry registry) {
+        registry.register(simple("64", 1, 1, true, false, true,
+                passThrough(0), unsupported("64")));
+        registry.register(simple("value2key", 1, 1, true, false, true,
+                passThrough(0), unsupported("value2key")));
+        registry.register(simple("k2v", 1, 1, true, false, true,
+                passThrough(0), unsupported("k2v")));
+        registry.register(simple("k2v_f", 1, 1, true, false, true,
+                fixed(DataType.DOUBLE, ValueShape.SEQUENCE), unsupported("k2v_f")));
+        registry.register(simple("v2v", 1, 1, true, false, true,
+                passThrough(0), unsupported("v2v")));
+        registry.register(simple("multi_v2", 1, 1, true, false, true,
+                passThrough(0), unsupported("multi_v2")));
+    }
+
+    private static void registerScalarOperators(OperatorRegistry registry) {
+        registry.register(simple("sub", 2, 2, true, false, false,
+                fixed(DataType.DOUBLE, ValueShape.SCALAR),
+                args -> asNumber(args.get(0)).doubleValue()
+                        - asNumber(args.get(1)).doubleValue()));
+        registry.register(simple("sign", 1, 1, true, false, false,
+                fixed(DataType.INT, ValueShape.SCALAR),
+                args -> {
+                    double value = asNumber(args.getFirst()).doubleValue();
+                    if (value < 0.0) return -1;
+                    if (value > 0.0) return 1;
+                    return 0;
+                }));
+        registry.register(simple("list_multi", 3, 3, true, true, true,
+                fixed(DataType.DOUBLE, ValueShape.SEQUENCE), unsupported("list_multi")));
+        registry.register(simple("div_num", 2, 2, true, true, false,
+                fixed(DataType.DOUBLE, ValueShape.SCALAR),
+                args -> {
+                    double value = asNumber(args.getFirst()).doubleValue();
+                    Map<?, ?> params = asMap(args.getLast());
+                    double divisor = getDouble(params, "divisor", 1.0);
+                    if (divisor == 0.0) {
+                        throw new IllegalArgumentException("divisor must not be zero");
+                    }
+                    return value / divisor;
+                }));
+        registry.register(simple("round", 1, 1, true, false, false,
+                fixed(DataType.INT, ValueShape.SCALAR),
+                args -> Math.toIntExact(Math.round(asNumber(args.getFirst()).doubleValue()))));
+        registry.register(simple("dis2xl", 2, 2, true, true, false,
+                fixed(DataType.INT, ValueShape.SCALAR), unsupported("dis2xl")));
+        registry.register(simple("default_key_if", 2, 2, true, true, false,
+                passThrough(0), unsupported("default_key_if")));
+    }
+
+    private static void registerOpsListOperators(OperatorRegistry registry) {
+        registry.register(simple("discrete", 2, 2, true, true, false,
+                fixed(DataType.INT, ValueShape.SCALAR), unsupported("discrete")));
+        registry.register(simple("log_base", 3, 3, true, false, false,
+                fixed(DataType.DOUBLE, ValueShape.SCALAR),
+                args -> {
+                    double value = asNumber(args.get(0)).doubleValue();
+                    double base = asNumber(args.get(1)).doubleValue();
+                    double upbound = asNumber(args.get(2)).doubleValue();
+                    if (!Double.isFinite(base) || base <= 0.0 || base == 1.0) {
+                        throw new IllegalArgumentException(
+                                "base must be finite, greater than zero, and not equal to one");
+                    }
+                    return Math.log(Math.min(value, upbound)) / Math.log(base);
+                }));
+        registry.register(simple("slice_by_indices", 2, 2, true, true, true,
+                passThrough(0), unsupported("slice_by_indices")));
+        registry.register(simple("find_indices", 2, 2, true, false, true,
+                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("find_indices")));
+        registry.register(simple("get_seq_length", 1, 1, true, false, false,
+                fixed(DataType.INT, ValueShape.SCALAR), unsupported("get_seq_length")));
+        registry.register(simple("count_distinct", 1, 1, true, false, false,
+                fixed(DataType.INT, ValueShape.SCALAR), unsupported("count_distinct")));
+        registry.register(simple("zip_concat", 2, Integer.MAX_VALUE, true, false, true,
+                fixed(DataType.STRING, ValueShape.SEQUENCE), unsupported("zip_concat")));
+        registry.register(simple("calc_delta_seq", 2, 2, true, false, true,
+                fixed(DataType.DOUBLE, ValueShape.SEQUENCE),
+                args -> {
+                    Object input = args.getFirst();
+                    if (input instanceof SequenceValue) {
+                        throw new UnsupportedOperationException("TODO: calc_delta_seq");
+                    }
+                    if (!(input instanceof Collection<?> collection)) {
+                        throw new IllegalArgumentException(
+                                "calc_delta_seq expects a collection input, got: " + input);
+                    }
+                    double base = asNumber(args.get(1)).doubleValue();
+                    List<Double> result = new ArrayList<>(collection.size());
+                    for (Object value : collection) {
+                        result.add(base - asNumber(value).doubleValue());
+                    }
+                    return List.copyOf(result);
+                }));
+    }
+
+    private static java.util.function.Function<List<LogicalNode>, OperatorInference> passThrough(
+            int inputIndex) {
+        return inputs -> {
+            LogicalNode input = inputs.get(inputIndex);
+            return new OperatorInference(input.outputType(), unionScopes(inputs), input.valueShape());
+        };
+    }
+
+    private static java.util.function.Function<List<LogicalNode>, OperatorInference> fixed(
+            DataType outputType,
+            ValueShape valueShape) {
+        return inputs -> new OperatorInference(outputType, unionScopes(inputs), valueShape);
+    }
+
+    private static java.util.function.Function<List<Object>, Object> unsupported(String name) {
+        return args -> {
+            throw new UnsupportedOperationException("TODO: " + name);
+        };
     }
 
     private static OperatorDefinition simple(

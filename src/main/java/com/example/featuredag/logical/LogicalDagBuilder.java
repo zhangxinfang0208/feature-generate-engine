@@ -5,6 +5,7 @@ import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.FeatureRole;
 import com.example.featuredag.definition.OutputPolicy;
 import com.example.featuredag.expression.AstCall;
+import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstLiteral;
 import com.example.featuredag.expression.AstNode;
@@ -25,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * Builds a target-driven logical DAG. AST objects are temporary and never
@@ -149,6 +149,13 @@ public final class LogicalDagBuilder {
         if (ast instanceof AstLiteral literal) {
             return createLiteralNode(literal.value(), owner, context);
         }
+        if (ast instanceof AstArrayLiteral arrayLiteral) {
+            List<Object> values = new ArrayList<>();
+            for (AstNode element : arrayLiteral.elements()) {
+                values.add(toLiteralValue(element));
+            }
+            return createLiteralNode(immutableLiteralList(values), owner, context);
+        }
         if (ast instanceof AstObjectLiteral objectLiteral) {
             Map<String, Object> value = new LinkedHashMap<>();
             for (Map.Entry<String, AstNode> entry : objectLiteral.fields().entrySet()) {
@@ -168,6 +175,13 @@ public final class LogicalDagBuilder {
 
     private Object toLiteralValue(AstNode node) {
         if (node instanceof AstLiteral literal) return literal.value();
+        if (node instanceof AstArrayLiteral arrayLiteral) {
+            List<Object> values = new ArrayList<>();
+            for (AstNode element : arrayLiteral.elements()) {
+                values.add(toLiteralValue(element));
+            }
+            return immutableLiteralList(values);
+        }
         if (node instanceof AstObjectLiteral objectLiteral) {
             Map<String, Object> map = new LinkedHashMap<>();
             for (Map.Entry<String, AstNode> entry : objectLiteral.fields().entrySet()) {
@@ -176,6 +190,10 @@ public final class LogicalDagBuilder {
             return map;
         }
         throw new DagBuildException("Object literal values must be literals; found: " + node.getClass().getSimpleName());
+    }
+
+    private static List<Object> immutableLiteralList(List<Object> values) {
+        return Collections.unmodifiableList(new ArrayList<>(values));
     }
 
     private String createLiteralNode(Object value, FeatureDefinition owner, BuildContext context) {
@@ -324,14 +342,45 @@ public final class LogicalDagBuilder {
     }
 
     private static String canonicalValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            return map.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey((a, b) -> String.valueOf(a).compareTo(String.valueOf(b))))
-                    .map(entry -> String.valueOf(entry.getKey()) + "=" + canonicalValue(entry.getValue()))
-                    .collect(Collectors.joining(",", "{", "}"));
+        if (value == null) {
+            return frame("N", "");
         }
-        return String.valueOf(value);
+        if (value instanceof List<?> list) {
+            StringBuilder payload = new StringBuilder();
+            for (Object element : list) {
+                payload.append(frame("E", canonicalValue(element)));
+            }
+            return frame("L", payload.toString());
+        }
+        if (value instanceof Map<?, ?> map) {
+            List<CanonicalMapEntry> entries = new ArrayList<>(map.size());
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                entries.add(new CanonicalMapEntry(
+                        canonicalValue(entry.getKey()), canonicalValue(entry.getValue())));
+            }
+            entries.sort((left, right) -> {
+                int keyComparison = left.key().compareTo(right.key());
+                return keyComparison != 0
+                        ? keyComparison
+                        : left.value().compareTo(right.value());
+            });
+            StringBuilder payload = new StringBuilder();
+            for (CanonicalMapEntry entry : entries) {
+                payload.append(frame("K", entry.key()));
+                payload.append(frame("V", entry.value()));
+            }
+            return frame("M", payload.toString());
+        }
+        String atom = frame("T", value.getClass().getName())
+                + frame("V", String.valueOf(value));
+        return frame("A", atom);
     }
+
+    private static String frame(String tag, String payload) {
+        return tag + payload.length() + ":" + payload;
+    }
+
+    private record CanonicalMapEntry(String key, String value) {}
 
     private enum VisitState { VISITING, VISITED }
 

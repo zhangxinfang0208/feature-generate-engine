@@ -1,5 +1,7 @@
 package com.example.featuredag.physical;
 
+import com.example.featuredag.logical.ValueShape;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,6 +14,7 @@ public final class PhysicalNode {
     private final ExecutorType executorType;
     private final ExecutionStage executionStage;
     private final ExecutionMode executionMode;
+    private final ValueShape logicalValueShape;
     private final List<String> inputSlots;
     private final String outputSlot;
     private final CachePolicy cachePolicy;
@@ -24,6 +27,7 @@ public final class PhysicalNode {
             ExecutorType executorType,
             ExecutionStage executionStage,
             ExecutionMode executionMode,
+            ValueShape logicalValueShape,
             List<String> inputSlots,
             String outputSlot,
             CachePolicy cachePolicy,
@@ -34,6 +38,7 @@ public final class PhysicalNode {
         this.executorType = Objects.requireNonNull(executorType, "executorType");
         this.executionStage = Objects.requireNonNull(executionStage, "executionStage");
         this.executionMode = Objects.requireNonNull(executionMode, "executionMode");
+        this.logicalValueShape = Objects.requireNonNull(logicalValueShape, "logicalValueShape");
         this.inputSlots = List.copyOf(inputSlots);
         this.outputSlot = Objects.requireNonNull(outputSlot, "outputSlot");
         this.cachePolicy = Objects.requireNonNull(cachePolicy, "cachePolicy");
@@ -46,6 +51,7 @@ public final class PhysicalNode {
     public ExecutorType executorType() { return executorType; }
     public ExecutionStage executionStage() { return executionStage; }
     public ExecutionMode executionMode() { return executionMode; }
+    public ValueShape logicalValueShape() { return logicalValueShape; }
     public List<String> inputSlots() { return inputSlots; }
     public String outputSlot() { return outputSlot; }
     public CachePolicy cachePolicy() { return cachePolicy; }

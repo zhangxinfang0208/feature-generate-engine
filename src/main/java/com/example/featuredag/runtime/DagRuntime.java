@@ -1,5 +1,6 @@
 package com.example.featuredag.runtime;
 
+import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutorType;
 import com.example.featuredag.physical.PhysicalNode;
@@ -47,7 +48,7 @@ public final class DagRuntime {
         try {
             ValueHandle result = switch (node.executorType()) {
                 case SOURCE_BINDING -> executeSource(node, context);
-                case LITERAL -> wrap(node.executorConfig().get("value"));
+                case LITERAL -> wrap(node.executorConfig().get("value"), node.logicalValueShape());
                 case FEATURE_OUTPUT -> requireSingleInput(node, context);
                 case GENERIC_OPERATOR -> executeGenericOperator(node, context);
                 case COUNT_INDUSTRY_BATCH -> executeCountIndustryBatch(node, context, state);
@@ -85,12 +86,12 @@ public final class DagRuntime {
             return new CandidateVectorValue(values);
         }
         if (context.sharedSourceValues().containsKey(featureName)) {
-            return wrap(context.sharedSourceValues().get(featureName));
+            return wrap(context.sharedSourceValues().get(featureName), node.logicalValueShape());
         }
         if (defaultValue == null) {
             throw new IllegalArgumentException("Missing source feature: " + featureName);
         }
-        return wrap(defaultValue);
+        return wrap(defaultValue, node.logicalValueShape());
     }
 
     private ValueHandle executeGenericOperator(PhysicalNode node, ExecutionContext context) {
@@ -98,7 +99,8 @@ public final class DagRuntime {
         List<ValueHandle> inputHandles = node.inputSlots().stream()
                 .map(slot -> requireSlot(context, slot))
                 .toList();
-        return vectorizedApply(operatorName, inputHandles, context.candidateCount());
+        return vectorizedApply(
+                operatorName, inputHandles, context.candidateCount(), node.logicalValueShape());
     }
 
     private ValueHandle executeCountIndustryBatch(
@@ -153,11 +155,12 @@ public final class DagRuntime {
     private ValueHandle vectorizedApply(
             String operatorName,
             List<ValueHandle> inputHandles,
-            int candidateCount) {
+            int candidateCount,
+            ValueShape logicalValueShape) {
         boolean vector = inputHandles.stream().anyMatch(handle -> handle instanceof CandidateVectorValue);
         if (!vector) {
             List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
-            return wrap(operatorRegistry.evaluate(operatorName, args));
+            return wrap(operatorRegistry.evaluate(operatorName, args), logicalValueShape);
         }
         int size = candidateCount;
         if (size <= 0) {
@@ -203,9 +206,11 @@ public final class DagRuntime {
         return result;
     }
 
-    private static ValueHandle wrap(Object value) {
+    private static ValueHandle wrap(Object value, ValueShape logicalValueShape) {
         if (value instanceof ValueHandle handle) return handle;
-        if (value instanceof List<?> list) return new CandidateVectorValue(new ArrayList<>(list));
+        if (logicalValueShape != ValueShape.OBJECT && value instanceof List<?> list) {
+            return new CandidateVectorValue(new ArrayList<>(list));
+        }
         return new ScalarValue(value);
     }
 }

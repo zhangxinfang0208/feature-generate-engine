@@ -30,6 +30,7 @@ import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.LiteralNode;
+import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorInference;
@@ -48,9 +49,11 @@ import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExecutionResult;
 import com.example.featuredag.runtime.IndexSelection;
 import com.example.featuredag.runtime.RangeSelection;
+import com.example.featuredag.runtime.ScalarValue;
 import com.example.featuredag.runtime.SequenceBlock;
 import com.example.featuredag.runtime.SequenceEvent;
 import com.example.featuredag.runtime.SequenceView;
+import com.example.featuredag.runtime.ValueHandle;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -73,9 +76,13 @@ public final class DagEngineSelfTest {
         testExtendedExpressionParsing();
         testCompleteBusinessExpressionParsing();
         testArrayLiteralDagConstruction();
+        testNullArrayLiteralDagConstruction();
+        testObjectListsRemainScalarAtRuntime();
+        testLiteralCanonicalizationSeparatesTypesAndBoundaries();
         testDiscreteFeatureDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
         testBusinessOperatorRegistry();
+        testAllBusinessOperatorExpressionsBuildAndInfer();
         testBusinessJsonParsing();
         testUnifiedFeatureJsonParsing();
         testLegacyDerivedFeaturesRejected();
@@ -176,7 +183,8 @@ public final class DagEngineSelfTest {
     }
 
     private static void testCompleteBusinessExpressionParsing() {
-        // The supplied fixture omitted two terminal ')' characters; this is its balanced form.
+        // The supplied fixture had misplaced closing parentheses. This form preserves every
+        // operator and argument while closing each call at its documented arity boundary.
         String expression = """
                 default_key_if(
                   dis2xl(
@@ -184,33 +192,115 @@ public final class DagEngineSelfTest {
                       div_num(
                         add(
                           list_multi(
-                            k2v_f(list_index_typed(staytimes, reverse_typed(slice_v3_typed({"start": 4})(reverse_typed(
-                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
-                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
-                                find_list_index_typed(action_types, 1)
-                              )))
-                            )))),
-                            multi_v2(sign(add(list_index_typed(action_times, reverse_typed(slice_v3_typed({"start": 4})(reverse_typed(
-                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
-                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
-                                find_list_index_typed(action_types, 1)
-                              )))
-                            ))), 1)))),
+                            k2v_f(
+                              list_index_typed(
+                                staytimes,
+                                reverse_typed(
+                                  slice_v3_typed({"start": 4})(
+                                    reverse_typed(
+                                      uniq_key_index(
+                                        list_index_typed(
+                                          goods_ids,
+                                          intersection_typed(
+                                            greater_in_sequence_typed(
+                                              action_times,
+                                              request_time,
+                                              {"margin": 3600000}
+                                            ),
+                                            find_list_index_typed(action_types, 1)
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            ),
+                            multi_v2(
+                              sign(
+                                add(
+                                  list_index_typed(
+                                    action_times,
+                                    reverse_typed(
+                                      slice_v3_typed({"start": 4})(
+                                        reverse_typed(
+                                          uniq_key_index(
+                                            list_index_typed(
+                                              goods_ids,
+                                              intersection_typed(
+                                                greater_in_sequence_typed(
+                                                  action_times,
+                                                  request_time,
+                                                  {"margin": 3600000}
+                                                ),
+                                                find_list_index_typed(action_types, 1)
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  ),
+                                  1
+                                )
+                              )
+                            ),
                             {"multi_factor": -1}
                           ),
                           list_multi(
-                            k2v_f(list_index_typed(staytimes, reverse_typed(slice_v3_typed({"start": 0})(reverse_typed(
-                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
-                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
-                                find_list_index_typed(action_types, 1)
-                              )))
-                            )))),
-                            multi_v2(sign(add(list_index_typed(action_times, reverse_typed(slice_v3_typed({"start": 0})(reverse_typed(
-                              uniq_key_index(list_index_typed(goods_ids, intersection_typed(
-                                greater_in_sequence_typed(action_times, request_time, {"margin": 3600000}),
-                                find_list_index_typed(action_types, 1)
-                              )))
-                            ))), 1)))),
+                            k2v_f(
+                              list_index_typed(
+                                staytimes,
+                                reverse_typed(
+                                  slice_v3_typed({"start": 0})(
+                                    reverse_typed(
+                                      uniq_key_index(
+                                        list_index_typed(
+                                          goods_ids,
+                                          intersection_typed(
+                                            greater_in_sequence_typed(
+                                              action_times,
+                                              request_time,
+                                              {"margin": 3600000}
+                                            ),
+                                            find_list_index_typed(action_types, 1)
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            ),
+                            multi_v2(
+                              sign(
+                                add(
+                                  list_index_typed(
+                                    action_times,
+                                    reverse_typed(
+                                      slice_v3_typed({"start": 0})(
+                                        reverse_typed(
+                                          uniq_key_index(
+                                            list_index_typed(
+                                              goods_ids,
+                                              intersection_typed(
+                                                greater_in_sequence_typed(
+                                                  action_times,
+                                                  request_time,
+                                                  {"margin": 3600000}
+                                                ),
+                                                find_list_index_typed(action_types, 1)
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  ),
+                                  1
+                                )
+                              )
+                            ),
                             {"multi_factor": 1}
                           )
                         ),
@@ -220,7 +310,7 @@ public final class DagEngineSelfTest {
                     {"divisor": 1000, "discrete_key": "ntg_impr_seq_f_1h_sec_disc_rt"}
                   ),
                   {"default_key": -1}
-                )))
+                )
                 """;
 
         AstCall parsed = (AstCall) new ExpressionParser().parse(expression);
@@ -233,7 +323,83 @@ public final class DagEngineSelfTest {
                 "k2v_f", "list_index_typed", "reverse_typed", "slice_v3_typed",
                 "uniq_key_index", "intersection_typed", "greater_in_sequence_typed",
                 "find_list_index_typed", "multi_v2", "sign");
-        assert functionNames.containsAll(expectedNames) : functionNames;
+        assert functionNames.equals(expectedNames) : functionNames;
+        assert countCalls(parsed, "greater_in_sequence_typed") == 4;
+        assert countCalls(parsed, "find_list_index_typed") == 4;
+
+        OperatorRegistry registry = OperatorRegistry.standard();
+        for (String functionName : expectedNames) {
+            assert registry.require(functionName) != null : functionName;
+        }
+        assertCallArities(parsed, registry);
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "staytimes", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "goods_ids", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "action_times", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "action_types", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw("request_time", DataType.INT, EntityScope.SCENE, 0),
+                        FeatureDefinition.derived(
+                                "hp1h_imp_hpd_final", DataType.INT,
+                                expression, OutputPolicy.OUTPUT)),
+                Set.of("hp1h_imp_hpd_final"));
+        assertOutput(dag, "hp1h_imp_hpd_final", DataType.INT, ValueShape.SCALAR);
+        assert countOperatorNodes(dag, "greater_in_sequence_typed") == 1
+                : "greater_in_sequence_typed repeated subexpression was not deduplicated";
+        assert countOperatorNodes(dag, "find_list_index_typed") == 1
+                : "find_list_index_typed repeated subexpression was not deduplicated";
+    }
+
+    private static long countOperatorNodes(LogicalDag dag, String operatorName) {
+        return dag.nodes().values().stream()
+                .filter(OperatorNode.class::isInstance)
+                .map(OperatorNode.class::cast)
+                .filter(node -> node.operatorName().equals(operatorName))
+                .count();
+    }
+
+    private static int countCalls(AstNode node, String functionName) {
+        int count = node instanceof AstCall call && call.functionName().equals(functionName) ? 1 : 0;
+        if (node instanceof AstCall call) {
+            for (AstNode argument : call.arguments()) {
+                count += countCalls(argument, functionName);
+            }
+        } else if (node instanceof AstObjectLiteral objectLiteral) {
+            for (AstNode value : objectLiteral.fields().values()) {
+                count += countCalls(value, functionName);
+            }
+        } else if (node instanceof AstArrayLiteral arrayLiteral) {
+            for (AstNode element : arrayLiteral.elements()) {
+                count += countCalls(element, functionName);
+            }
+        }
+        return count;
+    }
+
+    private static void assertCallArities(AstNode node, OperatorRegistry registry) {
+        if (node instanceof AstCall call) {
+            OperatorDefinition definition = registry.require(call.functionName());
+            int argumentCount = call.arguments().size();
+            assert argumentCount >= definition.minArguments()
+                    && argumentCount <= definition.maxArguments()
+                    : call.functionName() + " arity=" + argumentCount + ", expected="
+                    + definition.minArguments() + ".." + definition.maxArguments();
+            for (AstNode argument : call.arguments()) {
+                assertCallArities(argument, registry);
+            }
+        } else if (node instanceof AstObjectLiteral objectLiteral) {
+            for (AstNode value : objectLiteral.fields().values()) {
+                assertCallArities(value, registry);
+            }
+        } else if (node instanceof AstArrayLiteral arrayLiteral) {
+            for (AstNode element : arrayLiteral.elements()) {
+                assertCallArities(element, registry);
+            }
+        }
     }
 
     private static void testArrayLiteralDagConstruction() {
@@ -264,6 +430,122 @@ public final class DagEngineSelfTest {
                 Set.of("bucket"));
 
         assert dag.featureOutputNodeIds().containsKey("bucket") : dag.featureOutputNodeIds();
+    }
+
+    private static void testNullArrayLiteralDagConstruction() {
+        LogicalDag dag = new LogicalDagBuilder(
+                new ExpressionParser(), OperatorRegistry.standard()).build(
+                List.of(FeatureDefinition.derived(
+                        "null_array", DataType.OBJECT,
+                        "[null, [null], {\"nested\": [null]}]", OutputPolicy.OUTPUT)),
+                Set.of("null_array"));
+        LiteralNode literal = (LiteralNode) dag.node(
+                dag.featureOutput("null_array").producerNodeId());
+        List<?> values = (List<?>) literal.value();
+
+        assert values.size() == 3 : values;
+        assert values.get(0) == null : values;
+        assert ((List<?>) values.get(1)).size() == 1;
+        assert ((List<?>) values.get(1)).getFirst() == null;
+        Map<?, ?> object = (Map<?, ?>) values.get(2);
+        assert ((List<?>) object.get("nested")).getFirst() == null : object;
+        expectThrows(UnsupportedOperationException.class, () -> clearList(values));
+        expectThrows(
+                UnsupportedOperationException.class,
+                () -> clearList((List<?>) values.get(1)));
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void clearList(List<?> values) {
+        ((List) values).clear();
+    }
+
+    private static void testObjectListsRemainScalarAtRuntime() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "object_source", DataType.OBJECT, EntityScope.USER, List.of()),
+                        FeatureDefinition.derived(
+                                "object_literal", DataType.OBJECT,
+                                "coalesce([1, \"two\"], null)", OutputPolicy.OUTPUT),
+                        FeatureDefinition.derived(
+                                "null_object_literal", DataType.OBJECT,
+                                "coalesce([null, [null]], null)", OutputPolicy.OUTPUT)),
+                linkedSet("object_source", "object_literal", "null_object_literal"));
+        PhysicalPlan plan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(dag),
+                ExecutionEnvironment.OFFLINE,
+                "object-list-runtime-shape");
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.offlineRow(
+                        "object-list-row", Map.of("object_source", List.of("x", "y"))));
+
+        ValueHandle source = result.feature("object_source");
+        ValueHandle literal = result.feature("object_literal");
+        assert source instanceof ScalarValue : source.getClass();
+        assert source.raw().equals(List.of("x", "y")) : source.raw();
+        assert literal instanceof ScalarValue : literal.getClass();
+        assert literal.raw().equals(List.of(1, "two")) : literal.raw();
+        ValueHandle nullLiteral = result.feature("null_object_literal");
+        assert nullLiteral instanceof ScalarValue : nullLiteral.getClass();
+        List<?> nullValues = (List<?>) nullLiteral.raw();
+        assert nullValues.getFirst() == null : nullValues;
+        assert ((List<?>) nullValues.get(1)).getFirst() == null : nullValues;
+    }
+
+    private static void testLiteralCanonicalizationSeparatesTypesAndBoundaries() {
+        List<FeatureDefinition> definitions = List.of(
+                FeatureDefinition.derived(
+                        "integer_list", DataType.OBJECT, "[1]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "string_list", DataType.OBJECT, "[\"1\"]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "boolean_list", DataType.OBJECT, "[true]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "boolean_string_list", DataType.OBJECT, "[\"true\"]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "comma_single", DataType.OBJECT, "[\"a,b\"]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "comma_split", DataType.OBJECT, "[\"a\", \"b\"]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "map_key_delimiter", DataType.OBJECT,
+                        "{\"a=b\": \"c\"}", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "map_value_delimiter", DataType.OBJECT,
+                        "{\"a\": \"b=c\"}", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "nested_integer_list", DataType.OBJECT, "[[1]]", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
+                        "nested_string_list", DataType.OBJECT, "[[\"1\"]]", OutputPolicy.OUTPUT));
+        Set<String> targets = definitions.stream()
+                .map(FeatureDefinition::name)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+
+        LogicalDag dag = new LogicalDagBuilder(
+                new ExpressionParser(), OperatorRegistry.standard()).build(definitions, targets);
+        Set<String> producerNodeIds = targets.stream()
+                .map(dag::featureOutput)
+                .map(output -> output.producerNodeId())
+                .collect(java.util.stream.Collectors.toSet());
+
+        assert producerNodeIds.size() == definitions.size()
+                : "Structurally distinct literals collided: " + producerNodeIds;
+
+        LogicalDag reorderedMapDag = new LogicalDagBuilder(
+                new ExpressionParser(), OperatorRegistry.standard()).build(
+                List.of(
+                        FeatureDefinition.derived(
+                                "map_order_one", DataType.OBJECT,
+                                "{\"a\": 1, \"b\": 2}", OutputPolicy.OUTPUT),
+                        FeatureDefinition.derived(
+                                "map_order_two", DataType.OBJECT,
+                                "{\"b\": 2, \"a\": 1}", OutputPolicy.OUTPUT)),
+                linkedSet("map_order_one", "map_order_two"));
+        assert reorderedMapDag.featureOutput("map_order_one").producerNodeId()
+                .equals(reorderedMapDag.featureOutput("map_order_two").producerNodeId())
+                : "Equivalent maps should retain canonical deduplication";
     }
 
     private static void testDiscreteFeatureDagConstruction() {
@@ -446,6 +728,156 @@ public final class DagEngineSelfTest {
         assertOutput(inferenceDag, "zipped", DataType.STRING, ValueShape.SEQUENCE);
         assertOutput(inferenceDag, "delta", DataType.DOUBLE, ValueShape.SEQUENCE);
     }
+
+    private static void testAllBusinessOperatorExpressionsBuildAndInfer() {
+        List<BusinessOperatorCase> cases = List.of(
+                new BusinessOperatorCase("64", "64(a)", DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "find_list_index_typed", "find_list_index_typed(seq, target)",
+                        DataType.INT, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "list_index_typed", "list_index_typed(seq, indexes)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "greater_in_sequence_typed",
+                        "greater_in_sequence_typed(seq, target, {\"margin\": 4000})",
+                        DataType.INT, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "greater_than_index_typed",
+                        "greater_than_index_typed(seq, target, {\"margin\": 3000})",
+                        DataType.INT, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "reverse_typed", "reverse_typed(seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "slice_v3_typed", "slice_v3_typed({\"start\": 2})(seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "intersection_typed", "intersection_typed(seq, seq2)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "uniq_key_index", "uniq_key_index(seq)",
+                        DataType.INT, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "list_2_map", "list_2_map(seq, seq2)",
+                        DataType.OBJECT, ValueShape.OBJECT),
+                new BusinessOperatorCase(
+                        "thf_default_", "thf_default_(mapping, seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "value2key", "value2key(seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "k2v", "k2v(seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "k2v_f", "k2v_f(seq)",
+                        DataType.DOUBLE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "v2v", "v2v(seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "multi_v2", "multi_v2(seq)",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "sub", "sub(a, b)", DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "add", "add(a, b, c)", DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "sign", "sign(a)", DataType.INT, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "list_multi", "list_multi(seq, seq2, {\"multi_factor\": -1})",
+                        DataType.DOUBLE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "div_num", "div_num(a, {\"divisor\": 2})",
+                        DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "round", "round(a)", DataType.INT, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "dis2xl",
+                        "dis2xl(a, {\"divisor\": 1000, \"discrete_key\": \"table1\"})",
+                        DataType.INT, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "default_key_if", "default_key_if(a, {\"default_key\": -1})",
+                        DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "discrete", "discrete(a, [1, 10, 100])",
+                        DataType.INT, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "log_base", "log_base(a, 2, 1000)",
+                        DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "slice_by_indices", "slice_by_indices(seq, [1, 3])",
+                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "find_indices", "find_indices(seq, a3)",
+                        DataType.INT, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "get_seq_length", "get_seq_length(seq)",
+                        DataType.INT, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "count_distinct", "count_distinct(seq)",
+                        DataType.INT, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "zip_concat", "zip_concat(seq, seq2)",
+                        DataType.STRING, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "calc_delta_seq", "calc_delta_seq(seq, a)",
+                        DataType.DOUBLE, ValueShape.SEQUENCE));
+        assert cases.stream()
+                .map(BusinessOperatorCase::operatorName)
+                .collect(java.util.stream.Collectors.toSet())
+                .size() == 32 : "Business operator cases must contain 32 distinct names";
+
+        OperatorRegistry registry = OperatorRegistry.standard();
+        ExpressionParser parser = new ExpressionParser();
+        List<FeatureDefinition> definitions = new ArrayList<>(List.of(
+                FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 0.0),
+                FeatureDefinition.raw("b", DataType.DOUBLE, EntityScope.USER, 0.0),
+                FeatureDefinition.raw("c", DataType.DOUBLE, EntityScope.SCENE, 0.0),
+                FeatureDefinition.raw("target", DataType.INT, EntityScope.ITEM, 0),
+                FeatureDefinition.raw("a3", DataType.INT, EntityScope.SCENE, 0),
+                FeatureDefinition.raw("seq", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                FeatureDefinition.raw("seq2", DataType.EVENT_SEQUENCE, EntityScope.ITEM, null),
+                FeatureDefinition.raw("indexes", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                FeatureDefinition.raw("mapping", DataType.OBJECT, EntityScope.SCENE, Map.of())));
+        Set<String> targets = new LinkedHashSet<>();
+        Map<String, BusinessOperatorCase> casesByFeature = new LinkedHashMap<>();
+        for (int index = 0; index < cases.size(); index++) {
+            BusinessOperatorCase operatorCase = cases.get(index);
+            AstCall parsed = (AstCall) parser.parse(operatorCase.expression());
+            assert parsed.functionName().equals(operatorCase.operatorName())
+                    : operatorCase.expression();
+            assertCallArities(parsed, registry);
+
+            String featureName = "business_operator_" + (index + 1);
+            definitions.add(FeatureDefinition.builder()
+                    .name(featureName)
+                    .dataType(DataType.UNKNOWN)
+                    .expressionContent(operatorCase.expression())
+                    .outputPolicy(OutputPolicy.OUTPUT)
+                    .build());
+            targets.add(featureName);
+            casesByFeature.put(featureName, operatorCase);
+        }
+
+        LogicalDag dag = new LogicalDagBuilder(parser, registry).build(definitions, targets);
+        assert casesByFeature.size() == 32 : casesByFeature.keySet();
+        for (Map.Entry<String, BusinessOperatorCase> entry : casesByFeature.entrySet()) {
+            BusinessOperatorCase operatorCase = entry.getValue();
+            assertOutput(
+                    dag,
+                    entry.getKey(),
+                    operatorCase.outputType(),
+                    operatorCase.valueShape());
+        }
+    }
+
+    private record BusinessOperatorCase(
+            String operatorName,
+            String expression,
+            DataType outputType,
+            ValueShape valueShape) {}
 
     private static void collectCallFunctionNames(AstNode node, Set<String> functionNames) {
         if (node instanceof AstCall call) {

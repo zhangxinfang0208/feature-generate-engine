@@ -22,6 +22,40 @@
 - 零拷贝序列：`SequenceBlock + SequenceView`。
 - 离线完整特征输出与在线子图执行。
 
+## 算子支持情况
+
+`OperatorRegistry.standard()` 当前注册 38 个算子。注册成功表示表达式可以完成解析、参数数量校验、类型/shape 推导和逻辑 DAG 构建；只有下表标记为“可执行”的算子支持 Runtime 计算。
+
+### 已支持 Runtime 计算
+
+| 算子 | 签名 | 计算能力 |
+|---|---|---|
+| `coalesce` | `coalesce(a, b, ...)` | 返回第一个非 `null` 的值 |
+| `normalize` | `normalize(a, {"min": m, "max": n})` | min-max 归一化 |
+| `extractIndustry` | `extractIndustry(seq, industry)` | 按行业过滤事件序列 |
+| `count` | `count(seq)` | 计算序列、集合或数组长度 |
+| `add` | `add(a, b, ...)` | 多个数值相加 |
+| `log` | `log(a)` | 自然对数 |
+| `multiply` | `multiply(a, b)` | 两个数值相乘 |
+| `sub` | `sub(a, b)` | 两个数值相减 |
+| `sign` | `sign(a)` | 返回 `-1`、`0` 或 `1` |
+| `div_num` | `div_num(a, {"divisor": d})` | 数值除法 |
+| `round` | `round(a)` | 四舍五入为整数 |
+| `log_base` | `log_base(a, base, upbound)` | 指定底数并带上限的对数计算 |
+| `calc_delta_seq` | `calc_delta_seq(seq, base)` | 对普通数值集合计算 `base - element`；`SequenceValue` 暂不支持 |
+
+### 已注册但暂不支持 Runtime 计算
+
+以下算子已经支持表达式解析、参数校验、类型/shape 推导和 DAG 构建，但调用 `evaluate()` 时会抛出带算子名的 `UnsupportedOperationException`：
+
+| 分类 | 算子 |
+|---|---|
+| 序列索引与选择 | `find_list_index_typed`、`list_index_typed`、`greater_in_sequence_typed`、`greater_than_index_typed`、`reverse_typed`、`slice_v3_typed`、`intersection_typed`、`uniq_key_index`、`slice_by_indices`、`find_indices` |
+| 序列与映射转换 | `64`、`list_2_map`、`thf_default_`、`value2key`、`k2v`、`k2v_f`、`v2v`、`multi_v2`、`zip_concat` |
+| 序列或离散计算 | `list_multi`、`dis2xl`、`default_key_if`、`discrete`、`get_seq_length`、`count_distinct` |
+
+例如，`discrete(price, [0, 100, 1000])` 可以完成解析和 DAG 构建，但当前不能在 Runtime 中直接求值。业务接入时应根据上表确认目标算子是否具备执行实现。
+
 ## 目录
 
 ```text

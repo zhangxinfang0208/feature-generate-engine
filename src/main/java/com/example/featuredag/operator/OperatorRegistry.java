@@ -8,6 +8,8 @@ import com.example.featuredag.runtime.SequenceBlock;
 import com.example.featuredag.runtime.SequenceValue;
 import com.example.featuredag.runtime.SequenceView;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -336,18 +338,22 @@ public final class OperatorRegistry {
     private static Object evaluateGreaterInSequenceTyped(List<Object> args) {
         List<?> sequence = asList(args.get(0), "greater_in_sequence_typed", "sequence");
         Number base = asNumber(args.get(1));
+        BigDecimal baseValue = asPreciseDecimal(
+                base, "greater_in_sequence_typed requires finite numeric base");
         Map<?, ?> config = asMap(args.get(2));
         Object marginValue = config.get("margin");
         if (!(marginValue instanceof Number marginNumber)) {
             throw new IllegalArgumentException(
                     "greater_in_sequence_typed requires numeric margin");
         }
-        double margin = marginNumber.doubleValue();
-        if (!Double.isFinite(margin) || margin < 0.0) {
+        BigDecimal margin = asPreciseDecimal(
+                marginNumber,
+                "greater_in_sequence_typed margin must be finite and non-negative");
+        if (margin.signum() < 0) {
             throw new IllegalArgumentException(
                     "greater_in_sequence_typed margin must be finite and non-negative");
         }
-        double threshold = base.doubleValue() - margin;
+        BigDecimal threshold = baseValue.subtract(margin);
         List<Integer> indices = new ArrayList<>();
         for (int index = 0; index < sequence.size(); index++) {
             Object element = sequence.get(index);
@@ -355,9 +361,34 @@ public final class OperatorRegistry {
                 throw new IllegalArgumentException(
                         "greater_in_sequence_typed requires numeric element at index " + index);
             }
-            if (number.doubleValue() > threshold) indices.add(index);
+            BigDecimal elementValue = asPreciseDecimal(
+                    number,
+                    "greater_in_sequence_typed requires numeric element at index " + index);
+            if (elementValue.compareTo(threshold) > 0) indices.add(index);
         }
         return nullableImmutableList(indices);
+    }
+
+    private static BigDecimal asPreciseDecimal(Number number, String errorMessage) {
+        if (number instanceof BigDecimal decimal) return decimal;
+        if (number instanceof BigInteger integer) return new BigDecimal(integer);
+        if (number instanceof Byte || number instanceof Short
+                || number instanceof Integer || number instanceof Long) {
+            return BigDecimal.valueOf(number.longValue());
+        }
+        if (number instanceof Float floatValue) {
+            if (!Float.isFinite(floatValue)) throw new IllegalArgumentException(errorMessage);
+            return new BigDecimal(Float.toString(floatValue));
+        }
+        if (number instanceof Double doubleValue) {
+            if (!Double.isFinite(doubleValue)) throw new IllegalArgumentException(errorMessage);
+            return BigDecimal.valueOf(doubleValue);
+        }
+        try {
+            return new BigDecimal(number.toString());
+        } catch (NumberFormatException error) {
+            throw new IllegalArgumentException(errorMessage);
+        }
     }
 
     private static List<?> asList(Object value, String operator, String argument) {
@@ -374,9 +405,9 @@ public final class OperatorRegistry {
         }
         long longValue;
         try {
-            if (number instanceof java.math.BigDecimal decimal) {
+            if (number instanceof BigDecimal decimal) {
                 longValue = decimal.longValueExact();
-            } else if (number instanceof java.math.BigInteger integer) {
+            } else if (number instanceof BigInteger integer) {
                 longValue = integer.longValueExact();
             } else {
                 double doubleValue = number.doubleValue();

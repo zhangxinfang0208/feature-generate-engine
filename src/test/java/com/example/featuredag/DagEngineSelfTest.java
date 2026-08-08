@@ -538,6 +538,13 @@ public final class DagEngineSelfTest {
                 List.of(List.of(20L, 15L, 10L), 20L, Map.of("margin", 10L)))
                 .equals(List.of(0, 1));
         assert registry.evaluate(
+                "greater_in_sequence_typed",
+                List.of(
+                        List.of(9007199254740993L),
+                        9007199254740994L,
+                        Map.of("margin", 2L)))
+                .equals(List.of(0));
+        assert registry.evaluate(
                 "list_index_typed",
                 List.of(List.of("app0", "app1", "app2"), List.of(2, 0, 2)))
                 .equals(List.of("app2", "app0", "app2"));

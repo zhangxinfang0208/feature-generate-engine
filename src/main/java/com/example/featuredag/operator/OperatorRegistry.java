@@ -372,10 +372,27 @@ public final class OperatorRegistry {
             throw new IllegalArgumentException(
                     "list_index_typed index at position " + position + " is not numeric: " + value);
         }
-        double doubleValue = number.doubleValue();
-        long longValue = number.longValue();
-        if (!Double.isFinite(doubleValue) || doubleValue != longValue
-                || longValue < 0 || longValue >= sequenceSize) {
+        long longValue;
+        try {
+            if (number instanceof java.math.BigDecimal decimal) {
+                longValue = decimal.longValueExact();
+            } else if (number instanceof java.math.BigInteger integer) {
+                longValue = integer.longValueExact();
+            } else {
+                double doubleValue = number.doubleValue();
+                longValue = number.longValue();
+                if (!Double.isFinite(doubleValue) || doubleValue != longValue) {
+                    throw new IllegalArgumentException(
+                            "list_index_typed index at position " + position
+                                    + " is out of bounds: " + value + ", size=" + sequenceSize);
+                }
+            }
+        } catch (ArithmeticException error) {
+            throw new IllegalArgumentException(
+                    "list_index_typed index at position " + position
+                            + " is out of bounds: " + value + ", size=" + sequenceSize);
+        }
+        if (longValue < 0 || longValue >= sequenceSize) {
             throw new IllegalArgumentException(
                     "list_index_typed index at position " + position
                             + " is out of bounds: " + value + ", size=" + sequenceSize);

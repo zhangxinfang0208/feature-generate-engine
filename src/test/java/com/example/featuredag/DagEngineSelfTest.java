@@ -599,6 +599,15 @@ public final class DagEngineSelfTest {
         assert fractionalIndex.getMessage().contains("position 0")
                 : fractionalIndex.getMessage();
 
+        IllegalArgumentException roundedFractionalIndex = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "list_index_typed",
+                        List.of(List.of("app0", "app1"),
+                                List.of(new java.math.BigDecimal("1.0000000000000000000001")))));
+        assert roundedFractionalIndex.getMessage().contains("position 0")
+                : roundedFractionalIndex.getMessage();
+
         IllegalArgumentException nonList = expectThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate(

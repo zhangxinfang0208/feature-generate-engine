@@ -125,11 +125,12 @@ public final class OperatorRegistry {
 
     private static void registerSequenceOperators(OperatorRegistry registry) {
         registry.register(simple("find_list_index_typed", 2, 2, true, false, true,
-                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("find_list_index_typed")));
+                fixed(DataType.INT, ValueShape.SEQUENCE), OperatorRegistry::evaluateFindListIndexTyped));
         registry.register(simple("list_index_typed", 2, 2, true, false, true,
-                passThrough(0), unsupported("list_index_typed")));
+                passThrough(0), OperatorRegistry::evaluateListIndexTyped));
         registry.register(simple("greater_in_sequence_typed", 3, 3, true, true, true,
-                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("greater_in_sequence_typed")));
+                fixed(DataType.INT, ValueShape.SEQUENCE),
+                OperatorRegistry::evaluateGreaterInSequenceTyped));
         registry.register(simple("greater_than_index_typed", 3, 3, true, true, true,
                 fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("greater_than_index_typed")));
         registry.register(simple("reverse_typed", 1, 1, true, false, true,
@@ -309,6 +310,81 @@ public final class OperatorRegistry {
     private static SequenceValue asSequence(Object value) {
         if (value instanceof SequenceValue sequence) return sequence;
         throw new IllegalArgumentException("Expected SequenceValue, got: " + value);
+    }
+
+    private static Object evaluateFindListIndexTyped(List<Object> args) {
+        List<?> sequence = asList(args.get(0), "find_list_index_typed", "sequence");
+        Object target = args.get(1);
+        List<Integer> indices = new ArrayList<>();
+        for (int index = 0; index < sequence.size(); index++) {
+            if (Objects.equals(sequence.get(index), target)) indices.add(index);
+        }
+        return nullableImmutableList(indices);
+    }
+
+    private static Object evaluateListIndexTyped(List<Object> args) {
+        List<?> sequence = asList(args.get(0), "list_index_typed", "sequence");
+        List<?> indices = asList(args.get(1), "list_index_typed", "indices");
+        List<Object> result = new ArrayList<>(indices.size());
+        for (int position = 0; position < indices.size(); position++) {
+            int index = asSequenceIndex(indices.get(position), position, sequence.size());
+            result.add(sequence.get(index));
+        }
+        return nullableImmutableList(result);
+    }
+
+    private static Object evaluateGreaterInSequenceTyped(List<Object> args) {
+        List<?> sequence = asList(args.get(0), "greater_in_sequence_typed", "sequence");
+        Number base = asNumber(args.get(1));
+        Map<?, ?> config = asMap(args.get(2));
+        Object marginValue = config.get("margin");
+        if (!(marginValue instanceof Number marginNumber)) {
+            throw new IllegalArgumentException(
+                    "greater_in_sequence_typed requires numeric margin");
+        }
+        double margin = marginNumber.doubleValue();
+        if (!Double.isFinite(margin) || margin < 0.0) {
+            throw new IllegalArgumentException(
+                    "greater_in_sequence_typed margin must be finite and non-negative");
+        }
+        double threshold = base.doubleValue() - margin;
+        List<Integer> indices = new ArrayList<>();
+        for (int index = 0; index < sequence.size(); index++) {
+            Object element = sequence.get(index);
+            if (!(element instanceof Number number)) {
+                throw new IllegalArgumentException(
+                        "greater_in_sequence_typed requires numeric element at index " + index);
+            }
+            if (number.doubleValue() > threshold) indices.add(index);
+        }
+        return nullableImmutableList(indices);
+    }
+
+    private static List<?> asList(Object value, String operator, String argument) {
+        if (value instanceof List<?> list) return list;
+        throw new IllegalArgumentException(
+                operator + " expects List for " + argument + ", got: "
+                        + (value == null ? "null" : value.getClass().getName()));
+    }
+
+    private static int asSequenceIndex(Object value, int position, int sequenceSize) {
+        if (!(value instanceof Number number)) {
+            throw new IllegalArgumentException(
+                    "list_index_typed index at position " + position + " is not numeric: " + value);
+        }
+        double doubleValue = number.doubleValue();
+        long longValue = number.longValue();
+        if (!Double.isFinite(doubleValue) || doubleValue != longValue
+                || longValue < 0 || longValue >= sequenceSize) {
+            throw new IllegalArgumentException(
+                    "list_index_typed index at position " + position
+                            + " is out of bounds: " + value + ", size=" + sequenceSize);
+        }
+        return (int) longValue;
+    }
+
+    private static <T> List<T> nullableImmutableList(List<T> values) {
+        return java.util.Collections.unmodifiableList(new ArrayList<>(values));
     }
 
     private static double getDouble(Map<?, ?> params, String key, double defaultValue) {

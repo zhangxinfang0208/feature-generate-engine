@@ -81,6 +81,8 @@ public final class DagEngineSelfTest {
         testObjectListsRemainScalarAtRuntime();
         testAlignedPlainListSequenceRuntime();
         testMisalignedRawListSequenceLengthsFail();
+        testWindowSequenceOperatorEvaluation();
+        testThreeDayAppCountFromAlignedLists();
         testLiteralCanonicalizationSeparatesTypesAndBoundaries();
         testDiscreteFeatureDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
@@ -524,6 +526,125 @@ public final class DagEngineSelfTest {
         assert error.getMessage().contains("timestamps") : error.getMessage();
         assert error.getMessage().contains("expected=2") : error.getMessage();
         assert error.getMessage().contains("actual=1") : error.getMessage();
+    }
+
+    private static void testWindowSequenceOperatorEvaluation() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+
+        assert registry.evaluate(
+                "greater_in_sequence_typed",
+                List.of(List.of(20L, 15L, 10L), 20L, Map.of("margin", 10L)))
+                .equals(List.of(0, 1));
+        assert registry.evaluate(
+                "list_index_typed",
+                List.of(List.of("app0", "app1", "app2"), List.of(2, 0, 2)))
+                .equals(List.of("app2", "app0", "app2"));
+        assert registry.evaluate(
+                "find_list_index_typed",
+                List.of(List.of("app0", "app1", "app0"), "app0"))
+                .equals(List.of(0, 2));
+        assert registry.evaluate(
+                "greater_in_sequence_typed",
+                List.of(List.of(), 20L, Map.of("margin", 10L)))
+                .equals(List.of());
+        assert registry.evaluate(
+                "list_index_typed",
+                List.of(java.util.Arrays.asList("app0", null), List.of(1)))
+                .equals(java.util.Arrays.asList((Object) null));
+        assert registry.evaluate(
+                "find_list_index_typed",
+                java.util.Arrays.asList(java.util.Arrays.asList("app0", null), null))
+                .equals(List.of(1));
+
+        IllegalArgumentException negativeMargin = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "greater_in_sequence_typed",
+                        List.of(List.of(20L), 20L, Map.of("margin", -1))));
+        assert negativeMargin.getMessage().contains("margin") : negativeMargin.getMessage();
+
+        IllegalArgumentException missingMargin = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "greater_in_sequence_typed",
+                        List.of(List.of(20L), 20L, Map.of())));
+        assert missingMargin.getMessage().contains("margin") : missingMargin.getMessage();
+
+        IllegalArgumentException invalidElement = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "greater_in_sequence_typed",
+                        List.of(List.of("bad"), 20L, Map.of("margin", 10))));
+        assert invalidElement.getMessage().contains("index 0") : invalidElement.getMessage();
+
+        IllegalArgumentException nullElement = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "greater_in_sequence_typed",
+                        List.of(java.util.Arrays.asList((Object) null), 20L, Map.of("margin", 10))));
+        assert nullElement.getMessage().contains("index 0") : nullElement.getMessage();
+
+        IllegalArgumentException outOfBounds = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "list_index_typed",
+                        List.of(List.of("app0"), List.of(1))));
+        assert outOfBounds.getMessage().contains("out of bounds") : outOfBounds.getMessage();
+
+        IllegalArgumentException fractionalIndex = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "list_index_typed",
+                        List.of(List.of("app0", "app1"), List.of(0.5))));
+        assert fractionalIndex.getMessage().contains("position 0")
+                : fractionalIndex.getMessage();
+
+        IllegalArgumentException nonList = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "find_list_index_typed", List.of("not-a-list", "app0")));
+        assert nonList.getMessage().contains("expects List") : nonList.getMessage();
+    }
+
+    private static void testThreeDayAppCountFromAlignedLists() {
+        String json = """
+                {
+                  "features": [
+                    {"name":"auid_app_time_seq","raw_name":"auid_app_time_seq",
+                     "type":"EVENT_SEQUENCE","definition_type":"BASE",
+                     "entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"timestamp","raw_name":"timestamp",
+                     "type":"EVENT_SEQUENCE","definition_type":"BASE",
+                     "entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"request_time","raw_name":"request_time","type":"INT",
+                     "definition_type":"BASE","entity_scopes":["SCENE"],
+                     "value_shape":"SCALAR"},
+                    {"name":"target_app","raw_name":"target_app","type":"STRING",
+                     "definition_type":"BASE","entity_scopes":["USER"],
+                     "value_shape":"SCALAR"},
+                    {"name":"auid_omnichannel_paid_cnt_3d","type":"INT",
+                     "definition_type":"DERIVED",
+                     "expression":"count(find_list_index_typed(list_index_typed(auid_app_time_seq, greater_in_sequence_typed(timestamp, request_time, {\\"margin\\":259200})), target_app))",
+                     "output_policy":"OUTPUT","entity_scopes":["USER","SCENE"],
+                     "value_shape":"SCALAR"}
+                  ],
+                  "feature_set_name":"three_day_app_count","version":"1"
+                }
+                """;
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                json, InitOptions.offline("three-day-app-count"));
+        GenerateResult result = engine.generate(new OfflineGenerateRequest(
+                "auid-aaaa",
+                Map.of(
+                        "auid_app_time_seq",
+                        List.of("app0", "app1", "app2", "app3", "app4"),
+                        "timestamp",
+                        List.of(1785549653L, 1785459831L, 1785286488L, 1785203315L, 1785114236L),
+                        "request_time", 1785549653,
+                        "target_app", "app0")));
+
+        assert result.featureValues().get("auid_omnichannel_paid_cnt_3d").equals(1)
+                : result.featureValues();
     }
 
     private static void testObjectListsRemainScalarAtRuntime() {

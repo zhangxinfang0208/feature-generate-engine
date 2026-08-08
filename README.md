@@ -34,6 +34,9 @@
 | `normalize` | `normalize(a, {"min": m, "max": n})` | min-max 归一化 |
 | `extractIndustry` | `extractIndustry(seq, industry)` | 按行业过滤事件序列 |
 | `count` | `count(seq)` | 计算序列、集合或数组长度 |
+| `greater_in_sequence_typed` | `greater_in_sequence_typed(seq, base, {"margin": m})` | 返回大于 `base - margin` 的元素索引 |
+| `list_index_typed` | `list_index_typed(seq, indices)` | 按索引抽取列表元素 |
+| `find_list_index_typed` | `find_list_index_typed(seq, target)` | 返回所有等于目标值的位置 |
 | `add` | `add(a, b, ...)` | 多个数值相加 |
 | `log` | `log(a)` | 自然对数 |
 | `multiply` | `multiply(a, b)` | 两个数值相乘 |
@@ -50,7 +53,7 @@
 
 | 分类 | 算子 |
 |---|---|
-| 序列索引与选择 | `find_list_index_typed`、`list_index_typed`、`greater_in_sequence_typed`、`greater_than_index_typed`、`reverse_typed`、`slice_v3_typed`、`intersection_typed`、`uniq_key_index`、`slice_by_indices`、`find_indices` |
+| 序列索引与选择 | `greater_than_index_typed`、`reverse_typed`、`slice_v3_typed`、`intersection_typed`、`uniq_key_index`、`slice_by_indices`、`find_indices` |
 | 序列与映射转换 | `64`、`list_2_map`、`thf_default_`、`value2key`、`k2v`、`k2v_f`、`v2v`、`multi_v2`、`zip_concat` |
 | 序列或离散计算 | `list_multi`、`dis2xl`、`default_key_if`、`discrete`、`get_seq_length`、`count_distinct` |
 
@@ -153,6 +156,9 @@ java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar
 - `definition_type` 明确枚举为 `BASE` 或 `DERIVED`；BASE 省略、`null` 或空白时，为兼容历史配置仍按 `BASE` 处理。DERIVED 必须提供 `expression`，BASE 的 `expression` 必须为空。
 - `entity_scopes` 可声明 `USER`、`SCENE`、`ITEM`。BASE 的范围用于源特征；DERIVED 的非空声明会与表达式推导结果校验一致。
 - `value_shape` 可声明 `SCALAR`、`SEQUENCE`、`VECTOR`。`VECTOR` 是配置边界的名称，内部映射为候选维度向量；DERIVED 的声明同样会与推导形状校验一致。
+- 普通 Java `List` 可作为 `value_shape=SEQUENCE` 的原始输入。同一次 `generate`
+  中的所有原始 List 序列必须属于同一事件批次且长度一致；Runtime 会再次校验长度。
+  在线 ITEM 候选轴仍使用 `CandidateVectorValue`，不会与用户序列混淆。
 - `expression` 是 DERIVED 特征的表达式文本；`output_policy` 使用 `OUTPUT` 或 `INTERNAL_ONLY` 控制最终输出边界。DERIVED 的 `output_policy` 缺失或为空白时，默认是 `OUTPUT`。
 - `INTERNAL_ONLY` 特征会进入依赖闭包，但不会出现在结果中。
 - 在线依赖到的原始特征必须通过 JSON 或 `InitOptions.rawFeatureScopes` 声明 `USER`、`SCENE` 或 `ITEM`。
@@ -211,7 +217,7 @@ item2 -> industry2
 item3 -> industry1
 ```
 
-在线物理计划将 `extractIndustry + count` 融合为批量节点，先把行业参数从 3 个候选去重为 2 个唯一行业，再通过序列行业索引计算，最后映射回 3 个候选。
+在线物理计划将 `extractIndustry + count` 融合为批量节点，先把行业参数从 3 个候选去重为 2 个唯一行业，再通过序列行业索引计算，最后映射回 3 个候选。融合计数严格遵守输入 `SequenceView` 的可见元素范围；行业索引和候选行业计数缓存仅属于本次 `generate` 请求，不会跨请求共享。
 
 Transform 因为还要输出 `same_industry_seq`，不会删除序列节点，而是让 `extractIndustry` 返回共享底层 `SequenceBlock` 的 `SequenceView`，`count` 直接消费视图。
 

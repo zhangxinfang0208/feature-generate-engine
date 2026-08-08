@@ -48,6 +48,7 @@ import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExecutionResult;
 import com.example.featuredag.runtime.IndexSelection;
+import com.example.featuredag.runtime.ListSequenceValue;
 import com.example.featuredag.runtime.RangeSelection;
 import com.example.featuredag.runtime.ScalarValue;
 import com.example.featuredag.runtime.SequenceBlock;
@@ -78,6 +79,8 @@ public final class DagEngineSelfTest {
         testArrayLiteralDagConstruction();
         testNullArrayLiteralDagConstruction();
         testObjectListsRemainScalarAtRuntime();
+        testAlignedPlainListSequenceRuntime();
+        testMisalignedRawListSequenceLengthsFail();
         testLiteralCanonicalizationSeparatesTypesAndBoundaries();
         testDiscreteFeatureDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
@@ -460,6 +463,67 @@ public final class DagEngineSelfTest {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static void clearList(List<?> values) {
         ((List) values).clear();
+    }
+
+    private static void testAlignedPlainListSequenceRuntime() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "apps", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "timestamps", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.derived(
+                                "event_count", DataType.INT, "count(apps)", OutputPolicy.OUTPUT)),
+                linkedSet("apps", "timestamps", "event_count"));
+        PhysicalPlan plan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(dag),
+                ExecutionEnvironment.OFFLINE,
+                "aligned-list-sequences");
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.offlineRow(
+                        "aligned-row",
+                        Map.of(
+                                "apps", List.of("app0", "app1"),
+                                "timestamps", List.of(20L, 10L))));
+
+        ListSequenceValue apps = (ListSequenceValue) result.feature("apps");
+        ListSequenceValue timestamps = (ListSequenceValue) result.feature("timestamps");
+        assert apps.values().equals(List.of("app0", "app1")) : apps.values();
+        assert timestamps.values().equals(List.of(20L, 10L)) : timestamps.values();
+        assert apps.alignmentId().equals("aligned-row") : apps.alignmentId();
+        assert timestamps.alignmentId().equals(apps.alignmentId());
+        assert ((Number) result.feature("event_count").raw()).intValue() == 2;
+    }
+
+    private static void testMisalignedRawListSequenceLengthsFail() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "apps", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "timestamps", DataType.EVENT_SEQUENCE, EntityScope.USER, null)),
+                linkedSet("apps", "timestamps"));
+        PhysicalPlan plan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(dag),
+                ExecutionEnvironment.OFFLINE,
+                "misaligned-list-sequences");
+
+        IllegalArgumentException error = expectThrows(
+                IllegalArgumentException.class,
+                () -> new DagRuntime(registry).execute(
+                        plan,
+                        ExecutionContext.offlineRow(
+                                "misaligned-row",
+                                Map.of(
+                                        "apps", List.of("app0", "app1"),
+                                        "timestamps", List.of(20L)))));
+        assert error.getMessage().contains("apps") : error.getMessage();
+        assert error.getMessage().contains("timestamps") : error.getMessage();
+        assert error.getMessage().contains("expected=2") : error.getMessage();
+        assert error.getMessage().contains("actual=1") : error.getMessage();
     }
 
     private static void testObjectListsRemainScalarAtRuntime() {

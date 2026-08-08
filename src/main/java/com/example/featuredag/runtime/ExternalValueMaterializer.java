@@ -11,6 +11,9 @@ public final class ExternalValueMaterializer {
     public Object materialize(ValueHandle handle) {
         Objects.requireNonNull(handle, "handle");
         if (handle instanceof SequenceValue sequence) return materializeSequence(sequence);
+        if (handle instanceof ListSequenceValue sequence) {
+            return sequence.values().stream().map(this::materializeRaw).toList();
+        }
         if (handle instanceof ScalarValue scalar) return materializeRaw(scalar.value());
         if (handle instanceof CandidateVectorValue vector) {
             return vector.values().stream().map(this::materializeRaw).toList();

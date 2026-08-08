@@ -48,7 +48,10 @@ public final class DagRuntime {
         try {
             ValueHandle result = switch (node.executorType()) {
                 case SOURCE_BINDING -> executeSource(node, context);
-                case LITERAL -> wrap(node.executorConfig().get("value"), node.logicalValueShape());
+                case LITERAL -> wrap(
+                        node.executorConfig().get("value"),
+                        node.logicalValueShape(),
+                        context.executionId());
                 case FEATURE_OUTPUT -> requireSingleInput(node, context);
                 case GENERIC_OPERATOR -> executeGenericOperator(node, context);
                 case COUNT_INDUSTRY_BATCH -> executeCountIndustryBatch(node, context, state);
@@ -86,12 +89,16 @@ public final class DagRuntime {
             return new CandidateVectorValue(values);
         }
         if (context.sharedSourceValues().containsKey(featureName)) {
-            return wrap(context.sharedSourceValues().get(featureName), node.logicalValueShape());
+            return wrapSource(
+                    context.sharedSourceValues().get(featureName),
+                    node.logicalValueShape(),
+                    featureName,
+                    context);
         }
         if (defaultValue == null) {
             throw new IllegalArgumentException("Missing source feature: " + featureName);
         }
-        return wrap(defaultValue, node.logicalValueShape());
+        return wrapSource(defaultValue, node.logicalValueShape(), featureName, context);
     }
 
     private ValueHandle executeGenericOperator(PhysicalNode node, ExecutionContext context) {
@@ -99,8 +106,7 @@ public final class DagRuntime {
         List<ValueHandle> inputHandles = node.inputSlots().stream()
                 .map(slot -> requireSlot(context, slot))
                 .toList();
-        return vectorizedApply(
-                operatorName, inputHandles, context.candidateCount(), node.logicalValueShape());
+        return vectorizedApply(operatorName, inputHandles, context, node.logicalValueShape());
     }
 
     private ValueHandle executeCountIndustryBatch(
@@ -155,14 +161,14 @@ public final class DagRuntime {
     private ValueHandle vectorizedApply(
             String operatorName,
             List<ValueHandle> inputHandles,
-            int candidateCount,
+            ExecutionContext context,
             ValueShape logicalValueShape) {
         boolean vector = inputHandles.stream().anyMatch(handle -> handle instanceof CandidateVectorValue);
         if (!vector) {
             List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
-            return wrap(operatorRegistry.evaluate(operatorName, args), logicalValueShape);
+            return wrap(operatorRegistry.evaluate(operatorName, args), logicalValueShape, context.executionId());
         }
-        int size = candidateCount;
+        int size = context.candidateCount();
         if (size <= 0) {
             size = inputHandles.stream()
                     .filter(CandidateVectorValue.class::isInstance)
@@ -206,9 +212,32 @@ public final class DagRuntime {
         return result;
     }
 
-    private static ValueHandle wrap(Object value, ValueShape logicalValueShape) {
+    private static ValueHandle wrapSource(
+            Object value,
+            ValueShape logicalValueShape,
+            String featureName,
+            ExecutionContext context) {
+        if (value instanceof ListSequenceValue sequence) {
+            context.registerRawSequence(featureName, sequence.size());
+            return sequence;
+        }
         if (value instanceof ValueHandle handle) return handle;
-        if (logicalValueShape != ValueShape.OBJECT && value instanceof List<?> list) {
+        if (logicalValueShape == ValueShape.SEQUENCE && value instanceof List<?> list) {
+            context.registerRawSequence(featureName, list.size());
+            return new ListSequenceValue(context.executionId(), list);
+        }
+        return wrap(value, logicalValueShape, context.executionId());
+    }
+
+    private static ValueHandle wrap(
+            Object value,
+            ValueShape logicalValueShape,
+            String alignmentId) {
+        if (value instanceof ValueHandle handle) return handle;
+        if (logicalValueShape == ValueShape.SEQUENCE && value instanceof List<?> list) {
+            return new ListSequenceValue(alignmentId, list);
+        }
+        if (logicalValueShape == ValueShape.CANDIDATE_VECTOR && value instanceof List<?> list) {
             return new CandidateVectorValue(new ArrayList<>(list));
         }
         return new ScalarValue(value);

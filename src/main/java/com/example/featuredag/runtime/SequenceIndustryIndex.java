@@ -8,10 +8,14 @@ import java.util.Map;
 public final class SequenceIndustryIndex {
     private SequenceIndustryIndex() {}
 
-    public static IndexValue build(SequenceBlock sequence) {
+    public static IndexValue build(SequenceValue sequence) {
+        SequenceBlock base = sequence.baseBlock();
         Map<String, List<Integer>> temp = new LinkedHashMap<>();
-        for (int i = 0; i < sequence.size(); i++) {
-            temp.computeIfAbsent(sequence.industryAtBaseIndex(i), ignored -> new ArrayList<>()).add(i);
+        for (int logicalIndex = 0; logicalIndex < sequence.size(); logicalIndex++) {
+            int baseIndex = sequence.baseIndexAt(logicalIndex);
+            temp.computeIfAbsent(
+                    base.industryAtBaseIndex(baseIndex),
+                    ignored -> new ArrayList<>()).add(baseIndex);
         }
         Map<String, int[]> result = new LinkedHashMap<>();
         for (Map.Entry<String, List<Integer>> entry : temp.entrySet()) {

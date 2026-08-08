@@ -18,6 +18,13 @@ import java.util.Set;
 public final class DagRuntime {
     private final OperatorRegistry operatorRegistry;
 
+    private record IndustryIndexCacheKey(SequenceValue sequence) {}
+
+    private record CandidateCountCacheKey(
+            String physicalNodeId,
+            SequenceValue sequence,
+            String industry) {}
+
     public DagRuntime(OperatorRegistry operatorRegistry) {
         this.operatorRegistry = Objects.requireNonNull(operatorRegistry, "operatorRegistry");
     }
@@ -117,10 +124,9 @@ public final class DagRuntime {
             throw new IllegalStateException("COUNT_INDUSTRY_BATCH requires sequence and industry inputs");
         }
         Object sequenceRaw = requireSlot(context, node.inputSlots().get(0)).raw();
-        if (!(sequenceRaw instanceof SequenceValue sequenceValue)) {
+        if (!(sequenceRaw instanceof SequenceValue sequence)) {
             throw new IllegalArgumentException("First input must be SequenceValue");
         }
-        SequenceBlock base = sequenceValue.baseBlock();
         ValueHandle industriesHandle = requireSlot(context, node.inputSlots().get(1));
         List<Object> industries = toCandidateValues(industriesHandle, context.candidateCount());
 
@@ -128,20 +134,21 @@ public final class DagRuntime {
         for (Object industry : industries) uniqueIndustries.add(String.valueOf(industry));
         state.setDedupCounts(industries.size(), uniqueIndustries.size());
 
-        String indexKey = "industryIndex|" + base.handleKey();
+        Object indexKey = new IndustryIndexCacheKey(sequence);
         IndexValue index;
         Object cachedIndex = context.cacheRegistry().get(indexKey);
         if (cachedIndex instanceof IndexValue cached) {
             index = cached;
             state.markCacheHit("REQUEST_INDEX");
         } else {
-            index = SequenceIndustryIndex.build(base);
+            index = SequenceIndustryIndex.build(sequence);
             context.cacheRegistry().put(indexKey, index);
         }
 
         Map<String, Integer> countsByIndustry = new LinkedHashMap<>();
         for (String industry : uniqueIndustries) {
-            String cacheKey = node.physicalNodeId() + "|" + base.handleKey() + "|" + industry;
+            Object cacheKey = new CandidateCountCacheKey(
+                    node.physicalNodeId(), sequence, industry);
             Object cached = context.cacheRegistry().get(cacheKey);
             if (cached instanceof Integer value) {
                 countsByIndustry.put(industry, value);

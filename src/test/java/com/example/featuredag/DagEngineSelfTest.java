@@ -40,6 +40,7 @@ import com.example.featuredag.physical.ExecutionStage;
 import com.example.featuredag.physical.ExecutorType;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
+import com.example.featuredag.physical.PhysicalPlanPrinter;
 import com.example.featuredag.physical.PhysicalPlanner;
 import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.runtime.CandidateVectorValue;
@@ -109,6 +110,7 @@ public final class DagEngineSelfTest {
         testCandidateDeduplicationAndFusion();
         testDirectNestedCountIndustryFusion();
         testObservableExtractIndustryPreventsFusion();
+        testFusedIndustryCountsRespectSequenceViews();
         testSequenceSelectionStrategies();
         testOfflineOnlineConsistency();
 
@@ -2051,6 +2053,51 @@ public final class DagEngineSelfTest {
                 .anyMatch(node -> node.logicalNodeIds().equals(List.of(extractNodeId))
                         && node.executorType() == ExecutorType.GENERIC_OPERATOR)
                 : "Observable extractIndustry must be planned generically";
+    }
+
+    private static void testFusedIndustryCountsRespectSequenceViews() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "first_view", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "second_view", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "item_industry", DataType.STRING, EntityScope.ITEM, "unknown"),
+                        FeatureDefinition.derived(
+                                "first_count", DataType.INT,
+                                "count(extractIndustry(first_view, item_industry))",
+                                OutputPolicy.OUTPUT),
+                        FeatureDefinition.derived(
+                                "second_count", DataType.INT,
+                                "count(extractIndustry(second_view, item_industry))",
+                                OutputPolicy.OUTPUT)),
+                linkedSet("first_count", "second_count"));
+        PhysicalPlan plan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(dag),
+                ExecutionEnvironment.ONLINE,
+                "view-aware-fusion");
+        assert plan.nodes().stream()
+                .filter(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .count() == 2 : PhysicalPlanPrinter.print(plan);
+
+        SequenceBlock base = sequence();
+        SequenceView first = SequenceView.slice(base, 0, 2);
+        SequenceView second = SequenceView.slice(base, 2, 6);
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.onlineRequest(
+                        "view-aware-request",
+                        Map.of("first_view", first, "second_view", second),
+                        List.of(Map.of("item_industry", "industry1"))));
+
+        CandidateVectorValue firstCount =
+                (CandidateVectorValue) result.feature("first_count");
+        CandidateVectorValue secondCount =
+                (CandidateVectorValue) result.feature("second_count");
+        assert firstCount.values().equals(List.of(1)) : firstCount.values();
+        assert secondCount.values().equals(List.of(2)) : secondCount.values();
     }
 
     private static void testSequenceSelectionStrategies() {

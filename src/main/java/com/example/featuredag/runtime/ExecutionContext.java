@@ -14,7 +14,7 @@ public final class ExecutionContext {
     private final Map<String, Object> sharedSourceValues;
     private final List<Map<String, Object>> candidates;
     private final Map<String, ValueHandle> resultSlots = new LinkedHashMap<>();
-    private final Map<String, Object> cacheRegistry = new LinkedHashMap<>();
+    private final Map<Object, Object> cacheRegistry = new LinkedHashMap<>();
     private final Map<String, RuntimeNodeState> nodeStates = new LinkedHashMap<>();
     private Integer rawSequenceLength;
     private String firstRawSequenceFeature;
@@ -50,7 +50,7 @@ public final class ExecutionContext {
     public List<Map<String, Object>> candidates() { return candidates; }
     public int candidateCount() { return candidates.size(); }
     public Map<String, ValueHandle> resultSlots() { return resultSlots; }
-    public Map<String, Object> cacheRegistry() { return cacheRegistry; }
+    public Map<Object, Object> cacheRegistry() { return cacheRegistry; }
     public Map<String, RuntimeNodeState> nodeStates() { return nodeStates; }
 
     public RuntimeNodeState state(String physicalNodeId) {

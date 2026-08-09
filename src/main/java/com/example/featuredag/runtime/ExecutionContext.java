@@ -16,8 +16,6 @@ public final class ExecutionContext {
     private final Map<String, ValueHandle> resultSlots = new LinkedHashMap<>();
     private final Map<Object, Object> cacheRegistry = new LinkedHashMap<>();
     private final Map<String, RuntimeNodeState> nodeStates = new LinkedHashMap<>();
-    private Integer rawSequenceLength;
-    private String firstRawSequenceFeature;
 
     private ExecutionContext(
             String executionId,
@@ -57,19 +55,4 @@ public final class ExecutionContext {
         return nodeStates.computeIfAbsent(physicalNodeId, RuntimeNodeState::new);
     }
 
-    void registerRawSequence(String featureName, int size) {
-        Objects.requireNonNull(featureName, "featureName");
-        if (rawSequenceLength == null) {
-            rawSequenceLength = size;
-            firstRawSequenceFeature = featureName;
-            return;
-        }
-        if (rawSequenceLength != size) {
-            throw new IllegalArgumentException(
-                    "Raw sequence length mismatch: firstFeature=" + firstRawSequenceFeature
-                            + ", feature=" + featureName
-                            + ", expected=" + rawSequenceLength
-                            + ", actual=" + size);
-        }
-    }
 }

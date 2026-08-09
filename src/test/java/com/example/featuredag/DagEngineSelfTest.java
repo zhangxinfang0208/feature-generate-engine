@@ -84,7 +84,7 @@ public final class DagEngineSelfTest {
         testNullArrayLiteralDagConstruction();
         testObjectListsRemainScalarAtRuntime();
         testAlignedPlainListSequenceRuntime();
-        testMisalignedRawListSequenceLengthsFail();
+        testIndependentRawListSequenceLengthsAreAllowed();
         testWindowSequenceOperatorEvaluation();
         testThreeDayAppCountFromAlignedLists();
         testLiteralCanonicalizationSeparatesTypesAndBoundaries();
@@ -507,7 +507,7 @@ public final class DagEngineSelfTest {
         assert ((Number) result.feature("event_count").raw()).intValue() == 2;
     }
 
-    private static void testMisalignedRawListSequenceLengthsFail() {
+    private static void testIndependentRawListSequenceLengthsAreAllowed() {
         OperatorRegistry registry = OperatorRegistry.standard();
         LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
                 List.of(
@@ -519,21 +519,17 @@ public final class DagEngineSelfTest {
         PhysicalPlan plan = new PhysicalPlanner().plan(
                 new LogicalDagOptimizer().analyze(dag),
                 ExecutionEnvironment.OFFLINE,
-                "misaligned-list-sequences");
+                "independent-list-sequences");
 
-        IllegalArgumentException error = expectThrows(
-                IllegalArgumentException.class,
-                () -> new DagRuntime(registry).execute(
-                        plan,
-                        ExecutionContext.offlineRow(
-                                "misaligned-row",
-                                Map.of(
-                                        "apps", List.of("app0", "app1"),
-                                        "timestamps", List.of(20L)))));
-        assert error.getMessage().contains("apps") : error.getMessage();
-        assert error.getMessage().contains("timestamps") : error.getMessage();
-        assert error.getMessage().contains("expected=2") : error.getMessage();
-        assert error.getMessage().contains("actual=1") : error.getMessage();
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.offlineRow(
+                        "independent-sequences",
+                        Map.of(
+                                "apps", List.of("app0", "app1"),
+                                "timestamps", List.of(20L))));
+        assert ((ListSequenceValue) result.feature("apps")).size() == 2;
+        assert ((ListSequenceValue) result.feature("timestamps")).size() == 1;
     }
 
     private static void testWindowSequenceOperatorEvaluation() {

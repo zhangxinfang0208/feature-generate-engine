@@ -99,13 +99,12 @@ public final class DagRuntime {
             return wrapSource(
                     context.sharedSourceValues().get(featureName),
                     node.logicalValueShape(),
-                    featureName,
                     context);
         }
         if (defaultValue == null) {
             throw new IllegalArgumentException("Missing source feature: " + featureName);
         }
-        return wrapSource(defaultValue, node.logicalValueShape(), featureName, context);
+        return wrapSource(defaultValue, node.logicalValueShape(), context);
     }
 
     private ValueHandle executeGenericOperator(PhysicalNode node, ExecutionContext context) {
@@ -222,15 +221,9 @@ public final class DagRuntime {
     private static ValueHandle wrapSource(
             Object value,
             ValueShape logicalValueShape,
-            String featureName,
             ExecutionContext context) {
-        if (value instanceof ListSequenceValue sequence) {
-            context.registerRawSequence(featureName, sequence.size());
-            return sequence;
-        }
         if (value instanceof ValueHandle handle) return handle;
         if (logicalValueShape == ValueShape.SEQUENCE && value instanceof List<?> list) {
-            context.registerRawSequence(featureName, list.size());
             return new ListSequenceValue(context.executionId(), list);
         }
         return wrap(value, logicalValueShape, context.executionId());

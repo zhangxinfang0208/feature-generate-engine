@@ -3,6 +3,7 @@ package com.example.featuredag;
 import com.example.featuredag.api.FeatureDagEngine;
 import com.example.featuredag.api.FeatureDagInitializationException;
 import com.example.featuredag.api.FeatureGenerationException;
+import com.example.featuredag.api.FeatureValueCodecSelfTest;
 import com.example.featuredag.api.GenerateResult;
 import com.example.featuredag.api.InitOptions;
 import com.example.featuredag.api.OfflineGenerateRequest;
@@ -75,6 +76,7 @@ import java.util.stream.IntStream;
 /** Dependency-free self test. Run with java -ea. */
 public final class DagEngineSelfTest {
     public static void main(String[] args) throws Exception {
+        FeatureValueCodecSelfTest.run();
         testExtendedExpressionParsing();
         testCompleteBusinessExpressionParsing();
         testArrayLiteralDagConstruction();

@@ -4,143 +4,67 @@ import com.example.featuredag.api.FeatureDagEngine;
 import com.example.featuredag.api.GenerateResult;
 import com.example.featuredag.api.InitOptions;
 import com.example.featuredag.api.OfflineGenerateRequest;
-import com.example.featuredag.api.OnlineGenerateRequest;
-import com.example.featuredag.config.FeatureConfigLoader;
-import com.example.featuredag.config.FeatureConfigMapper;
-import com.example.featuredag.config.MappedFeatureSet;
-import com.example.featuredag.expression.ExpressionParser;
-import com.example.featuredag.logical.LogicalDag;
-import com.example.featuredag.logical.LogicalDagBuilder;
-import com.example.featuredag.operator.OperatorRegistry;
-import com.example.featuredag.physical.ExecutionEnvironment;
-import com.example.featuredag.physical.PhysicalPlan;
-import com.example.featuredag.physical.PhysicalPlanner;
-import com.example.featuredag.planning.LogicalDagOptimizer;
-import com.example.featuredag.runtime.SequenceBlock;
-import com.example.featuredag.runtime.SequenceEvent;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public final class DagDemo {
+    private static final int THREE_DAYS_IN_SECONDS = 3 * 24 * 60 * 60;
+
     private static final String CONFIG_JSON = """
             {
               "features": [
-                {"name":"user_click_count","raw_name":"user_click_count","type":"INT","definition_type":"BASE","dft":0,"entity_scopes":["USER"],"value_shape":"SCALAR"},
-                {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
-                {"name":"item_industry","raw_name":"item_industry","type":"STRING","definition_type":"BASE","dft":"unknown","entity_scopes":["ITEM"],"value_shape":"SCALAR"},
-                {"name":"item_price","raw_name":"item_price","type":"DOUBLE","definition_type":"BASE","dft":0.0,"entity_scopes":["ITEM"],"value_shape":"SCALAR"},
+                {"name":"auid","raw_name":"auid","type":"STRING","definition_type":"BASE",
+                 "entity_scopes":["USER"],"value_shape":"SCALAR"},
+                {"name":"auid_app_time_seq","raw_name":"auid_app_time_seq","type":"EVENT_SEQUENCE",
+                 "definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                {"name":"timestamp","raw_name":"timestamp","type":"EVENT_SEQUENCE",
+                 "definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                {"name":"request_time","raw_name":"request_time","type":"INT","definition_type":"BASE",
+                 "entity_scopes":["SCENE"],"value_shape":"SCALAR"},
+                {"name":"target_app","raw_name":"target_app","type":"STRING","definition_type":"BASE",
+                 "entity_scopes":["USER"],"value_shape":"SCALAR"},
                 {
-                  "name":"user_click_score",
-                  "type":"DOUBLE",
-                  "definition_type":"DERIVED",
-                  "expression":"normalize(coalesce(user_click_count, 0), {\\"min\\":0,\\"max\\":100})",
-                  "output_policy":"INTERNAL_ONLY",
-                  "entity_scopes":["USER"],
-                  "value_shape":"SCALAR"
-                },
-                {
-                  "name":"same_industry_seq",
-                  "type":"EVENT_SEQUENCE",
-                  "definition_type":"DERIVED",
-                  "expression":"extractIndustry(user_seq1, item_industry)",
-                  "output_policy":"INTERNAL_ONLY",
-                  "entity_scopes":["USER", "ITEM"],
-                  "value_shape":"SEQUENCE"
-                },
-                {
-                  "name":"same_industry_count",
-                  "store_name":"same_industry_count",
+                  "name":"auid_omnichannel_paid_cnt_3d",
                   "type":"INT",
                   "definition_type":"DERIVED",
-                  "expression":"count(same_industry_seq)",
+                  "expression":"count(find_list_index_typed(list_index_typed(auid_app_time_seq, greater_in_sequence_typed(timestamp, request_time, {\\"margin\\":259200})), target_app))",
                   "output_policy":"OUTPUT",
-                  "entity_scopes":["USER", "ITEM"],
-                  "value_shape":"SCALAR",
-                  "order":1
-                },
-                {
-                  "name":"item_price_log",
-                  "type":"DOUBLE",
-                  "definition_type":"DERIVED",
-                  "expression":"log(add(item_price, 1))",
-                  "output_policy":"INTERNAL_ONLY",
-                  "entity_scopes":["ITEM"],
+                  "entity_scopes":["USER","SCENE"],
                   "value_shape":"SCALAR"
-                },
-                {
-                  "name":"final_score",
-                  "store_name":"final_score",
-                  "type":"DOUBLE",
-                  "definition_type":"DERIVED",
-                  "expression":"multiply(user_click_score, item_price_log)",
-                  "output_policy":"OUTPUT",
-                  "entity_scopes":["USER", "ITEM"],
-                  "value_shape":"SCALAR",
-                  "order":2
                 }
               ],
-              "feature_set_name":"demo_features",
-              "version":"latest"
+              "feature_set_name":"three_day_app_count",
+              "version":"1"
             }
             """;
 
     private DagDemo() {}
 
     public static void main(String[] args) {
-        SequenceBlock sequence = sampleSequence();
-        printPlans(ExecutionEnvironment.OFFLINE, "offline-demo");
-        FeatureDagEngine offlineEngine = FeatureDagEngine.init(
-                CONFIG_JSON, InitOptions.offline("offline-demo"));
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("user_click_count", 10);
-        row.put("user_seq1", sequence);
-        row.put("item_industry", "industry1");
-        row.put("item_price", 100.0);
-        GenerateResult offline = offlineEngine.generate(
-                new OfflineGenerateRequest("offline-row-1", row));
-        System.out.println("OFFLINE: " + offline.featureValues());
+        Map<String, Object> row = Map.of(
+                "auid", "aaaa",
+                "auid_app_time_seq", List.of(
+                        "app0", "app1", "app2", "app3", "app4", "app5", "app6", "app7"),
+                "timestamp", List.of(
+                        1785549653L, 1785459831L, 1785286488L, 1785203315L,
+                        1785114236L, 1785025362L, 1784938978L, 1784856870L),
+                "request_time", 1785549653,
+                "target_app", "app0");
 
-        printPlans(ExecutionEnvironment.ONLINE, "online-demo");
-        FeatureDagEngine onlineEngine = FeatureDagEngine.init(
-                CONFIG_JSON, InitOptions.online("online-demo"));
-        GenerateResult online = onlineEngine.generate(new OnlineGenerateRequest(
-                "request-1",
-                Map.of("user_click_count", 10, "user_seq1", sequence),
-                List.of(
-                        Map.of("item_industry", "industry1", "item_price", 100.0),
-                        Map.of("item_industry", "industry2", "item_price", 50.0),
-                        Map.of("item_industry", "industry1", "item_price", 80.0))));
-        System.out.println("ONLINE_SHARED: " + online.featureValues());
-        System.out.println("ONLINE_CANDIDATES: " + online.candidateFeatureValues());
-    }
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                CONFIG_JSON, InitOptions.offline("three-day-app-count-demo"));
+        GenerateResult result = engine.generate(
+                new OfflineGenerateRequest("auid-aaaa-row", row));
 
-    private static void printPlans(ExecutionEnvironment environment, String planId) {
-        MappedFeatureSet mapped = FeatureConfigMapper.map(
-                FeatureConfigLoader.load(CONFIG_JSON), environment, Set.of(), Map.of());
-        OperatorRegistry operators = OperatorRegistry.standard();
-        LogicalDag logicalDag = new LogicalDagBuilder(new ExpressionParser(), operators)
-                .build(mapped.definitions(), mapped.targetFeatures());
-        PhysicalPlan physicalPlan = new PhysicalPlanner().plan(
-                new LogicalDagOptimizer().analyze(logicalDag), environment, planId);
-        System.out.println("LOGICAL_" + environment + ": " + logicalDag.topologicalOrder());
-        System.out.println("PHYSICAL_" + environment + ": " + physicalPlan.nodes().stream()
-                .map(node -> node.physicalNodeId() + "=" + node.executorType()
-                        + "@" + node.executionStage())
-                .toList());
-    }
-
-    private static SequenceBlock sampleSequence() {
-        return new SequenceBlock(
-                "user1-main-seq",
-                1L,
-                List.of(
-                        new SequenceEvent("history-item-1", "industry1", 1_000L, "click", 1.0),
-                        new SequenceEvent("history-item-2", "industry2", 2_000L, "click", 1.0),
-                        new SequenceEvent("history-item-3", "industry1", 3_000L, "view", 1.0),
-                        new SequenceEvent("history-item-4", "industry3", 4_000L, "click", 1.0),
-                        new SequenceEvent("history-item-5", "industry1", 5_000L, "buy", 1.0)));
+        long time3d = ((Number) row.get("request_time")).longValue() - THREE_DAYS_IN_SECONDS;
+        System.out.println("AUID: " + row.get("auid"));
+        System.out.println("TIME_3D: " + time3d + " seconds since epoch");
+        System.out.println("APP_SEQUENCE_SIZE: "
+                + ((List<?>) row.get("auid_app_time_seq")).size());
+        System.out.println("TIMESTAMP_SEQUENCE_SIZE: "
+                + ((List<?>) row.get("timestamp")).size());
+        System.out.println("TARGET_APP: " + row.get("target_app"));
+        System.out.println("FEATURES: " + result.featureValues());
     }
 }

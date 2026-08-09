@@ -6,12 +6,25 @@
 
 ## 构建、测试与开发命令
 
-- `mvn clean package`：使用 Java 21 编译，并生成 `target/feature-dag-engine-1.0.0-SNAPSHOT.jar`。
-- `java -jar target/feature-dag-engine-1.0.0-SNAPSHOT.jar`：运行已打包的演示程序。
-- `./scripts/run-demo.sh`：通过 `javac` 直接编译生产代码并运行 `DagDemo`，需要 Bash 环境。
+- `mvn clean package`：使用 Java 21 编译，并生成 thin JAR 与包含 Jackson 依赖的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`。
+- `java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`：运行已打包的 `DagDemo`；普通不带 `-all` 的 JAR 不包含第三方依赖。
+- `./scripts/run-demo.sh`：通过 Maven 编译并运行 `DagDemo`，需要 Bash 环境。
 - `./scripts/run-self-test.sh`：编译主代码和测试代码，并通过 `java -ea` 启用断言执行自测试。
 
-开发环境要求 JDK 21 或更高版本。项目没有外部运行时依赖。
+开发环境要求 JDK 21 或更高版本。源码运行依赖由 Maven 管理；使用 `-all.jar` 运行 Demo 时不需要额外配置依赖。
+
+## Demo 输入契约
+
+`com.example.featuredag.demo.DagDemo#main` 必须展示真实的公共 API 调用，不应绕过
+`FeatureDagEngine.generate` 或使用伪造的算子结果。当前 Demo 使用三天 app 点击计数案例：
+
+- `auid` 是单值 `String`，例如 `"aaaa"`，不要包装成单元素序列。
+- `auid_app_time_seq` 与 `timestamp` 是普通 Java `List`，长度必须一致，且每个下标表示同一批事件。
+- 两条序列按时间从近到远排列；示例时间戳单位是秒。
+- `request_time - 259200` 是三天前的边界，窗口判断为严格 `timestamp > boundary`。
+- 输入序列的长度校验由 Runtime 在一次 `generate` 中执行；不一致时应抛出包含特征名和期望/实际长度的异常。
+- 目标特征 `auid_omnichannel_paid_cnt_3d` 应通过 `greater_in_sequence_typed`、`list_index_typed`、
+  `find_list_index_typed` 和 `count` 计算，而不是在 Demo 中手工统计。
 
 ## 编码风格与命名约定
 
@@ -19,8 +32,8 @@
 
 ## 测试指南
 
-当前测试使用 Java `assert`，而非 JUnit。端到端测试应添加到 `DagEngineSelfTest`，使用确定性测试数据，并为不直观的断言提供清晰的失败消息。修改相关模块时，应覆盖逻辑依赖选择、计划器转换、在线/离线行为和运行时输出。提交前始终运行 `./scripts/run-self-test.sh`。注意：`mvn package` 会编译测试源码，但不会执行该自测试程序。
+当前测试使用 Java `assert`，而非 JUnit。端到端测试应添加到 `DagEngineSelfTest`，使用确定性测试数据，并为不直观的断言提供清晰的失败消息。修改相关模块时，应覆盖逻辑依赖选择、计划器转换、在线/离线行为和运行时输出。提交前始终运行 `./scripts/run-self-test.sh` 或等价的 `java -ea` 命令。注意：`mvn package` 会编译测试源码，但不会执行该自测试程序；需要显式运行 `DagEngineSelfTest`。
 
 ## 提交与拉取请求规范
 
-当前工作副本不包含 Git 历史，因此无法推断仓库既有的提交约定。提交标题应简短、使用祈使语气，例如 `Add cycle detection coverage`，并确保每次提交只聚焦一个主题。拉取请求应说明行为变化及受影响的架构层、列出已运行的验证命令，并关联相关 Issue。若执行行为发生变化，请附上示例计划或控制台输出；本项目没有 UI，通常无需截图。
+提交标题应简短、使用祈使语气，例如 `Add cycle detection coverage`，并确保每次提交只聚焦一个主题。拉取请求应说明行为变化及受影响的架构层、列出已运行的验证命令，并关联相关 Issue。若执行行为发生变化，请附上示例计划或控制台输出；本项目没有 UI，通常无需截图。

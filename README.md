@@ -20,6 +20,8 @@
 - 候选参数去重：按 `item_industry` 去重，而不是按 `itemId` 重复执行。
 - 序列索引：`industry -> positions`。
 - 零拷贝序列：`SequenceBlock + SequenceView`。
+- 对齐的普通 `List` 序列：`auid_app_time_seq` 与 `timestamp` 可按同一事件下标安全计算窗口特征。
+- 三天 app 点击计数：`auid_omnichannel_paid_cnt_3d` 可直接从两条原始序列生成。
 - 离线完整特征输出与在线子图执行。
 
 ## 算子支持情况
@@ -81,7 +83,7 @@ src/main/java/com/example/featuredag
 ./scripts/run-demo.sh
 ```
 
-运行无外部依赖的自测试：
+运行断言自测试（需要启用 Java assertions）：
 
 ```bash
 ./scripts/run-self-test.sh
@@ -97,6 +99,22 @@ java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar
 ```
 
 构建会生成普通 thin JAR 和包含、重定位 Jackson 的自包含 `-all.jar`。Spark executor 与在线 JVM 都必须运行 Java 21。
+
+## Demo 输入约定
+
+`com.example.featuredag.demo.DagDemo` 使用下面这条真实调用链路：
+
+```text
+auid = "aaaa"
+auid_app_time_seq = [app0, app1, app2, ...]
+timestamp = [1785549653, 1785459831, 1785286488, ...]
+request_time = 1785549653
+target_app = "app0"
+```
+
+`auid_app_time_seq` 和 `timestamp` 是从近到远排列、长度一致、下标一一对应的普通 Java `List`。
+`auid` 是单值字符串，不需要包装成 `["aaaa"]`。时间戳示例使用秒；三天窗口参数因此是
+`259200`。Runtime 会在一次 `generate` 中再次校验两条原始序列长度一致。
 
 ## JSON 配置与公共 API
 
@@ -200,26 +218,55 @@ dataset.mapPartitions { rows =>
 }
 ```
 
-## 完整案例
+## 完整案例：三天内用户点击 app 次数
 
-表达式：
-
-```text
-same_industry_count = count(extractIndustry(user_seq1, item_industry))
-final_score = multiply(user_click_score, item_price_log)
-```
-
-在线请求包含：
+Demo 的 DERIVED 特征表达式是：
 
 ```text
-item1 -> industry1
-item2 -> industry2
-item3 -> industry1
+count(
+  find_list_index_typed(
+    list_index_typed(
+      auid_app_time_seq,
+      greater_in_sequence_typed(timestamp, request_time, {"margin":259200})
+    ),
+    target_app
+  )
+)
 ```
 
-在线物理计划将 `extractIndustry + count` 融合为批量节点，先把行业参数从 3 个候选去重为 2 个唯一行业，再通过序列行业索引计算，最后映射回 3 个候选。融合计数严格遵守输入 `SequenceView` 的可见元素范围；行业索引和候选行业计数缓存仅属于本次 `generate` 请求，不会跨请求共享。
+对应的离线 Java 调用是：
 
-Transform 因为还要输出 `same_industry_seq`，不会删除序列节点，而是让 `extractIndustry` 返回共享底层 `SequenceBlock` 的 `SequenceView`，`count` 直接消费视图。
+```java
+FeatureDagEngine engine = FeatureDagEngine.init(
+        configJson, InitOptions.offline("three-day-app-count-demo"));
+GenerateResult result = engine.generate(new OfflineGenerateRequest(
+        "auid-aaaa-row",
+        Map.of(
+                "auid", "aaaa",
+                "auid_app_time_seq", List.of("app0", "app1", "app2", "app3", "app4"),
+                "timestamp", List.of(1785549653L, 1785459831L, 1785286488L,
+                        1785203315L, 1785114236L),
+                "request_time", 1785549653,
+                "target_app", "app0")));
+```
+
+计算过程为：
+
+1. `greater_in_sequence_typed` 找到 `timestamp > request_time - 259200` 的下标。
+2. `list_index_typed` 用这些下标抽取同位置的 app，保持两条序列的事件对齐。
+3. `find_list_index_typed` 找到目标 app 的所有位置。
+4. `count` 输出目标 app 的点击次数。
+
+对于上面的示例，三天前的时间戳是 `1785290453`，有效下标为 `0、1`，窗口内 app 为
+`[app0, app1]`，因此 `target_app=app0` 时输出：
+
+```text
+FEATURES: {auid_omnichannel_paid_cnt_3d=1}
+```
+
+`timestamp` 恰好等于窗口边界的事件不会被计入，因为窗口判断使用严格大于 `>`。
+行业融合计数仍严格遵守输入 `SequenceView` 的可见范围；行业索引和候选计数缓存仅属于当前
+`generate` 请求，不会跨请求共享。
 
 ## 设计边界
 

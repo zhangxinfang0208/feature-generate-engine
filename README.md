@@ -20,7 +20,7 @@
 - 候选参数去重：按 `item_industry` 去重，而不是按 `itemId` 重复执行。
 - 序列索引：`industry -> positions`。
 - 零拷贝序列：`SequenceBlock + SequenceView`。
-- 对齐的普通 `List` 序列：`auid_app_time_seq` 与 `timestamp` 可按同一事件下标安全计算窗口特征。
+- 普通元素数组序列：`auid_app_time_seq`（`STRING + SEQUENCE`）与 `timestamp`（`INT + SEQUENCE`）可用于窗口特征。
 - 三天 app 点击计数：`auid_omnichannel_paid_cnt_3d` 可直接从两条原始序列生成。
 - 离线完整特征输出与在线子图执行。
 
@@ -105,16 +105,16 @@ java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar
 `com.example.featuredag.demo.DagDemo` 使用下面这条真实调用链路：
 
 ```text
-auid = "aaaa"
+auid = ["aaaa"]
 auid_app_time_seq = [app0, app1, app2, ...]
 timestamp = [1785549653, 1785459831, 1785286488, ...]
-request_time = 1785549653
-target_app = "app0"
+request_time = [1785549653]
+target_app = ["app0"]
 ```
 
-`auid_app_time_seq` 和 `timestamp` 是从近到远排列、长度一致、下标一一对应的普通 Java `List`。
-`auid` 是单值字符串，不需要包装成 `["aaaa"]`。时间戳示例使用秒；三天窗口参数因此是
-`259200`。Runtime 会在一次 `generate` 中再次校验两条原始序列长度一致。
+`auid_app_time_seq` 和 `timestamp` 是从近到远排列的普通 Java `List`。时间戳示例使用秒；
+三天窗口参数因此是 `259200`。第一版不会验证输入形状、元素类型或跨序列 alignment，也不要求
+所有原始序列具有相同长度。
 
 ## JSON 配置与公共 API
 
@@ -174,9 +174,15 @@ target_app = "app0"
 - `definition_type` 明确枚举为 `BASE` 或 `DERIVED`；BASE 省略、`null` 或空白时，为兼容历史配置仍按 `BASE` 处理。DERIVED 必须提供 `expression`，BASE 的 `expression` 必须为空。
 - `entity_scopes` 可声明 `USER`、`SCENE`、`ITEM`。BASE 的范围用于源特征；DERIVED 的非空声明会与表达式推导结果校验一致。
 - `value_shape` 可声明 `SCALAR`、`SEQUENCE`、`VECTOR`。`VECTOR` 是配置边界的名称，内部映射为候选维度向量；DERIVED 的声明同样会与推导形状校验一致。
-- 普通 Java `List` 可作为 `value_shape=SEQUENCE` 的原始输入。同一次 `generate`
-  中的所有原始 List 序列必须属于同一事件批次且长度一致；Runtime 会再次校验长度。
-  在线 ITEM 候选轴仍使用 `CandidateVectorValue`，不会与用户序列混淆。
+- 所有公共输入值都是普通 Java `List`。`SCALAR` 在外部表示为 `[value]`，并由配置的
+  `value_shape` 在内部解包；`SEQUENCE` 保持为 `[v1, v2, ...]`。`EVENT_SEQUENCE` 仅用于低层
+  `SequenceBlock`/`SequenceView` 场景，普通序列使用元素 data type（如 `STRING` 或 `INT`）加
+  `SEQUENCE`。
+- 候选 ITEM 标量是每个 candidate Map 内的单元素 `List`；在线 ITEM 候选轴仍使用
+  `CandidateVectorValue`，不会与用户序列混淆。
+- 调用方必须在调用引擎前把旧的 `ratings=["1|0|1|v2"]` 协议转换为干净数组
+  `ratings=[1,0,1]`。
+- v1 不验证输入形状、元素类型或跨序列 alignment，也不要求所有原始序列具有相同长度。
 - `expression` 是 DERIVED 特征的表达式文本；`output_policy` 使用 `OUTPUT` 或 `INTERNAL_ONLY` 控制最终输出边界。DERIVED 的 `output_policy` 缺失或为空白时，默认是 `OUTPUT`。
 - `INTERNAL_ONLY` 特征会进入依赖闭包，但不会出现在结果中。
 - 在线依赖到的原始特征必须通过 JSON 或 `InitOptions.rawFeatureScopes` 声明 `USER`、`SCENE` 或 `ITEM`。
@@ -184,21 +190,32 @@ target_app = "app0"
 离线 Java 调用：
 
 ```java
+Map<String, List<?>> rowValues = Map.of(
+        "raw_price", List.of(100.0),
+        "quality_score", List.of(0.8));
 FeatureDagEngine engine = FeatureDagEngine.init(
         configJson, InitOptions.offline("offline-plan-v1"));
-GenerateResult result = engine.generate(
-        new OfflineGenerateRequest("row-1", rowValues));
-Map<String, Object> features = result.featureValues();
+Map<String, List<?>> features = engine.generate(
+        new OfflineGenerateRequest("row-1", rowValues)).featureValues();
 ```
 
 在线 Java 在进程启动时初始化一次，之后并发复用同一个 engine：
 
 ```java
+Map<String, List<?>> sharedValues = Map.of("request_time", List.of(1785549653));
+List<Map<String, List<?>>> candidates = List.of(
+        Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8)));
 FeatureDagEngine engine = FeatureDagEngine.init(
         configPath, InitOptions.online("online-plan-v1"));
 GenerateResult result = engine.generate(
         new OnlineGenerateRequest(requestId, sharedValues, candidates));
 ```
+
+输出也始终使用 `List`，包括标量输出。DAG 阶段在 `preTransform`、hash 或模型编码之前运行。
+`featureValues()` 合并到 shared/user features；`candidateFeatureValues().get(i)` 按原有顺序合并到
+candidate `i`。合并时的名称冲突和 `ExecutionSession` 写入属于外部
+`FeatureDagGenerateTask`，不在本仓库处理。v1 采用 fail-fast：失败时不会返回部分输出或 Runtime
+fallback。
 
 Spark/Scala 不需要引擎依赖 Spark API，在每个 partition 初始化一次：
 
@@ -242,12 +259,12 @@ FeatureDagEngine engine = FeatureDagEngine.init(
 GenerateResult result = engine.generate(new OfflineGenerateRequest(
         "auid-aaaa-row",
         Map.of(
-                "auid", "aaaa",
+                "auid", List.of("aaaa"),
                 "auid_app_time_seq", List.of("app0", "app1", "app2", "app3", "app4"),
                 "timestamp", List.of(1785549653L, 1785459831L, 1785286488L,
                         1785203315L, 1785114236L),
-                "request_time", 1785549653,
-                "target_app", "app0")));
+                "request_time", List.of(1785549653),
+                "target_app", List.of("app0"))));
 ```
 
 计算过程为：
@@ -261,7 +278,7 @@ GenerateResult result = engine.generate(new OfflineGenerateRequest(
 `[app0, app1]`，因此 `target_app=app0` 时输出：
 
 ```text
-FEATURES: {auid_omnichannel_paid_cnt_3d=1}
+FEATURES: {auid_omnichannel_paid_cnt_3d=[1]}
 ```
 
 `timestamp` 恰好等于窗口边界的事件不会被计入，因为窗口判断使用严格大于 `>`。

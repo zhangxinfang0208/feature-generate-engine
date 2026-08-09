@@ -18,11 +18,13 @@
 `com.example.featuredag.demo.DagDemo#main` 必须展示真实的公共 API 调用，不应绕过
 `FeatureDagEngine.generate` 或使用伪造的算子结果。当前 Demo 使用三天 app 点击计数案例：
 
-- `auid` 是单值 `String`，例如 `"aaaa"`，不要包装成单元素序列。
-- `auid_app_time_seq` 与 `timestamp` 是普通 Java `List`，长度必须一致，且每个下标表示同一批事件。
+- 公共 generate API 的所有输入值均为普通 Java `List`。
+- SCALAR 使用单元素 List，例如 auid=["aaaa"]、request_time=[1785549653]。
+- SEQUENCE 使用完整元素 List；第一版不执行跨序列 alignment 校验。
+- 调用方负责在调用引擎前把 "1|0|1|v2" 等旧协议转换为干净数组。
+- 三天计数公共输出为 auid_omnichannel_paid_cnt_3d=[1]。
 - 两条序列按时间从近到远排列；示例时间戳单位是秒。
 - `request_time - 259200` 是三天前的边界，窗口判断为严格 `timestamp > boundary`。
-- 输入序列的长度校验由 Runtime 在一次 `generate` 中执行；不一致时应抛出包含特征名和期望/实际长度的异常。
 - 目标特征 `auid_omnichannel_paid_cnt_3d` 应通过 `greater_in_sequence_typed`、`list_index_typed`、
   `find_list_index_typed` 和 `count` 计算，而不是在 Demo 中手工统计。
 

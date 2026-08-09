@@ -631,10 +631,10 @@ public final class DagEngineSelfTest {
                 {
                   "features": [
                     {"name":"auid_app_time_seq","raw_name":"auid_app_time_seq",
-                     "type":"EVENT_SEQUENCE","definition_type":"BASE",
+                     "type":"STRING","definition_type":"BASE",
                      "entity_scopes":["USER"],"value_shape":"SEQUENCE"},
                     {"name":"timestamp","raw_name":"timestamp",
-                     "type":"EVENT_SEQUENCE","definition_type":"BASE",
+                     "type":"INT","definition_type":"BASE",
                      "entity_scopes":["USER"],"value_shape":"SEQUENCE"},
                     {"name":"request_time","raw_name":"request_time","type":"INT",
                      "definition_type":"BASE","entity_scopes":["SCENE"],

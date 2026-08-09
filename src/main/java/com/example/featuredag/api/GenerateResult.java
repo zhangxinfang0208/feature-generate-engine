@@ -1,34 +1,25 @@
 package com.example.featuredag.api;
 
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 public final class GenerateResult {
     private final String executionId;
-    private final Map<String, Object> featureValues;
-    private final List<Map<String, Object>> candidateFeatureValues;
+    private final Map<String, List<?>> featureValues;
+    private final List<Map<String, List<?>>> candidateFeatureValues;
 
     public GenerateResult(
             String executionId,
-            Map<String, Object> featureValues,
-            List<Map<String, Object>> candidateFeatureValues) {
+            Map<String, List<?>> featureValues,
+            List<Map<String, List<?>>> candidateFeatureValues) {
         this.executionId = Objects.requireNonNull(executionId, "executionId");
-        this.featureValues = immutableMap(featureValues);
-        Objects.requireNonNull(candidateFeatureValues, "candidateFeatureValues");
-        this.candidateFeatureValues = candidateFeatureValues.stream()
-                .map(GenerateResult::immutableMap)
-                .toList();
+        this.featureValues = FeatureValueCollections.immutableFeatureMap(featureValues);
+        this.candidateFeatureValues = FeatureValueCollections.immutableCandidates(
+                candidateFeatureValues);
     }
 
     public String executionId() { return executionId; }
-    public Map<String, Object> featureValues() { return featureValues; }
-    public List<Map<String, Object>> candidateFeatureValues() { return candidateFeatureValues; }
-
-    private static Map<String, Object> immutableMap(Map<String, Object> values) {
-        Objects.requireNonNull(values, "values");
-        return Collections.unmodifiableMap(new LinkedHashMap<>(values));
-    }
+    public Map<String, List<?>> featureValues() { return featureValues; }
+    public List<Map<String, List<?>>> candidateFeatureValues() { return candidateFeatureValues; }
 }

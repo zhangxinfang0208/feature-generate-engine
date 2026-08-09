@@ -62,6 +62,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -99,14 +100,17 @@ public final class DagEngineSelfTest {
         testConfigPathInit();
         testOfflineSequenceMaterialization();
         testOnlinePublicApi();
+        testOnlineSharedArrayOutput();
         testOnlineEngineConcurrentReuse();
         testConfigurationAndRequestValidation();
+        testFailFastArrayOutput();
         testBaseOutputPolicyIsValidated();
         testDerivedOutputPolicyDefaults();
         testDeclaredScopeIsValidatedBeforeOverride();
         testDeclaredValueShapeAndScopeSemantics();
         testDagBusinessSemantics();
         testExecutionStagesAndTargetSelection();
+        testCandidateVectorPreservesNullElements();
         testCandidateCardinalityAndDefaults();
         testEmptySequenceAndOfflineOutputSet();
         testCandidateDeduplicationAndFusion();
@@ -660,10 +664,10 @@ public final class DagEngineSelfTest {
                         List.of("app0", "app1", "app2", "app3", "app4"),
                         "timestamp",
                         List.of(1785549653L, 1785459831L, 1785286488L, 1785203315L, 1785114236L),
-                        "request_time", 1785549653,
-                        "target_app", "app0")));
+                        "request_time", List.of(1785549653),
+                        "target_app", List.of("app0"))));
 
-        assert result.featureValues().get("auid_omnichannel_paid_cnt_3d").equals(1)
+        assert result.featureValues().get("auid_omnichannel_paid_cnt_3d").equals(List.of(1))
                 : result.featureValues();
     }
 
@@ -1275,17 +1279,18 @@ public final class DagEngineSelfTest {
                 intermediateConfigJson(),
                 InitOptions.offline("offline-public-api"));
 
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("raw_price", 100.0);
-        row.put("quality_score", 0.8);
+        Map<String, List<?>> row = new LinkedHashMap<>();
+        row.put("raw_price", List.of(100.0));
+        row.put("quality_score", List.of(0.8));
         GenerateResult result = engine.generate(
                 new OfflineGenerateRequest("row-1", row));
 
         assert result.executionId().equals("row-1");
         assert result.featureValues().keySet().equals(Set.of("price_score_out"))
                 : result.featureValues();
-        assert Math.abs(((Number) result.featureValues().get("price_score_out")).doubleValue() - 0.08)
-                < 0.000001 : result.featureValues();
+        double score = ((Number) result.featureValues()
+                .get("price_score_out").getFirst()).doubleValue();
+        assert Math.abs(score - 0.08) < 0.000001 : result.featureValues();
         assert result.candidateFeatureValues().isEmpty();
         assert !result.featureValues().containsKey("normalized_price")
                 : "Internal feature leaked through the public boundary";
@@ -1300,8 +1305,9 @@ public final class DagEngineSelfTest {
                     InitOptions.offline("offline-path-api"));
             GenerateResult result = engine.generate(new OfflineGenerateRequest(
                     "row-path",
-                    Map.of("raw_price", 100.0, "quality_score", 0.8)));
-            assert Math.abs(((Number) result.featureValues().get("price_score_out")).doubleValue() - 0.08)
+                    Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8))));
+            assert Math.abs(((Number) scalarFeature(
+                    result.featureValues(), "price_score_out")).doubleValue() - 0.08)
                     < 0.000001 : result.featureValues();
         } finally {
             Files.deleteIfExists(configPath);
@@ -1314,16 +1320,16 @@ public final class DagEngineSelfTest {
                 InitOptions.online("online-public-api"));
         GenerateResult result = engine.generate(new OnlineGenerateRequest(
                 "request-1",
-                Map.of("user_click_count", 10, "user_seq1", sequence()),
+                Map.of("user_click_count", List.of(10), "user_seq1", publicIndustrySequence()),
                 List.of(
-                        Map.of("item_industry", "industry1", "item_price", 100.0),
-                        Map.of("item_industry", "industry2", "item_price", 50.0),
-                        Map.of("item_industry", "industry1", "item_price", 80.0))));
+                        Map.of("item_industry", List.of("industry1"), "item_price", List.of(100.0)),
+                        Map.of("item_industry", List.of("industry2"), "item_price", List.of(50.0)),
+                        Map.of("item_industry", List.of("industry1"), "item_price", List.of(80.0)))));
 
         assert result.featureValues().isEmpty() : result.featureValues();
         assert result.candidateFeatureValues().size() == 3;
         assert result.candidateFeatureValues().stream()
-                .map(values -> values.get("same_industry_count"))
+                .map(values -> scalarFeature(values, "same_industry_count"))
                 .toList().equals(List.of(3, 1, 3)) : result.candidateFeatureValues();
         assert result.candidateFeatureValues().stream()
                 .allMatch(values -> values.containsKey("final_score"));
@@ -1332,24 +1338,68 @@ public final class DagEngineSelfTest {
                 : result.candidateFeatureValues().getFirst();
     }
 
+    private static void testOnlineSharedArrayOutput() {
+        String json = """
+                {
+                  "feature_set_name":"shared-array-output",
+                  "version":"1",
+                  "features":[
+                    {"name":"scene_value","raw_name":"scene_value","type":"DOUBLE",
+                     "definition_type":"BASE","entity_scopes":["SCENE"],"value_shape":"SCALAR"},
+                    {"name":"scene_score","store_name":"scene_score","type":"DOUBLE",
+                     "definition_type":"DERIVED","expression":"multiply(scene_value, 2.0)",
+                     "output_policy":"OUTPUT","entity_scopes":["SCENE"],"value_shape":"SCALAR"}
+                  ]
+                }
+                """;
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                json, InitOptions.online("shared-array-output"));
+        GenerateResult result = engine.generate(new OnlineGenerateRequest(
+                "shared-output-request",
+                Map.of("scene_value", List.of(2.0)),
+                List.of(Map.of(), Map.of())));
+
+        assert result.featureValues().get("scene_score").equals(List.of(4.0))
+                : result.featureValues();
+        assert result.candidateFeatureValues().equals(List.of(Map.of(), Map.of()))
+                : result.candidateFeatureValues();
+
+        OperatorRegistry operators = OperatorRegistry.standard();
+        MappedFeatureSet mapped = FeatureConfigMapper.map(
+                FeatureConfigLoader.load(json), ExecutionEnvironment.ONLINE, Set.of(), Map.of());
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), operators)
+                .build(mapped.definitions(), mapped.targetFeatures());
+        PhysicalPlan plan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(dag),
+                ExecutionEnvironment.ONLINE,
+                "shared-array-output-plan");
+        assert stageFor(plan, "feature:scene_score") == ExecutionStage.REQUEST_SHARED
+                : PhysicalPlanPrinter.print(plan);
+    }
+
     private static void testOnlineEngineConcurrentReuse() throws Exception {
         FeatureDagEngine engine = FeatureDagEngine.init(
                 onlineConfigJson(), InitOptions.online("online-concurrent"));
         try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
-            List<Callable<List<Object>>> calls = IntStream.range(0, 20)
-                    .mapToObj(index -> (Callable<List<Object>>) () -> {
+            List<Callable<List<Integer>>> calls = IntStream.range(0, 20)
+                    .mapToObj(index -> (Callable<List<Integer>>) () -> {
                         GenerateResult result = engine.generate(new OnlineGenerateRequest(
                                 "request-" + index,
-                                Map.of("user_click_count", 10, "user_seq1", sequence()),
+                                Map.of(
+                                        "user_click_count", List.of(10),
+                                        "user_seq1", publicIndustrySequence()),
                                 List.of(
-                                        Map.of("item_industry", "industry1", "item_price", 100.0),
-                                        Map.of("item_industry", "industry2", "item_price", 50.0))));
+                                        Map.of("item_industry", List.of("industry1"),
+                                                "item_price", List.of(100.0)),
+                                        Map.of("item_industry", List.of("industry2"),
+                                                "item_price", List.of(50.0)))));
                         return result.candidateFeatureValues().stream()
-                                .map(values -> values.get("same_industry_count"))
+                                .map(values -> (Integer) scalarFeature(
+                                        values, "same_industry_count"))
                                 .toList();
                     })
                     .toList();
-            for (Future<List<Object>> future : executor.invokeAll(calls)) {
+            for (Future<List<Integer>> future : executor.invokeAll(calls)) {
                 assert future.get().equals(List.of(3, 1)) : future.get();
             }
         }
@@ -1360,7 +1410,7 @@ public final class DagEngineSelfTest {
                 {
                   "features": [
                     {"name":"user_click_count","raw_name":"user_click_count","type":"INT","definition_type":"BASE","dft":0,"entity_scopes":["USER"],"value_shape":"SCALAR"},
-                    {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE","definition_type":" ","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"user_seq1","raw_name":"user_seq1","type":"STRING","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
                     {"name":"item_industry","raw_name":"item_industry","type":"STRING","definition_type":null,"dft":"unknown","entity_scopes":["ITEM"],"value_shape":"SCALAR"},
                     {"name":"item_price","raw_name":"item_price","type":"DOUBLE","dft":0.0,"entity_scopes":["ITEM"],"value_shape":"SCALAR"},
                     {
@@ -1374,9 +1424,9 @@ public final class DagEngineSelfTest {
                     },
                     {
                       "name":"same_industry_seq",
-                      "type":"EVENT_SEQUENCE",
+                      "type":"INT",
                       "definition_type":"DERIVED",
-                      "expression":"extractIndustry(user_seq1, item_industry)",
+                      "expression":"find_list_index_typed(user_seq1, item_industry)",
                       "output_policy":"INTERNAL_ONLY",
                       "entity_scopes":["USER", "ITEM"],
                       "value_shape":"SEQUENCE"
@@ -1423,14 +1473,14 @@ public final class DagEngineSelfTest {
         String json = """
                 {
                   "features": [
-                    {"name":"user_seq1","raw_name":"user_seq1","type":"EVENT_SEQUENCE"},
-                    {"name":"item_industry","raw_name":"item_industry","type":"STRING"}, {
-                    "name":"same_industry_seq",
-                    "store_name":"same_industry_events",
-                    "type":"EVENT_SEQUENCE",
+                    {"name":"user_seq1","raw_name":"user_seq1","type":"STRING",
+                     "definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"sequence_out",
+                    "store_name":"sequence_out",
+                    "type":"STRING",
                     "definition_type":"DERIVED",
-                    "expression":"extractIndustry(user_seq1, item_industry)",
-                    "output_policy":"OUTPUT"
+                    "expression":"coalesce(user_seq1, [])",
+                    "output_policy":"OUTPUT","entity_scopes":["USER"],"value_shape":"SEQUENCE"
                   }],
                   "feature_set_name":"sequence_output",
                   "version":"1"
@@ -1439,13 +1489,9 @@ public final class DagEngineSelfTest {
         FeatureDagEngine engine = FeatureDagEngine.init(json, InitOptions.offline("sequence-output"));
         GenerateResult result = engine.generate(new OfflineGenerateRequest(
                 "sequence-row",
-                Map.of("user_seq1", sequence(), "item_industry", "industry1")));
-        Object output = result.featureValues().get("same_industry_events");
-        assert output instanceof List<?> : output;
-        List<?> events = (List<?>) output;
-        assert events.size() == 3 : events;
-        assert events.getFirst() instanceof Map<?, ?> : events.getFirst();
-        assert ((Map<?, ?>) events.getFirst()).get("itemId").equals("h1") : events.getFirst();
+                Map.of("user_seq1", publicIndustrySequence())));
+        assert result.featureValues().get("sequence_out").equals(publicIndustrySequence())
+                : result.featureValues();
     }
 
     private static void testConfigurationAndRequestValidation() {
@@ -1526,7 +1572,9 @@ public final class DagEngineSelfTest {
                 () -> offline.generate(new OnlineGenerateRequest(
                         "wrong-request",
                         Map.of(),
-                        List.of(Map.of("raw_price", 1.0, "quality_score", 1.0)))));
+                        List.of(Map.of(
+                                "raw_price", List.of(1.0),
+                                "quality_score", List.of(1.0))))));
         assert modeMismatch.planId().equals("mode-mismatch") : modeMismatch.planId();
         assert modeMismatch.executionId().equals("wrong-request") : modeMismatch.executionId();
 
@@ -1537,18 +1585,97 @@ public final class DagEngineSelfTest {
         FeatureGenerationException missingInput = expectThrows(
                 FeatureGenerationException.class,
                 () -> requiredPrice.generate(new OfflineGenerateRequest(
-                        "missing-input", Map.of("quality_score", 0.8))));
+                        "missing-input", Map.of("quality_score", List.of(0.8)))));
         assert missingInput.getMessage().contains("raw_price") : missingInput.getMessage();
 
-        Map<String, Object> explicitNullRow = new LinkedHashMap<>();
-        explicitNullRow.put("raw_price", null);
-        explicitNullRow.put("quality_score", 0.8);
+        Map<String, List<?>> explicitNullRow = new LinkedHashMap<>();
+        explicitNullRow.put("raw_price", Collections.singletonList(null));
+        explicitNullRow.put("quality_score", List.of(0.8));
         FeatureGenerationException explicitNull = expectThrows(
                 FeatureGenerationException.class,
                 () -> requiredPrice.generate(new OfflineGenerateRequest(
                         "explicit-null", explicitNullRow)));
         assert !explicitNull.getMessage().contains("Missing source feature")
                 : explicitNull.getMessage();
+
+        String nullableOutputJson = """
+                {
+                  "feature_set_name":"nullable-array-output",
+                  "version":"1",
+                  "features":[
+                    {"name":"source","raw_name":"source","type":"STRING","definition_type":"BASE",
+                     "entity_scopes":["USER"],"value_shape":"SCALAR"},
+                    {"name":"nullable_out","store_name":"nullable_out","type":"STRING",
+                     "definition_type":"DERIVED","expression":"coalesce(source, null)",
+                     "output_policy":"OUTPUT","entity_scopes":["USER"],"value_shape":"SCALAR"}
+                  ]
+                }
+                """;
+        FeatureDagEngine nullableOutput = FeatureDagEngine.init(
+                nullableOutputJson, InitOptions.offline("nullable-array-output"));
+        GenerateResult nullableResult = nullableOutput.generate(new OfflineGenerateRequest(
+                "nullable-output-row",
+                Map.of("source", Collections.singletonList(null))));
+        List<?> nullableValues = nullableResult.featureValues().get("nullable_out");
+        assert nullableValues.size() == 1 && nullableValues.getFirst() == null
+                : nullableResult.featureValues();
+
+        ArrayList<Object> offlineValues = new ArrayList<>(List.of("original"));
+        Map<String, List<?>> mutableOfflineRow = new LinkedHashMap<>();
+        mutableOfflineRow.put("source", offlineValues);
+        OfflineGenerateRequest offlineSnapshot = new OfflineGenerateRequest(
+                "offline-snapshot", mutableOfflineRow);
+        offlineValues.set(0, "changed");
+        mutableOfflineRow.clear();
+        assert offlineSnapshot.rowValues().get("source").equals(List.of("original"))
+                : offlineSnapshot.rowValues();
+
+        ArrayList<Object> sharedValues = new ArrayList<>(List.of("shared-original"));
+        Map<String, List<?>> mutableShared = new LinkedHashMap<>();
+        mutableShared.put("shared", sharedValues);
+        ArrayList<Object> candidateValues = new ArrayList<>(List.of("candidate-original"));
+        Map<String, List<?>> mutableCandidate = new LinkedHashMap<>();
+        mutableCandidate.put("candidate", candidateValues);
+        ArrayList<Map<String, List<?>>> mutableCandidates = new ArrayList<>();
+        mutableCandidates.add(mutableCandidate);
+        OnlineGenerateRequest onlineSnapshot = new OnlineGenerateRequest(
+                "online-snapshot", mutableShared, mutableCandidates);
+        sharedValues.set(0, "shared-changed");
+        mutableShared.clear();
+        candidateValues.set(0, "candidate-changed");
+        mutableCandidate.clear();
+        mutableCandidates.clear();
+        assert onlineSnapshot.sharedValues().get("shared").equals(List.of("shared-original"))
+                : onlineSnapshot.sharedValues();
+        assert onlineSnapshot.candidates().size() == 1 : onlineSnapshot.candidates();
+        assert onlineSnapshot.candidates().getFirst().get("candidate")
+                .equals(List.of("candidate-original")) : onlineSnapshot.candidates();
+    }
+
+    private static void testFailFastArrayOutput() {
+        String json = """
+                {
+                  "feature_set_name":"fail-fast-array-output",
+                  "version":"1",
+                  "features":[
+                    {"name":"source","raw_name":"source","type":"DOUBLE","definition_type":"BASE",
+                     "entity_scopes":["USER"],"value_shape":"SCALAR"},
+                    {"name":"good_out","store_name":"good_out","type":"DOUBLE",
+                     "definition_type":"DERIVED","expression":"coalesce(source, 0.0)",
+                     "output_policy":"OUTPUT","entity_scopes":["USER"],"value_shape":"SCALAR","order":1},
+                    {"name":"bad_out","store_name":"bad_out","type":"DOUBLE",
+                     "definition_type":"DERIVED","expression":"div_num(source, {\\\"divisor\\\":0})",
+                     "output_policy":"OUTPUT","entity_scopes":["USER"],"value_shape":"SCALAR","order":2}
+                  ]
+                }
+                """;
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                json, InitOptions.offline("fail-fast-array-output"));
+        FeatureGenerationException error = expectThrows(
+                FeatureGenerationException.class,
+                () -> engine.generate(new OfflineGenerateRequest(
+                        "fail-fast-row", Map.of("source", List.of(2.0)))));
+        assert error.getMessage().contains("divisor must not be zero") : error.getMessage();
     }
 
     private static void testDeclaredScopeIsValidatedBeforeOverride() {
@@ -1602,8 +1729,9 @@ public final class DagEngineSelfTest {
                 json, InitOptions.offline("default-output-policy-" + featureName));
         GenerateResult result = engine.generate(new OfflineGenerateRequest(
                 "default-output-policy-row-" + featureName,
-                Map.of("source_value", 41)));
-        assert result.featureValues().equals(Map.of(storeName, 42.0)) : result.featureValues();
+                Map.of("source_value", List.of(41))));
+        assert result.featureValues().equals(Map.of(storeName, List.of(42.0)))
+                : result.featureValues();
     }
 
     private static String configWithDefaultDerivedOutputPolicy(
@@ -1820,9 +1948,9 @@ public final class DagEngineSelfTest {
     private static void testCandidateCardinalityAndDefaults() {
         FeatureDagEngine engine = FeatureDagEngine.init(
                 onlineConfigJson(), InitOptions.online("candidate-cardinality"));
-        Map<String, Object> shared = Map.of(
-                "user_click_count", 12,
-                "user_seq1", sequence());
+        Map<String, List<?>> shared = Map.of(
+                "user_click_count", List.of(12),
+                "user_seq1", publicIndustrySequence());
 
         GenerateResult empty = engine.generate(new OnlineGenerateRequest(
                 "zero-candidates", shared, List.of()));
@@ -1831,22 +1959,26 @@ public final class DagEngineSelfTest {
         GenerateResult single = engine.generate(new OnlineGenerateRequest(
                 "one-candidate",
                 shared,
-                List.of(Map.of("item_industry", "industry1", "item_price", 20.0))));
+                List.of(Map.of(
+                        "item_industry", List.of("industry1"),
+                        "item_price", List.of(20.0)))));
         assert single.candidateFeatureValues().size() == 1;
-        assert single.candidateFeatureValues().getFirst().get("same_industry_count").equals(3)
+        assert scalarFeature(single.candidateFeatureValues().getFirst(),
+                "same_industry_count").equals(3)
                 : single.candidateFeatureValues();
 
         GenerateResult four = engine.generate(new OnlineGenerateRequest(
                 "four-candidates", shared, fourCandidates()));
         assert four.candidateFeatureValues().stream()
-                .map(values -> values.get("same_industry_count"))
+                .map(values -> scalarFeature(values, "same_industry_count"))
                 .toList().equals(List.of(3, 1, 3, 0)) : four.candidateFeatureValues();
 
         GenerateResult defaultPrice = engine.generate(new OnlineGenerateRequest(
                 "default-price",
                 shared,
-                List.of(Map.of("item_industry", "industry2"))));
-        assert ((Number) defaultPrice.candidateFeatureValues().getFirst().get("final_score"))
+                List.of(Map.of("item_industry", List.of("industry2")))));
+        assert ((Number) scalarFeature(
+                defaultPrice.candidateFeatureValues().getFirst(), "final_score"))
                 .doubleValue() == 0.0 : defaultPrice.candidateFeatureValues();
 
         String requiredPriceConfig = onlineConfigJson().replace(
@@ -1859,19 +1991,32 @@ public final class DagEngineSelfTest {
                 () -> requiredPrice.generate(new OnlineGenerateRequest(
                         "missing-price",
                         shared,
-                        List.of(Map.of("item_industry", "industry1")))));
+                        List.of(Map.of("item_industry", List.of("industry1"))))));
         assert missingPrice.getMessage().contains("item_price") : missingPrice.getMessage();
+    }
+
+    private static void testCandidateVectorPreservesNullElements() {
+        ArrayList<Object> values = new ArrayList<>();
+        values.add(null);
+        CandidateVectorValue vector = new CandidateVectorValue(values);
+        values.set(0, "changed");
+
+        assert vector.size() == 1 : vector.values();
+        assert vector.valueAt(0) == null : vector.values();
+        expectThrows(UnsupportedOperationException.class, () -> vector.values().set(0, "changed"));
     }
 
     private static void testEmptySequenceAndOfflineOutputSet() {
         FeatureDagEngine online = FeatureDagEngine.init(
                 onlineConfigJson(), InitOptions.online("empty-sequence"));
-        SequenceBlock emptySequence = new SequenceBlock("empty", 1L, List.of());
         GenerateResult empty = online.generate(new OnlineGenerateRequest(
                 "empty-sequence-request",
-                Map.of("user_click_count", 12, "user_seq1", emptySequence),
-                List.of(Map.of("item_industry", "industry1", "item_price", 20.0))));
-        assert empty.candidateFeatureValues().getFirst().get("same_industry_count").equals(0)
+                Map.of("user_click_count", List.of(12), "user_seq1", List.of()),
+                List.of(Map.of(
+                        "item_industry", List.of("industry1"),
+                        "item_price", List.of(20.0)))));
+        assert scalarFeature(empty.candidateFeatureValues().getFirst(),
+                "same_industry_count").equals(0)
                 : empty.candidateFeatureValues();
 
         FeatureDagEngine offline = FeatureDagEngine.init(
@@ -1879,10 +2024,10 @@ public final class DagEngineSelfTest {
         GenerateResult result = offline.generate(new OfflineGenerateRequest(
                 "offline-output-row",
                 Map.of(
-                        "user_click_count", 12,
-                        "user_seq1", sequence(),
-                        "item_industry", "industry1",
-                        "item_price", 20.0)));
+                        "user_click_count", List.of(12),
+                        "user_seq1", publicIndustrySequence(),
+                        "item_industry", List.of("industry1"),
+                        "item_price", List.of(20.0))));
         assert result.featureValues().keySet().equals(
                 linkedSet("same_industry_count", "final_score")) : result.featureValues();
         assert !result.featureValues().containsKey("same_industry_seq");
@@ -1899,7 +2044,19 @@ public final class DagEngineSelfTest {
                         "Logical node is absent from physical plan: " + logicalNodeId));
     }
 
-    private static List<Map<String, Object>> fourCandidates() {
+    private static List<Map<String, List<?>>> fourCandidates() {
+        return List.of(
+                Map.of("item_id", List.of("item1"), "item_industry", List.of("industry1"),
+                        "item_price", List.of(20.0)),
+                Map.of("item_id", List.of("item2"), "item_industry", List.of("industry2"),
+                        "item_price", List.of(30.0)),
+                Map.of("item_id", List.of("item3"), "item_industry", List.of("industry1"),
+                        "item_price", List.of(40.0)),
+                Map.of("item_id", List.of("item4"), "item_industry", List.of("industry4"),
+                        "item_price", List.of(50.0)));
+    }
+
+    private static List<Map<String, Object>> naturalFourCandidates() {
         return List.of(
                 Map.of("item_id", "item1", "item_industry", "industry1", "item_price", 20.0),
                 Map.of("item_id", "item2", "item_industry", "industry2", "item_price", 30.0),
@@ -1927,7 +2084,7 @@ public final class DagEngineSelfTest {
                 ExecutionContext.onlineRequest(
                         "dedup-four-request",
                         Map.of("user_seq1", sequence()),
-                        fourCandidates()));
+                        naturalFourCandidates()));
         CandidateVectorValue counts = (CandidateVectorValue) result.feature("same_industry_count");
         assert counts.values().equals(List.of(3, 1, 3, 0)) : counts.values();
         assert result.nodeStates().values().stream()
@@ -1993,7 +2150,7 @@ public final class DagEngineSelfTest {
                 ExecutionContext.onlineRequest(
                         "direct-nested-request",
                         Map.of("user_seq1", sequence()),
-                        fourCandidates()));
+                        naturalFourCandidates()));
         CandidateVectorValue counts = (CandidateVectorValue) result.feature("same_industry_count");
         assert counts.values().equals(List.of(3, 1, 3, 0)) : counts.values();
         assert result.nodeStates().values().stream()
@@ -2149,42 +2306,45 @@ public final class DagEngineSelfTest {
                 onlineConfigJson(), InitOptions.offline("consistency-offline"));
         FeatureDagEngine online = FeatureDagEngine.init(
                 onlineConfigJson(), InitOptions.online("consistency-online"));
-        Map<String, Object> shared = Map.of(
-                "user_click_count", 12,
-                "user_seq1", sequence());
+        Map<String, List<?>> shared = Map.of(
+                "user_click_count", List.of(12),
+                "user_seq1", publicIndustrySequence());
 
-        Map<String, Map<String, Object>> offlineByItemId = new LinkedHashMap<>();
-        for (Map<String, Object> candidate : fourCandidates()) {
+        Map<String, Map<String, List<?>>> offlineByItemId = new LinkedHashMap<>();
+        for (Map<String, List<?>> candidate : fourCandidates()) {
             GenerateResult result = offline.generate(new OfflineGenerateRequest(
-                    "offline-" + candidate.get("item_id"),
+                    "offline-" + candidate.get("item_id").getFirst(),
                     mergedRow(shared, candidate)));
-            offlineByItemId.put(String.valueOf(candidate.get("item_id")), result.featureValues());
+            offlineByItemId.put(
+                    String.valueOf(candidate.get("item_id").getFirst()), result.featureValues());
         }
 
         GenerateResult onlineBatch = online.generate(new OnlineGenerateRequest(
                 "consistency-batch", shared, fourCandidates()));
         for (int index = 0; index < fourCandidates().size(); index++) {
-            String itemId = String.valueOf(fourCandidates().get(index).get("item_id"));
+            String itemId = String.valueOf(
+                    fourCandidates().get(index).get("item_id").getFirst());
             assertFeatureValuesEqual(
                     offlineByItemId.get(itemId),
                     onlineBatch.candidateFeatureValues().get(index));
         }
 
-        List<Map<String, Object>> reordered = List.of(
+        List<Map<String, List<?>>> reordered = List.of(
                 fourCandidates().get(2),
                 fourCandidates().get(1),
                 fourCandidates().get(0));
         GenerateResult reorderedBatch = online.generate(new OnlineGenerateRequest(
                 "consistency-reordered", shared, reordered));
         for (int index = 0; index < reordered.size(); index++) {
-            String itemId = String.valueOf(reordered.get(index).get("item_id"));
+            String itemId = String.valueOf(reordered.get(index).get("item_id").getFirst());
             assertFeatureValuesEqual(
                     offlineByItemId.get(itemId),
                     reorderedBatch.candidateFeatureValues().get(index));
         }
 
-        Map<String, Object> missingUserShared = Map.of("user_seq1", sequence());
-        Map<String, Object> firstCandidate = fourCandidates().getFirst();
+        Map<String, List<?>> missingUserShared = Map.of(
+                "user_seq1", publicIndustrySequence());
+        Map<String, List<?>> firstCandidate = fourCandidates().getFirst();
         GenerateResult offlineDefault = offline.generate(new OfflineGenerateRequest(
                 "consistency-default-offline",
                 mergedRow(missingUserShared, firstCandidate)));
@@ -2196,9 +2356,9 @@ public final class DagEngineSelfTest {
                 offlineDefault.featureValues(),
                 onlineDefault.candidateFeatureValues().getFirst());
 
-        Map<String, Object> emptySequenceShared = Map.of(
-                "user_click_count", 12,
-                "user_seq1", new SequenceBlock("consistency-empty", 1L, List.of()));
+        Map<String, List<?>> emptySequenceShared = Map.of(
+                "user_click_count", List.of(12),
+                "user_seq1", List.of());
         GenerateResult offlineEmpty = offline.generate(new OfflineGenerateRequest(
                 "consistency-empty-offline",
                 mergedRow(emptySequenceShared, firstCandidate)));
@@ -2209,14 +2369,14 @@ public final class DagEngineSelfTest {
         assertFeatureValuesEqual(
                 offlineEmpty.featureValues(),
                 onlineEmpty.candidateFeatureValues().getFirst());
-        assert offlineEmpty.featureValues().get("same_industry_count").equals(0)
+        assert scalarFeature(offlineEmpty.featureValues(), "same_industry_count").equals(0)
                 : offlineEmpty.featureValues();
     }
 
-    private static Map<String, Object> mergedRow(
-            Map<String, Object> shared,
-            Map<String, Object> candidate) {
-        Map<String, Object> row = new LinkedHashMap<>(shared);
+    private static Map<String, List<?>> mergedRow(
+            Map<String, List<?>> shared,
+            Map<String, List<?>> candidate) {
+        Map<String, List<?>> row = new LinkedHashMap<>(shared);
         candidate.forEach((key, value) -> {
             if (!key.equals("item_id")) row.put(key, value);
         });
@@ -2224,14 +2384,28 @@ public final class DagEngineSelfTest {
     }
 
     private static void assertFeatureValuesEqual(
-            Map<String, Object> offline,
-            Map<String, Object> online) {
-        assert offline.get("same_industry_count").equals(online.get("same_industry_count"))
+            Map<String, List<?>> offline,
+            Map<String, List<?>> online) {
+        assert scalarFeature(offline, "same_industry_count")
+                .equals(scalarFeature(online, "same_industry_count"))
                 : "offline=" + offline + ", online=" + online;
-        double offlineScore = ((Number) offline.get("final_score")).doubleValue();
-        double onlineScore = ((Number) online.get("final_score")).doubleValue();
+        double offlineScore = ((Number) scalarFeature(offline, "final_score")).doubleValue();
+        double onlineScore = ((Number) scalarFeature(online, "final_score")).doubleValue();
         assert Math.abs(offlineScore - onlineScore) <= 1e-9
                 : "offline=" + offlineScore + ", online=" + onlineScore;
+    }
+
+    private static Object scalarFeature(Map<String, List<?>> values, String name) {
+        List<?> featureValues = values.get(name);
+        assert featureValues != null : "Missing feature " + name + " in " + values;
+        assert featureValues.size() == 1 : "Expected scalar array for " + name + ": " + featureValues;
+        return featureValues.getFirst();
+    }
+
+    private static List<String> publicIndustrySequence() {
+        return List.of(
+                "industry1", "industry2", "industry1",
+                "industry3", "industry1", "industry3");
     }
 
     private static List<FeatureDefinition> withDerived(

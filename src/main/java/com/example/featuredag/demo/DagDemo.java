@@ -42,22 +42,23 @@ public final class DagDemo {
     private DagDemo() {}
 
     public static void main(String[] args) {
-        Map<String, Object> row = Map.of(
-                "auid", "aaaa",
+        Map<String, List<?>> row = Map.of(
+                "auid", List.of("aaaa"),
                 "auid_app_time_seq", List.of(
                         "app0", "app1", "app2", "app3", "app4", "app5", "app6", "app7"),
                 "timestamp", List.of(
                         1785549653L, 1785459831L, 1785286488L, 1785203315L,
                         1785114236L, 1785025362L, 1784938978L, 1784856870L),
-                "request_time", 1785549653,
-                "target_app", "app0");
+                "request_time", List.of(1785549653),
+                "target_app", List.of("app0"));
 
         FeatureDagEngine engine = FeatureDagEngine.init(
                 CONFIG_JSON, InitOptions.offline("three-day-app-count-demo"));
         GenerateResult result = engine.generate(
                 new OfflineGenerateRequest("auid-aaaa-row", row));
 
-        long time3d = ((Number) row.get("request_time")).longValue() - THREE_DAYS_IN_SECONDS;
+        long time3d = ((Number) row.get("request_time").getFirst()).longValue()
+                - THREE_DAYS_IN_SECONDS;
         System.out.println("AUID: " + row.get("auid"));
         System.out.println("TIME_3D: " + time3d + " seconds since epoch");
         System.out.println("APP_SEQUENCE_SIZE: "

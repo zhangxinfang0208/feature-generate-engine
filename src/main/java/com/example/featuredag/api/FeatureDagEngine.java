@@ -18,7 +18,6 @@ import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExecutionResult;
-import com.example.featuredag.runtime.ExternalValueMaterializer;
 import com.example.featuredag.runtime.ValueHandle;
 
 import java.nio.file.Path;
@@ -37,14 +36,17 @@ public final class FeatureDagEngine {
     private final List<FeatureOutputDescriptor> outputs;
     private final PhysicalPlan plan;
     private final DagRuntime runtime;
-    private final ExternalValueMaterializer materializer;
+    private final FeatureInputDecoder inputDecoder;
+    private final FeatureOutputEncoder outputEncoder;
 
     private FeatureDagEngine(
             ExecutionEnvironment environment,
             MappedFeatureSet mapped,
             String planId,
             PhysicalPlan plan,
-            DagRuntime runtime) {
+            DagRuntime runtime,
+            FeatureInputDecoder inputDecoder,
+            FeatureOutputEncoder outputEncoder) {
         this.environment = environment;
         this.featureSetName = mapped.featureSetName();
         this.version = mapped.version();
@@ -52,7 +54,8 @@ public final class FeatureDagEngine {
         this.outputs = mapped.outputs();
         this.plan = plan;
         this.runtime = runtime;
-        this.materializer = new ExternalValueMaterializer();
+        this.inputDecoder = inputDecoder;
+        this.outputEncoder = outputEncoder;
     }
 
     public static FeatureDagEngine init(Path configFile, InitOptions options) {
@@ -106,12 +109,14 @@ public final class FeatureDagEngine {
     private GenerateResult generateOffline(OfflineGenerateRequest request) {
         ExecutionResult execution = runtime.execute(
                 plan,
-                ExecutionContext.offlineRow(request.executionId(), request.rowValues()));
-        Map<String, Object> result = new LinkedHashMap<>();
+                ExecutionContext.offlineRow(
+                        request.executionId(), inputDecoder.decodeOffline(request.rowValues())));
+        Map<String, List<?>> result = new LinkedHashMap<>();
         for (FeatureOutputDescriptor output : outputs) {
             try {
                 ValueHandle value = execution.feature(output.featureName());
-                result.put(output.storeName(), materializer.materialize(value));
+                result.put(
+                        output.storeName(), outputEncoder.encode(output.featureName(), value));
             } catch (RuntimeException error) {
                 throw new FeatureGenerationException(
                         error.getMessage(), planId, request.executionId(), output.featureName(), error);
@@ -124,9 +129,11 @@ public final class FeatureDagEngine {
         ExecutionResult execution = runtime.execute(
                 plan,
                 ExecutionContext.onlineRequest(
-                        request.executionId(), request.sharedValues(), request.candidates()));
-        Map<String, Object> sharedResults = new LinkedHashMap<>();
-        List<Map<String, Object>> candidateResults = new ArrayList<>(request.candidates().size());
+                        request.executionId(),
+                        inputDecoder.decodeOnlineShared(request.sharedValues()),
+                        inputDecoder.decodeOnlineCandidates(request.candidates())));
+        Map<String, List<?>> sharedResults = new LinkedHashMap<>();
+        List<Map<String, List<?>>> candidateResults = new ArrayList<>(request.candidates().size());
         for (int index = 0; index < request.candidates().size(); index++) {
             candidateResults.add(new LinkedHashMap<>());
         }
@@ -141,10 +148,13 @@ public final class FeatureDagEngine {
                     }
                     for (int index = 0; index < vector.size(); index++) {
                         candidateResults.get(index).put(
-                                output.storeName(), materializer.materializeRaw(vector.valueAt(index)));
+                                output.storeName(),
+                                outputEncoder.encodeCandidateElement(
+                                        output.featureName(), vector.valueAt(index)));
                     }
                 } else {
-                    sharedResults.put(output.storeName(), materializer.materialize(value));
+                    sharedResults.put(
+                            output.storeName(), outputEncoder.encode(output.featureName(), value));
                 }
             } catch (RuntimeException error) {
                 throw new FeatureGenerationException(
@@ -182,8 +192,11 @@ public final class FeatureDagEngine {
             }
             PhysicalPlan plan = new PhysicalPlanner().plan(
                     new LogicalDagOptimizer().analyze(dag), options.environment(), planId);
+            FeatureInputDecoder inputDecoder = FeatureInputDecoder.from(dag);
+            FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
             return new FeatureDagEngine(
-                    options.environment(), mapped, planId, plan, new DagRuntime(operators));
+                    options.environment(), mapped, planId, plan, new DagRuntime(operators),
+                    inputDecoder, outputEncoder);
         } catch (RuntimeException error) {
             throw initializationFailure(
                     error, featureSetName, version, configuredPlanId);

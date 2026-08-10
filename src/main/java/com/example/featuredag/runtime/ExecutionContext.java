@@ -2,6 +2,8 @@ package com.example.featuredag.runtime;
 
 import com.example.featuredag.physical.ExecutionEnvironment;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -9,7 +11,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 单次执行的上下文（运行时）：承载输入（共享源值 + 候选表）、
+ * 单次执行的上下文（运行时）：承载单请求、离线行批或在线分组批输入，
  * 输出槽表（物理节点结果按 slot:N 写入）、缓存注册表与节点状态表；
  * 生命周期与一次 generate 调用一致。
  */
@@ -20,6 +22,11 @@ public final class ExecutionContext {
     private final List<Map<String, Object>> candidates;
     private final List<Map<String, Object>> offlineRows;
     private final boolean offlineBatch;
+    private final List<String> onlineGroupExecutionIds;
+    private final List<Map<String, Object>> onlineSharedGroups;
+    private final int[] candidateGroupOffsets;
+    private final int[] candidateGroupIndexes;
+    private final boolean onlineBatch;
     private final Map<String, ValueHandle> resultSlots = new LinkedHashMap<>();
     private final Map<Object, Object> cacheRegistry = new LinkedHashMap<>();
     private final Map<String, RuntimeNodeState> nodeStates = new LinkedHashMap<>();
@@ -30,7 +37,11 @@ public final class ExecutionContext {
             Map<String, Object> sharedSourceValues,
             List<Map<String, Object>> candidates,
             List<Map<String, Object>> offlineRows,
-            boolean offlineBatch) {
+            boolean offlineBatch,
+            List<String> onlineGroupExecutionIds,
+            List<Map<String, Object>> onlineSharedGroups,
+            int[] candidateGroupOffsets,
+            boolean onlineBatch) {
         this.executionId = Objects.requireNonNull(executionId, "executionId");
         this.environment = Objects.requireNonNull(environment, "environment");
         this.sharedSourceValues = Collections.unmodifiableMap(new LinkedHashMap<>(sharedSourceValues));
@@ -41,11 +52,21 @@ public final class ExecutionContext {
                 .map(row -> Collections.unmodifiableMap(new LinkedHashMap<>(row)))
                 .toList();
         this.offlineBatch = offlineBatch;
+        this.onlineGroupExecutionIds = List.copyOf(onlineGroupExecutionIds);
+        this.onlineSharedGroups = onlineSharedGroups.stream()
+                .map(group -> Collections.unmodifiableMap(new LinkedHashMap<>(group)))
+                .toList();
+        this.candidateGroupOffsets = candidateGroupOffsets.clone();
+        this.onlineBatch = onlineBatch;
+        validateOnlineBatchLayout();
+        this.candidateGroupIndexes = buildCandidateGroupIndexes();
     }
 
     public static ExecutionContext offlineRow(String executionId, Map<String, Object> rowValues) {
         return new ExecutionContext(
-                executionId, ExecutionEnvironment.OFFLINE, rowValues, List.of(), List.of(), false);
+                executionId, ExecutionEnvironment.OFFLINE,
+                rowValues, List.of(), List.of(), false,
+                List.of(), List.of(), new int[] {0}, false);
     }
 
     public static ExecutionContext offlineBatch(
@@ -53,7 +74,9 @@ public final class ExecutionContext {
             List<Map<String, Object>> rows) {
         Objects.requireNonNull(rows, "rows");
         return new ExecutionContext(
-                executionId, ExecutionEnvironment.OFFLINE, Map.of(), List.of(), rows, true);
+                executionId, ExecutionEnvironment.OFFLINE,
+                Map.of(), List.of(), rows, true,
+                List.of(), List.of(), new int[] {0}, false);
     }
 
     public static ExecutionContext onlineRequest(
@@ -63,7 +86,36 @@ public final class ExecutionContext {
         Objects.requireNonNull(candidates, "candidates");
         return new ExecutionContext(
                 requestId, ExecutionEnvironment.ONLINE,
-                userAndSceneValues, candidates, List.of(), false);
+                userAndSceneValues, candidates, List.of(), false,
+                List.of(requestId), List.of(userAndSceneValues),
+                new int[] {0, candidates.size()}, false);
+    }
+
+    public static ExecutionContext onlineBatch(
+            String batchExecutionId,
+            List<String> groupExecutionIds,
+            List<Map<String, Object>> sharedGroups,
+            List<List<Map<String, Object>>> candidateGroups) {
+        Objects.requireNonNull(groupExecutionIds, "groupExecutionIds");
+        Objects.requireNonNull(sharedGroups, "sharedGroups");
+        Objects.requireNonNull(candidateGroups, "candidateGroups");
+        if (groupExecutionIds.size() != sharedGroups.size()
+                || groupExecutionIds.size() != candidateGroups.size()) {
+            throw new IllegalArgumentException(
+                    "Online batch group ids, shared groups and candidate groups must have equal size");
+        }
+        List<Map<String, Object>> flattenedCandidates = new ArrayList<>();
+        int[] offsets = new int[groupExecutionIds.size() + 1];
+        for (int groupIndex = 0; groupIndex < candidateGroups.size(); groupIndex++) {
+            List<Map<String, Object>> group = Objects.requireNonNull(
+                    candidateGroups.get(groupIndex), "candidate group " + groupIndex);
+            flattenedCandidates.addAll(group);
+            offsets[groupIndex + 1] = flattenedCandidates.size();
+        }
+        return new ExecutionContext(
+                batchExecutionId, ExecutionEnvironment.ONLINE,
+                Map.of(), flattenedCandidates, List.of(), false,
+                groupExecutionIds, sharedGroups, offsets, true);
     }
 
     public String executionId() { return executionId; }
@@ -74,12 +126,58 @@ public final class ExecutionContext {
     public List<Map<String, Object>> offlineRows() { return offlineRows; }
     public boolean isOfflineBatch() { return offlineBatch; }
     public int offlineBatchSize() { return offlineRows.size(); }
+    public boolean isOnlineBatch() { return onlineBatch; }
+    public int onlineGroupCount() { return onlineGroupExecutionIds.size(); }
+    public String onlineGroupExecutionId(int groupIndex) {
+        return onlineGroupExecutionIds.get(groupIndex);
+    }
+    public List<Map<String, Object>> onlineSharedGroups() { return onlineSharedGroups; }
+    public int candidateGroupStart(int groupIndex) { return candidateGroupOffsets[groupIndex]; }
+    public int candidateGroupEnd(int groupIndex) { return candidateGroupOffsets[groupIndex + 1]; }
+    public int candidateGroupIndex(int candidateIndex) {
+        return candidateGroupIndexes[candidateIndex];
+    }
+    public int candidateIndexInGroup(int candidateIndex) {
+        int groupIndex = candidateGroupIndex(candidateIndex);
+        return candidateIndex - candidateGroupOffsets[groupIndex];
+    }
     public Map<String, ValueHandle> resultSlots() { return resultSlots; }
     public Map<Object, Object> cacheRegistry() { return cacheRegistry; }
     public Map<String, RuntimeNodeState> nodeStates() { return nodeStates; }
 
     public RuntimeNodeState state(String physicalNodeId) {
         return nodeStates.computeIfAbsent(physicalNodeId, RuntimeNodeState::new);
+    }
+
+    private void validateOnlineBatchLayout() {
+        if (onlineGroupExecutionIds.size() != onlineSharedGroups.size()) {
+            throw new IllegalArgumentException(
+                    "Online batch group ids and shared groups must have equal size");
+        }
+        if (candidateGroupOffsets.length != onlineGroupExecutionIds.size() + 1) {
+            throw new IllegalArgumentException("Invalid online batch candidate offsets");
+        }
+        if (candidateGroupOffsets[0] != 0
+                || candidateGroupOffsets[candidateGroupOffsets.length - 1] != candidates.size()) {
+            throw new IllegalArgumentException("Online batch candidate offsets do not cover candidates");
+        }
+        for (int index = 1; index < candidateGroupOffsets.length; index++) {
+            if (candidateGroupOffsets[index] < candidateGroupOffsets[index - 1]) {
+                throw new IllegalArgumentException("Online batch candidate offsets must be ordered");
+            }
+        }
+    }
+
+    private int[] buildCandidateGroupIndexes() {
+        int[] indexes = new int[candidates.size()];
+        for (int groupIndex = 0; groupIndex + 1 < candidateGroupOffsets.length; groupIndex++) {
+            Arrays.fill(
+                    indexes,
+                    candidateGroupOffsets[groupIndex],
+                    candidateGroupOffsets[groupIndex + 1],
+                    groupIndex);
+        }
+        return indexes;
     }
 
 }

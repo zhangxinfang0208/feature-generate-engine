@@ -8,7 +8,6 @@ import com.example.featuredag.config.MappedFeatureSet;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
-import com.example.featuredag.logical.SourceNode;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.PhysicalPlan;
@@ -80,6 +79,10 @@ public final class FeatureDagEngine {
         }
     }
 
+    /**
+     * 推理入口：按引擎环境路由到离线/在线执行；
+     * 请求类型不匹配或执行期异常统一包装为 FeatureGenerationException 抛出。
+     */
     public GenerateResult generate(GenerateRequest request) {
         Objects.requireNonNull(request, "request");
         try {
@@ -106,6 +109,10 @@ public final class FeatureDagEngine {
     public String planId() { return planId; }
     public ExecutionEnvironment environment() { return environment; }
 
+    /**
+     * 离线推理（单行）：解码整行源值 → 执行物理计划 → 按输出描述逐个编码；
+     * 任一输出特征失败即整体失败，并在异常中带上特征名定位。
+     */
     private GenerateResult generateOffline(OfflineGenerateRequest request) {
         ExecutionResult execution = runtime.execute(
                 plan,
@@ -125,6 +132,10 @@ public final class FeatureDagEngine {
         return new GenerateResult(request.executionId(), result, List.of());
     }
 
+    /**
+     * 在线推理（请求级）：共享源值与候选表一并解码后执行；
+     * 候选向量型输出按候选下标展开为逐候选结果，标量型输出进入共享结果。
+     */
     private GenerateResult generateOnline(OnlineGenerateRequest request) {
         ExecutionResult execution = runtime.execute(
                 plan,
@@ -173,23 +184,16 @@ public final class FeatureDagEngine {
                     config,
                     options.environment(),
                     options.targetFeatures(),
-                    options.rawFeatureScopes());
+                    options.rawFeatureScopes(),
+                    options.defaultRawFeatureScopes());
             String planId = configuredPlanId == null
                     ? mapped.featureSetName() + "-" + mapped.version() + "-"
                             + options.environment().name().toLowerCase(Locale.ROOT)
                     : configuredPlanId;
             OperatorRegistry operators = OperatorRegistry.standard();
+            // C1：按「定义 → 逻辑 → 规划 → 物理 → 运行时」逐层构建，各层产物依次作为下一层的输入
             LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), operators)
                     .build(mapped.definitions(), mapped.targetFeatures());
-            if (options.environment() == ExecutionEnvironment.ONLINE) {
-                for (var node : dag.nodes().values()) {
-                    if (node instanceof SourceNode source
-                            && mapped.unresolvedOnlineScopes().contains(source.featureName())) {
-                        throw new IllegalArgumentException(
-                                "Online raw feature is missing entity_scopes: " + source.featureName());
-                    }
-                }
-            }
             PhysicalPlan plan = new PhysicalPlanner().plan(
                     new LogicalDagOptimizer().analyze(dag), options.environment(), planId);
             FeatureInputDecoder inputDecoder = FeatureInputDecoder.from(dag);

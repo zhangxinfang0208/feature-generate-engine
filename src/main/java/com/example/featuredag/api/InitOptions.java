@@ -15,6 +15,7 @@ public final class InitOptions {
     private final String planId;
     private final Set<String> targetFeatures;
     private final Map<String, Set<EntityScope>> rawFeatureScopes;
+    private final Set<EntityScope> defaultRawFeatureScopes;
 
     private InitOptions(Builder builder) {
         this.environment = Objects.requireNonNull(builder.environment, "environment");
@@ -28,6 +29,8 @@ public final class InitOptions {
                     new LinkedHashSet<>(Objects.requireNonNull(entry.getValue(), "scope set"))));
         }
         this.rawFeatureScopes = Collections.unmodifiableMap(scopes);
+        this.defaultRawFeatureScopes = immutableNonEmptyScopes(
+                builder.defaultRawFeatureScopes, "default raw feature scopes");
     }
 
     public static Builder builder() { return new Builder(); }
@@ -44,6 +47,7 @@ public final class InitOptions {
     public String planId() { return planId; }
     public Set<String> targetFeatures() { return targetFeatures; }
     public Map<String, Set<EntityScope>> rawFeatureScopes() { return rawFeatureScopes; }
+    public Set<EntityScope> defaultRawFeatureScopes() { return defaultRawFeatureScopes; }
 
     private static String blankToNull(String value) {
         if (value == null) return null;
@@ -57,11 +61,24 @@ public final class InitOptions {
         return result;
     }
 
+    private static Set<EntityScope> immutableNonEmptyScopes(
+            Set<EntityScope> values, String field) {
+        Objects.requireNonNull(values, field);
+        LinkedHashSet<EntityScope> result = new LinkedHashSet<>();
+        for (EntityScope value : values) {
+            result.add(Objects.requireNonNull(value, field + " must not contain null"));
+        }
+        if (result.isEmpty()) throw new IllegalArgumentException(field + " must not be empty");
+        return Collections.unmodifiableSet(result);
+    }
+
     public static final class Builder {
         private ExecutionEnvironment environment;
         private String planId;
         private final Set<String> targetFeatures = new LinkedHashSet<>();
         private final Map<String, Set<EntityScope>> rawFeatureScopes = new LinkedHashMap<>();
+        private final Set<EntityScope> defaultRawFeatureScopes = new LinkedHashSet<>(
+                Set.of(EntityScope.USER));
 
         public Builder environment(ExecutionEnvironment value) {
             this.environment = value;
@@ -82,6 +99,12 @@ public final class InitOptions {
         public Builder rawFeatureScopes(Map<String, Set<EntityScope>> values) {
             this.rawFeatureScopes.clear();
             if (values != null) this.rawFeatureScopes.putAll(values);
+            return this;
+        }
+
+        public Builder defaultRawFeatureScopes(Set<EntityScope> values) {
+            this.defaultRawFeatureScopes.clear();
+            if (values != null) this.defaultRawFeatureScopes.addAll(values);
             return this;
         }
 

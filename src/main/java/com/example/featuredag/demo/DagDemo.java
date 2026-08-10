@@ -4,9 +4,12 @@ import com.example.featuredag.api.FeatureDagEngine;
 import com.example.featuredag.api.GenerateResult;
 import com.example.featuredag.api.InitOptions;
 import com.example.featuredag.api.OfflineGenerateRequest;
+import com.example.featuredag.definition.EntityScope;
+import com.example.featuredag.physical.ExecutionEnvironment;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class DagDemo {
     private static final int THREE_DAYS_IN_SECONDS = 3 * 24 * 60 * 60;
@@ -15,20 +18,38 @@ public final class DagDemo {
             {
               "features": [
                 {"name":"auid","raw_name":"auid","type":"STRING","definition_type":"BASE",
-                 "entity_scopes":["USER"],"value_shape":"SCALAR"},
+                 "seq_max_length":1,"entity_scopes":[],"value_shape":null},
                 {"name":"auid_app_time_seq","raw_name":"auid_app_time_seq","type":"STRING",
-                 "definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                 "definition_type":"BASE","seq_max_length":4,"entity_scopes":[],"value_shape":null},
                 {"name":"timestamp","raw_name":"timestamp","type":"INT",
-                 "definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                 "definition_type":"BASE","seq_max_length":4,"entity_scopes":[],"value_shape":null},
                 {"name":"request_time","raw_name":"request_time","type":"INT","definition_type":"BASE",
-                 "entity_scopes":["SCENE"],"value_shape":"SCALAR"},
+                 "seq_max_length":1,"entity_scopes":[],"value_shape":null},
                 {"name":"target_app","raw_name":"target_app","type":"STRING","definition_type":"BASE",
-                 "entity_scopes":["USER"],"value_shape":"SCALAR"},
+                 "seq_max_length":1,"entity_scopes":[],"value_shape":null},
                 {
                   "name":"auid_omnichannel_paid_cnt_3d",
                   "type":"INT",
                   "definition_type":"DERIVED",
                   "expression":"count(find_list_index_typed(list_index_typed(auid_app_time_seq, greater_in_sequence_typed(timestamp, request_time, {\\"margin\\":259200})), target_app))",
+                  "output_policy":"OUTPUT",
+                  "entity_scopes":["USER","SCENE"],
+                  "value_shape":"SCALAR"
+                },
+                {
+                  "name":"auid_appc3_omnichannel_paid_cnt_div10_365d",
+                  "type":"INT",
+                  "definition_type":"DERIVED",
+                  "expression":"least(round(div_num(auid_omnichannel_paid_cnt_3d, {\\"divisor\\":10})), 1000)",
+                  "output_policy":"OUTPUT",
+                  "entity_scopes":["USER","SCENE"],
+                  "value_shape":"SCALAR"
+                },
+                {
+                  "name":"auid_appc3_omnichannel_paid_cnt_log_365d",
+                  "type":"INT",
+                  "definition_type":"DERIVED",
+                  "expression":"least(round(div(log(auid_omnichannel_paid_cnt_3d), log(1.1))), 1000)",
                   "output_policy":"OUTPUT",
                   "entity_scopes":["USER","SCENE"],
                   "value_shape":"SCALAR"
@@ -49,8 +70,12 @@ public final class DagDemo {
                 "request_time", List.of(1785549653),
                 "target_app", List.of("app0"));
 
-        FeatureDagEngine engine = FeatureDagEngine.init(
-                CONFIG_JSON, InitOptions.offline("three-day-app-count-demo"));
+        InitOptions options = InitOptions.builder()
+                .environment(ExecutionEnvironment.OFFLINE)
+                .planId("three-day-app-count-demo")
+                .rawFeatureScopes(Map.of("request_time", Set.of(EntityScope.SCENE)))
+                .build();
+        FeatureDagEngine engine = FeatureDagEngine.init(CONFIG_JSON, options);
         GenerateResult result = engine.generate(
                 new OfflineGenerateRequest("auid-aaaa-row", row));
 

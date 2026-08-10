@@ -51,6 +51,9 @@ public final class FeatureConfig {
     @JsonProperty("value_shape")
     private String valueShape;
 
+    @JsonProperty("seq_max_length")
+    private Integer sequenceMaxLength;
+
     @JsonProperty("description")
     private String description;
 
@@ -71,6 +74,7 @@ public final class FeatureConfig {
         return entityScopes == null ? List.of() : List.copyOf(entityScopes);
     }
     public String valueShape() { return valueShape; }
+    public Integer sequenceMaxLength() { return sequenceMaxLength; }
     public String description() { return description; }
     public Map<String, Object> additionalProperties() {
         return Collections.unmodifiableMap(additionalProperties);

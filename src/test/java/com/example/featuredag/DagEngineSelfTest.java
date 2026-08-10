@@ -100,6 +100,7 @@ public final class DagEngineSelfTest {
         testConfigPathInit();
         testOfflineSequenceMaterialization();
         testOnlinePublicApi();
+        testOnlineBaseMetadataDefaults();
         testOnlineSharedArrayOutput();
         testOnlineEngineConcurrentReuse();
         testConfigurationAndRequestValidation();
@@ -108,6 +109,7 @@ public final class DagEngineSelfTest {
         testDerivedOutputPolicyDefaults();
         testDeclaredScopeIsValidatedBeforeOverride();
         testDeclaredValueShapeAndScopeSemantics();
+        testBaseMetadataDefaultBoundaries();
         testDagBusinessSemantics();
         testExecutionStagesAndTargetSelection();
         testCandidateVectorPreservesNullElements();
@@ -799,8 +801,8 @@ public final class DagEngineSelfTest {
                 "greater_in_sequence_typed", "greater_than_index_typed", "reverse_typed",
                 "slice_v3_typed", "intersection_typed", "uniq_key_index", "list_2_map",
                 "thf_default_", "value2key", "k2v", "k2v_f", "v2v", "multi_v2",
-                "sub", "add", "sign", "list_multi", "div_num", "round", "dis2xl",
-                "default_key_if", "discrete", "log_base", "slice_by_indices",
+                "sub", "add", "sign", "list_multi", "div_num", "round", "div", "least",
+                "dis2xl", "default_key_if", "discrete", "log_base", "slice_by_indices",
                 "find_indices", "get_seq_length", "count_distinct", "zip_concat",
                 "calc_delta_seq");
         Map<String, List<Integer>> arities = Map.ofEntries(
@@ -1369,6 +1371,82 @@ public final class DagEngineSelfTest {
                 : result.candidateFeatureValues().getFirst();
     }
 
+    private static void testOnlineBaseMetadataDefaults() {
+        String sharedJson = onlineConfigWithoutBaseMetadata("USER");
+        FeatureDagEngine sharedEngine = FeatureDagEngine.init(
+                sharedJson, InitOptions.online("online-default-user-scope"));
+        GenerateResult sharedResult = sharedEngine.generate(new OnlineGenerateRequest(
+                "online-default-user-scope-request",
+                Map.of("ad_type", List.of("banner")),
+                List.of(Map.of())));
+        assert sharedResult.featureValues().equals(Map.of("ad_type_copy", List.of("banner")))
+                : sharedResult.featureValues();
+        assert sharedResult.candidateFeatureValues().equals(List.of(Map.of()))
+                : sharedResult.candidateFeatureValues();
+
+        FeatureDagEngine sequenceEngine = FeatureDagEngine.init(
+                onlineSequenceConfigWithoutBaseValueShape(),
+                InitOptions.online("online-default-sequence-shape"));
+        GenerateResult sequenceResult = sequenceEngine.generate(new OnlineGenerateRequest(
+                "online-default-sequence-shape-request",
+                Map.of("ad_history", List.of("banner", "video")),
+                List.of()));
+        assert sequenceResult.featureValues().equals(Map.of("ad_history_count", List.of(2)))
+                : sequenceResult.featureValues();
+
+        InitOptions itemDefaults = InitOptions.builder()
+                .environment(ExecutionEnvironment.ONLINE)
+                .planId("online-default-item-scope")
+                .defaultRawFeatureScopes(Set.of(EntityScope.ITEM))
+                .build();
+        FeatureDagEngine itemEngine = FeatureDagEngine.init(
+                onlineConfigWithoutBaseMetadata("ITEM"), itemDefaults);
+        GenerateResult itemResult = itemEngine.generate(new OnlineGenerateRequest(
+                "online-default-item-scope-request",
+                Map.of(),
+                List.of(
+                        Map.of("ad_type", List.of("banner")),
+                        Map.of("ad_type", List.of("video")))));
+        assert itemResult.featureValues().isEmpty() : itemResult.featureValues();
+        assert itemResult.candidateFeatureValues().stream()
+                .map(values -> values.get("ad_type_copy"))
+                .toList()
+                .equals(List.of(List.of("banner"), List.of("video")))
+                : itemResult.candidateFeatureValues();
+    }
+
+    private static String onlineConfigWithoutBaseMetadata(String derivedScope) {
+        return """
+                {
+                  "features": [
+                    {"name":"ad_type","raw_name":"ad_type","type":"STRING",
+                     "definition_type":"BASE","dft":"missing",
+                     "entity_scopes":null,"value_shape":null},
+                    {"name":"ad_type_copy","store_name":"ad_type_copy","type":"STRING",
+                     "definition_type":"DERIVED","expression":"coalesce(ad_type, \\\"missing\\\")",
+                     "output_policy":"OUTPUT","entity_scopes":["%s"],"value_shape":"SCALAR"}
+                  ],
+                  "feature_set_name":"online_base_metadata_defaults","version":"1"
+                }
+                """.formatted(derivedScope);
+    }
+
+    private static String onlineSequenceConfigWithoutBaseValueShape() {
+        return """
+                {
+                  "features": [
+                    {"name":"ad_history","raw_name":"ad_history","type":"STRING",
+                     "definition_type":"BASE","seq_max_length":10,
+                     "entity_scopes":null,"value_shape":null},
+                    {"name":"ad_history_count","type":"INT","definition_type":"DERIVED",
+                     "expression":"count(ad_history)","output_policy":"OUTPUT",
+                     "entity_scopes":["USER"],"value_shape":"SCALAR"}
+                  ],
+                  "feature_set_name":"online_base_sequence_default","version":"1"
+                }
+                """;
+    }
+
     private static void testOnlineSharedArrayOutput() {
         String json = """
                 {
@@ -1584,10 +1662,12 @@ public final class DagEngineSelfTest {
         String missingScopeJson = onlineConfigJson().replace(
                 "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",\"dft\":0.0,\"entity_scopes\":[\"ITEM\"]",
                 "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",\"dft\":0.0");
-        FeatureDagInitializationException missingScope = expectThrows(
-                FeatureDagInitializationException.class,
-                () -> FeatureDagEngine.init(missingScopeJson, InitOptions.online("missing-scope")));
-        assert missingScope.getMessage().contains("item_price") : missingScope.getMessage();
+        InitOptions defaultItemScope = InitOptions.builder()
+                .environment(ExecutionEnvironment.ONLINE)
+                .planId("default-item-scope")
+                .defaultRawFeatureScopes(Set.of(EntityScope.ITEM))
+                .build();
+        FeatureDagEngine.init(missingScopeJson, defaultItemScope);
 
         InitOptions scopeOverride = InitOptions.builder()
                 .environment(ExecutionEnvironment.ONLINE)
@@ -1824,6 +1904,74 @@ public final class DagEngineSelfTest {
                         Set.of(),
                         Map.of()));
         assert enumError.getMessage().contains("Invalid value_shape for feature") : enumError.getMessage();
+    }
+
+    private static void testBaseMetadataDefaultBoundaries() {
+        MappedFeatureSet defaulted = FeatureConfigMapper.map(
+                FeatureConfigLoader.load(onlineConfigWithoutBaseMetadata("USER")),
+                ExecutionEnvironment.ONLINE,
+                Set.of(),
+                Map.of(),
+                Set.of(EntityScope.ITEM));
+        FeatureDefinition defaultedBase = defaulted.definitions().stream()
+                .filter(definition -> definition.name().equals("ad_type"))
+                .findFirst()
+                .orElseThrow();
+        assert defaultedBase.entityScopes().equals(Set.of(EntityScope.ITEM))
+                : defaultedBase.entityScopes();
+        assert defaultedBase.declaredValueShape() == null
+                : defaultedBase.declaredValueShape();
+
+        MappedFeatureSet explicit = FeatureConfigMapper.map(
+                FeatureConfigLoader.load(explicitBaseMetadataConfig()),
+                ExecutionEnvironment.ONLINE,
+                Set.of(),
+                Map.of(),
+                Set.of(EntityScope.ITEM));
+        FeatureDefinition explicitBase = explicit.definitions().stream()
+                .filter(definition -> definition.name().equals("explicit_base"))
+                .findFirst()
+                .orElseThrow();
+        assert explicitBase.entityScopes().equals(Set.of(EntityScope.SCENE))
+                : explicitBase.entityScopes();
+        assert explicitBase.declaredValueShape() == ValueShape.SCALAR
+                : explicitBase.declaredValueShape();
+
+        IllegalArgumentException mapperError = expectThrows(
+                IllegalArgumentException.class,
+                () -> FeatureConfigMapper.map(
+                        FeatureConfigLoader.load(onlineConfigWithoutBaseMetadata("USER")),
+                        ExecutionEnvironment.ONLINE,
+                        Set.of(),
+                        Map.of(),
+                        Set.of()));
+        assert mapperError.getMessage().contains("defaultBaseScopes must not be empty")
+                : mapperError.getMessage();
+
+        IllegalArgumentException optionsError = expectThrows(
+                IllegalArgumentException.class,
+                () -> InitOptions.builder()
+                        .environment(ExecutionEnvironment.ONLINE)
+                        .defaultRawFeatureScopes(Set.of())
+                        .build());
+        assert optionsError.getMessage().contains("default raw feature scopes must not be empty")
+                : optionsError.getMessage();
+    }
+
+    private static String explicitBaseMetadataConfig() {
+        return """
+                {
+                  "features": [
+                    {"name":"explicit_base","raw_name":"explicit_base","type":"STRING",
+                     "definition_type":"BASE","seq_max_length":10,
+                     "entity_scopes":["SCENE"],"value_shape":"SCALAR"},
+                    {"name":"explicit_output","type":"STRING","definition_type":"DERIVED",
+                     "expression":"coalesce(explicit_base, \\\"missing\\\")","output_policy":"OUTPUT",
+                     "entity_scopes":["SCENE"],"value_shape":"SCALAR"}
+                  ],
+                  "feature_set_name":"explicit_base_metadata","version":"1"
+                }
+                """;
     }
 
     private static LogicalDag buildDag(String json) {

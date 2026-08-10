@@ -33,18 +33,31 @@ public final class FeatureConfigMapper {
             ExecutionEnvironment environment,
             Set<String> requestedTargets,
             Map<String, Set<EntityScope>> scopeOverrides) {
+        return map(
+                config,
+                environment,
+                requestedTargets,
+                scopeOverrides,
+                Set.of(EntityScope.USER));
+    }
+
+    public static MappedFeatureSet map(
+            FeatureSetConfig config,
+            ExecutionEnvironment environment,
+            Set<String> requestedTargets,
+            Map<String, Set<EntityScope>> scopeOverrides,
+            Set<EntityScope> defaultBaseScopes) {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(environment, "environment");
         requestedTargets = requestedTargets == null ? Set.of() : requestedTargets;
         scopeOverrides = scopeOverrides == null ? Map.of() : scopeOverrides;
+        defaultBaseScopes = immutableNonEmptyScopes(defaultBaseScopes, "defaultBaseScopes");
 
         String featureSetName = requireText(config.featureSetName(), "feature_set_name");
         String version = requireText(config.version(), "version");
         Map<String, DefinitionEntry> entries = new LinkedHashMap<>();
         List<FeatureDefinition> definitions = new ArrayList<>();
         List<DerivedEntry> enabledDerived = new ArrayList<>();
-        Set<String> unresolvedOnlineScopes = new LinkedHashSet<>();
-
         int declarationIndex = 0;
         for (FeatureConfig feature : config.features()) {
             String name = requireText(feature.name(), "features[].name");
@@ -62,8 +75,7 @@ public final class FeatureConfigMapper {
                 String sourceBinding = requireText(feature.rawName(), "raw_name for BASE feature " + name);
                 Set<EntityScope> scopes = resolveScopes(name, feature.entityScopes(), scopeOverrides);
                 if (scopes.isEmpty()) {
-                    scopes = Set.of(EntityScope.USER);
-                    if (environment == ExecutionEnvironment.ONLINE) unresolvedOnlineScopes.add(name);
+                    scopes = defaultBaseScopes;
                 }
                 if (enabled) {
                     DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
@@ -75,7 +87,8 @@ public final class FeatureConfigMapper {
                             .defaultValue(convertDefault(feature.defaultValue(), type, name))
                             .sourceBinding(sourceBinding)
                             .outputPolicy(OutputPolicy.OUTPUT)
-                            .declaredValueShape(declaredValueShape)
+                            .declaredValueShape(resolveBaseValueShape(
+                                    declaredValueShape, feature.sequenceMaxLength()))
                             .build());
                 }
             } else {
@@ -116,13 +129,14 @@ public final class FeatureConfigMapper {
         if (orderedTargets.isEmpty()) {
             throw new IllegalArgumentException("Feature config has no enabled OUTPUT derived targets");
         }
+        // L0→L1：映射产物为定义集合 + 目标特征 + 输出描述，作为逻辑层构建（C3）的输入契约
         return new MappedFeatureSet(
                 featureSetName,
                 version,
                 definitions,
                 orderedTargets,
                 outputs,
-                unresolvedOnlineScopes);
+                Set.of());
     }
 
     private static DefinitionType parseDefinitionType(String value, String featureName) {
@@ -145,6 +159,14 @@ public final class FeatureConfigMapper {
             default -> throw new IllegalArgumentException(
                     "Invalid value_shape for feature " + featureName + ": " + value);
         };
+    }
+
+    private static ValueShape resolveBaseValueShape(
+            ValueShape declaredValueShape, Integer sequenceMaxLength) {
+        if (declaredValueShape != null) return declaredValueShape;
+        return sequenceMaxLength != null && sequenceMaxLength > 1
+                ? ValueShape.SEQUENCE
+                : null;
     }
 
     private static void putUnique(
@@ -252,6 +274,17 @@ public final class FeatureConfigMapper {
             if (override.isEmpty()) return Set.of();
             return Collections.unmodifiableSet(new LinkedHashSet<>(override));
         }
+        return Collections.unmodifiableSet(result);
+    }
+
+    private static Set<EntityScope> immutableNonEmptyScopes(
+            Set<EntityScope> scopes, String field) {
+        Objects.requireNonNull(scopes, field);
+        LinkedHashSet<EntityScope> result = new LinkedHashSet<>();
+        for (EntityScope scope : scopes) {
+            result.add(Objects.requireNonNull(scope, field + " must not contain null"));
+        }
+        if (result.isEmpty()) throw new IllegalArgumentException(field + " must not be empty");
         return Collections.unmodifiableSet(result);
     }
 

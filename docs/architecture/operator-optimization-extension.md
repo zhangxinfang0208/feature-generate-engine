@@ -144,7 +144,8 @@ indexRegistry.register(
 
 逻辑 canonical 去重和物理 slot 已保证同一个节点只计算一次。`referenceCount > 1` 用于判断共享和融合安全，
 不代表应再次添加节点结果缓存。ONLINE 的 `REQUEST_SHARED` 节点只执行一次，结果保存在请求级
-`ExecutionContext.resultSlots` 中；这就是当前 `CachePolicy.REQUEST` 的执行实现。
+`ExecutionContext.resultSlots` 中；这就是当前 `CachePolicy.REQUEST` 的执行实现。它不产生真实缓存 lookup，
+因此不计入 `RuntimeCache` 的命中率。
 
 ### 7.2 候选 key 缓存
 
@@ -182,6 +183,9 @@ keyDomain + concrete SequenceValue + normalizedKey
 - `REQUEST` 与 `CANDIDATE_KEY` 仅在当前请求内有效；
 - 不允许跨请求持有 `SequenceValue`；
 - `USER_GROUP` 需要单独的离线批上下文和明确清理边界，未实现前不得声称具有跨行缓存能力。
+
+真实缓存访问必须通过 `ExecutionContext.runtimeCache()` 完成，以统一记录 lookup/hit/miss/put；运行时观测
+契约见 `runtime-observability.md`。
 
 ## 8. 新增优化的标准流程
 

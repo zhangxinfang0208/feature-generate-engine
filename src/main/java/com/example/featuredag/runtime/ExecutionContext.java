@@ -28,7 +28,7 @@ public final class ExecutionContext {
     private final int[] candidateGroupIndexes;
     private final boolean onlineBatch;
     private final Map<String, ValueHandle> resultSlots = new LinkedHashMap<>();
-    private final Map<Object, Object> cacheRegistry = new LinkedHashMap<>();
+    private final RuntimeCache runtimeCache = new RuntimeCache();
     private final Map<String, RuntimeNodeState> nodeStates = new LinkedHashMap<>();
 
     private ExecutionContext(
@@ -142,7 +142,12 @@ public final class ExecutionContext {
         return candidateIndex - candidateGroupOffsets[groupIndex];
     }
     public Map<String, ValueHandle> resultSlots() { return resultSlots; }
-    public Map<Object, Object> cacheRegistry() { return cacheRegistry; }
+    public RuntimeCache runtimeCache() { return runtimeCache; }
+    /**
+     * @deprecated 仅为源兼容保留。直接访问不会生成缓存统计，核心执行器应使用 runtimeCache()。
+     */
+    @Deprecated(forRemoval = false)
+    public Map<Object, Object> cacheRegistry() { return runtimeCache.valuesView(); }
     public Map<String, RuntimeNodeState> nodeStates() { return nodeStates; }
 
     public RuntimeNodeState state(String physicalNodeId) {

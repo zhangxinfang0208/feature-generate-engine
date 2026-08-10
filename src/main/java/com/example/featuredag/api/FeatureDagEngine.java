@@ -8,8 +8,11 @@ import com.example.featuredag.config.MappedFeatureSet;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
+import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
+import com.example.featuredag.physical.ExecutorType;
+import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.PhysicalPlanner;
 import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
@@ -18,11 +21,19 @@ import com.example.featuredag.runtime.CandidateBatchValue;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
+import com.example.featuredag.runtime.ExecutionDiagnostics;
+import com.example.featuredag.runtime.ExecutionPhase;
 import com.example.featuredag.runtime.ExecutionResult;
+import com.example.featuredag.runtime.ExecutionStatus;
+import com.example.featuredag.runtime.ListSequenceValue;
+import com.example.featuredag.runtime.NodeExecutionSnapshot;
 import com.example.featuredag.runtime.OfflineBatchValue;
 import com.example.featuredag.runtime.PhysicalExecutorRegistry;
 import com.example.featuredag.runtime.RequestBatchValue;
+import com.example.featuredag.runtime.RuntimeNodeState;
+import com.example.featuredag.runtime.RuntimeObserver;
 import com.example.featuredag.runtime.SequenceIndexRegistry;
+import com.example.featuredag.runtime.SequenceValue;
 import com.example.featuredag.runtime.ValueHandle;
 
 import java.nio.file.Path;
@@ -32,6 +43,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public final class FeatureDagEngine {
     private final ExecutionEnvironment environment;
@@ -43,6 +55,7 @@ public final class FeatureDagEngine {
     private final DagRuntime runtime;
     private final FeatureInputDecoder inputDecoder;
     private final FeatureOutputEncoder outputEncoder;
+    private final RuntimeObserver runtimeObserver;
 
     private FeatureDagEngine(
             ExecutionEnvironment environment,
@@ -51,7 +64,8 @@ public final class FeatureDagEngine {
             PhysicalPlan plan,
             DagRuntime runtime,
             FeatureInputDecoder inputDecoder,
-            FeatureOutputEncoder outputEncoder) {
+            FeatureOutputEncoder outputEncoder,
+            RuntimeObserver runtimeObserver) {
         this.environment = environment;
         this.featureSetName = mapped.featureSetName();
         this.version = mapped.version();
@@ -61,6 +75,7 @@ public final class FeatureDagEngine {
         this.runtime = runtime;
         this.inputDecoder = inputDecoder;
         this.outputEncoder = outputEncoder;
+        this.runtimeObserver = Objects.requireNonNull(runtimeObserver, "runtimeObserver");
     }
 
     public static FeatureDagEngine init(Path configFile, InitOptions options) {
@@ -91,22 +106,33 @@ public final class FeatureDagEngine {
      */
     public GenerateResult generate(GenerateRequest request) {
         Objects.requireNonNull(request, "request");
+        int groupCount = request instanceof OnlineGenerateRequest ? 1 : 0;
+        int candidateCount = request instanceof OnlineGenerateRequest online
+                ? online.candidates().size()
+                : 0;
+        int offlineRowCount = request instanceof OfflineGenerateRequest ? 1 : 0;
+        ExecutionObservation observation = startObservation(
+                request.executionId(), groupCount, candidateCount, offlineRowCount);
         try {
             if (environment == ExecutionEnvironment.OFFLINE) {
                 if (!(request instanceof OfflineGenerateRequest offline)) {
                     throw new IllegalArgumentException("OFFLINE engine requires OfflineGenerateRequest");
                 }
-                return generateOffline(offline);
+                return generateOffline(offline, observation);
             }
             if (!(request instanceof OnlineGenerateRequest online)) {
                 throw new IllegalArgumentException("ONLINE engine requires OnlineGenerateRequest");
             }
-            return generateOnline(online);
+            return generateOnline(online, observation);
         } catch (FeatureGenerationException error) {
+            markFailure(observation, error);
             throw error;
         } catch (RuntimeException error) {
+            markFailure(observation, error);
             throw new FeatureGenerationException(
                     error.getMessage(), planId, request.executionId(), null, error);
+        } finally {
+            publishObservation(observation);
         }
     }
 
@@ -115,18 +141,24 @@ public final class FeatureDagEngine {
      */
     public OfflineBatchGenerateResult generateBatch(OfflineBatchGenerateRequest request) {
         Objects.requireNonNull(request, "request");
-        if (environment != ExecutionEnvironment.OFFLINE) {
-            throw new FeatureGenerationException(
-                    "ONLINE engine does not support OfflineBatchGenerateRequest",
-                    planId, request.executionId(), null, null);
-        }
+        ExecutionObservation observation = startObservation(
+                request.executionId(), 0, 0, request.rows().size());
         try {
-            return generateOfflineBatch(request);
+            if (environment != ExecutionEnvironment.OFFLINE) {
+                throw new FeatureGenerationException(
+                        "ONLINE engine does not support OfflineBatchGenerateRequest",
+                        planId, request.executionId(), null, null);
+            }
+            return generateOfflineBatch(request, observation);
         } catch (FeatureGenerationException error) {
+            markFailure(observation, error);
             throw error;
         } catch (RuntimeException error) {
+            markFailure(observation, error);
             throw new FeatureGenerationException(
                     error.getMessage(), planId, request.executionId(), null, error);
+        } finally {
+            publishObservation(observation);
         }
     }
 
@@ -135,18 +167,27 @@ public final class FeatureDagEngine {
      */
     public OnlineBatchGenerateResult generateBatch(OnlineBatchGenerateRequest request) {
         Objects.requireNonNull(request, "request");
-        if (environment != ExecutionEnvironment.ONLINE) {
-            throw new FeatureGenerationException(
-                    "OFFLINE engine does not support OnlineBatchGenerateRequest",
-                    planId, request.executionId(), null, null);
-        }
+        int candidateCount = request.groups().stream()
+                .mapToInt(group -> group.candidates().size())
+                .sum();
+        ExecutionObservation observation = startObservation(
+                request.executionId(), request.groups().size(), candidateCount, 0);
         try {
-            return generateOnlineBatch(request);
+            if (environment != ExecutionEnvironment.ONLINE) {
+                throw new FeatureGenerationException(
+                        "OFFLINE engine does not support OnlineBatchGenerateRequest",
+                        planId, request.executionId(), null, null);
+            }
+            return generateOnlineBatch(request, observation);
         } catch (FeatureGenerationException error) {
+            markFailure(observation, error);
             throw error;
         } catch (RuntimeException error) {
+            markFailure(observation, error);
             throw new FeatureGenerationException(
                     error.getMessage(), planId, request.executionId(), null, error);
+        } finally {
+            publishObservation(observation);
         }
     }
 
@@ -159,181 +200,266 @@ public final class FeatureDagEngine {
      * 离线推理（单行）：解码整行源值 → 执行物理计划 → 按输出描述逐个编码；
      * 任一输出特征失败即整体失败，并在异常中带上特征名定位。
      */
-    private GenerateResult generateOffline(OfflineGenerateRequest request) {
-        ExecutionResult execution = runtime.execute(
-                plan,
-                ExecutionContext.offlineRow(
+    private GenerateResult generateOffline(
+            OfflineGenerateRequest request,
+            ExecutionObservation observation) {
+        ExecutionContext context = measure(
+                observation,
+                ExecutionPhase.DECODE,
+                () -> ExecutionContext.offlineRow(
                         request.executionId(), inputDecoder.decodeOffline(request.rowValues())));
-        Map<String, List<?>> result = new LinkedHashMap<>();
-        for (FeatureOutputDescriptor output : outputs) {
-            try {
-                ValueHandle value = execution.feature(output.featureName());
-                result.put(
-                        output.storeName(), outputEncoder.encode(output.featureName(), value));
-            } catch (RuntimeException error) {
-                throw new FeatureGenerationException(
-                        error.getMessage(), planId, request.executionId(), output.featureName(), error);
+        attachContext(observation, context);
+        ExecutionResult execution = measure(
+                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        return measure(observation, ExecutionPhase.ENCODE, () -> {
+            Map<String, List<?>> result = new LinkedHashMap<>();
+            for (FeatureOutputDescriptor output : outputs) {
+                try {
+                    ValueHandle value = execution.feature(output.featureName());
+                    result.put(
+                            output.storeName(), outputEncoder.encode(output.featureName(), value));
+                } catch (RuntimeException error) {
+                    throw new FeatureGenerationException(
+                            error.getMessage(), planId, request.executionId(), output.featureName(), error);
+                }
             }
-        }
-        return new GenerateResult(request.executionId(), result, List.of());
+            return new GenerateResult(request.executionId(), result, List.of());
+        });
     }
 
-    private OfflineBatchGenerateResult generateOfflineBatch(OfflineBatchGenerateRequest request) {
-        ExecutionResult execution = runtime.execute(
-                plan,
-                ExecutionContext.offlineBatch(
+    private OfflineBatchGenerateResult generateOfflineBatch(
+            OfflineBatchGenerateRequest request,
+            ExecutionObservation observation) {
+        ExecutionContext context = measure(
+                observation,
+                ExecutionPhase.DECODE,
+                () -> ExecutionContext.offlineBatch(
                         request.executionId(), inputDecoder.decodeOfflineBatch(request.rows())));
-        List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
-        for (int index = 0; index < request.rows().size(); index++) {
-            rows.add(new LinkedHashMap<>());
-        }
-        for (FeatureOutputDescriptor output : outputs) {
-            try {
-                ValueHandle value = execution.feature(output.featureName());
-                if (value instanceof OfflineBatchValue batch) {
-                    if (batch.size() != rows.size()) {
-                        throw new IllegalStateException(
-                                "Offline batch output size " + batch.size()
-                                        + " does not match input size " + rows.size());
-                    }
-                    for (int index = 0; index < batch.size(); index++) {
-                        rows.get(index).put(
-                                output.storeName(),
-                                outputEncoder.encodeBatchElement(
-                                        output.featureName(), batch.valueAt(index)));
-                    }
-                } else {
-                    List<?> encoded = outputEncoder.encode(output.featureName(), value);
-                    for (Map<String, List<?>> row : rows) {
-                        row.put(output.storeName(), encoded);
-                    }
-                }
-            } catch (RuntimeException error) {
-                throw new FeatureGenerationException(
-                        error.getMessage(), planId, request.executionId(), output.featureName(), error);
+        attachContext(observation, context);
+        ExecutionResult execution = measure(
+                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        return measure(observation, ExecutionPhase.ENCODE, () -> {
+            List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
+            for (int index = 0; index < request.rows().size(); index++) {
+                rows.add(new LinkedHashMap<>());
             }
-        }
-        return new OfflineBatchGenerateResult(request.executionId(), rows);
+            for (FeatureOutputDescriptor output : outputs) {
+                try {
+                    ValueHandle value = execution.feature(output.featureName());
+                    if (value instanceof OfflineBatchValue batch) {
+                        if (batch.size() != rows.size()) {
+                            throw new IllegalStateException(
+                                    "Offline batch output size " + batch.size()
+                                            + " does not match input size " + rows.size());
+                        }
+                        for (int index = 0; index < batch.size(); index++) {
+                            rows.get(index).put(
+                                    output.storeName(),
+                                    outputEncoder.encodeBatchElement(
+                                            output.featureName(), batch.valueAt(index)));
+                        }
+                    } else {
+                        List<?> encoded = outputEncoder.encode(output.featureName(), value);
+                        for (Map<String, List<?>> row : rows) {
+                            row.put(output.storeName(), encoded);
+                        }
+                    }
+                } catch (RuntimeException error) {
+                    throw new FeatureGenerationException(
+                            error.getMessage(), planId, request.executionId(), output.featureName(), error);
+                }
+            }
+            return new OfflineBatchGenerateResult(request.executionId(), rows);
+        });
     }
 
     /**
      * 在线推理（请求级）：共享源值与候选表一并解码后执行；
      * 候选向量型输出按候选下标展开为逐候选结果，标量型输出进入共享结果。
      */
-    private GenerateResult generateOnline(OnlineGenerateRequest request) {
-        ExecutionResult execution = runtime.execute(
-                plan,
-                ExecutionContext.onlineRequest(
+    private GenerateResult generateOnline(
+            OnlineGenerateRequest request,
+            ExecutionObservation observation) {
+        ExecutionContext context = measure(
+                observation,
+                ExecutionPhase.DECODE,
+                () -> ExecutionContext.onlineRequest(
                         request.executionId(),
                         inputDecoder.decodeOnlineShared(request.sharedValues()),
                         inputDecoder.decodeOnlineCandidates(request.candidates())));
-        Map<String, List<?>> sharedResults = new LinkedHashMap<>();
-        List<Map<String, List<?>>> candidateResults = new ArrayList<>(request.candidates().size());
-        for (int index = 0; index < request.candidates().size(); index++) {
-            candidateResults.add(new LinkedHashMap<>());
-        }
-        for (FeatureOutputDescriptor output : outputs) {
-            try {
-                ValueHandle value = execution.feature(output.featureName());
-                if (value instanceof CandidateVectorValue vector) {
-                    if (vector.size() != candidateResults.size()) {
-                        throw new IllegalStateException(
-                                "Candidate output size " + vector.size()
-                                        + " does not match input size " + candidateResults.size());
-                    }
-                    for (int index = 0; index < vector.size(); index++) {
-                        candidateResults.get(index).put(
-                                output.storeName(),
-                                outputEncoder.encodeCandidateElement(
-                                        output.featureName(), vector.valueAt(index)));
-                    }
-                } else {
-                    sharedResults.put(
-                            output.storeName(), outputEncoder.encode(output.featureName(), value));
-                }
-            } catch (RuntimeException error) {
-                throw new FeatureGenerationException(
-                        error.getMessage(), planId, request.executionId(), output.featureName(), error);
+        attachContext(observation, context);
+        ExecutionResult execution = measure(
+                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        return measure(observation, ExecutionPhase.ENCODE, () -> {
+            Map<String, List<?>> sharedResults = new LinkedHashMap<>();
+            List<Map<String, List<?>>> candidateResults =
+                    new ArrayList<>(request.candidates().size());
+            for (int index = 0; index < request.candidates().size(); index++) {
+                candidateResults.add(new LinkedHashMap<>());
             }
-        }
-        return new GenerateResult(request.executionId(), sharedResults, candidateResults);
+            for (FeatureOutputDescriptor output : outputs) {
+                try {
+                    ValueHandle value = execution.feature(output.featureName());
+                    if (value instanceof CandidateVectorValue vector) {
+                        if (vector.size() != candidateResults.size()) {
+                            throw new IllegalStateException(
+                                    "Candidate output size " + vector.size()
+                                            + " does not match input size " + candidateResults.size());
+                        }
+                        for (int index = 0; index < vector.size(); index++) {
+                            candidateResults.get(index).put(
+                                    output.storeName(),
+                                    outputEncoder.encodeCandidateElement(
+                                            output.featureName(), vector.valueAt(index)));
+                        }
+                    } else {
+                        sharedResults.put(
+                                output.storeName(), outputEncoder.encode(output.featureName(), value));
+                    }
+                } catch (RuntimeException error) {
+                    throw new FeatureGenerationException(
+                            error.getMessage(), planId, request.executionId(), output.featureName(), error);
+                }
+            }
+            return new GenerateResult(request.executionId(), sharedResults, candidateResults);
+        });
     }
 
-    private OnlineBatchGenerateResult generateOnlineBatch(OnlineBatchGenerateRequest request) {
+    private OnlineBatchGenerateResult generateOnlineBatch(
+            OnlineBatchGenerateRequest request,
+            ExecutionObservation observation) {
         List<OnlineRequestGroup> groups = request.groups();
-        ExecutionContext context = ExecutionContext.onlineBatch(
-                request.executionId(),
-                groups.stream().map(OnlineRequestGroup::executionId).toList(),
-                inputDecoder.decodeOnlineSharedBatch(groups),
-                inputDecoder.decodeOnlineCandidateBatch(groups));
-        ExecutionResult execution = runtime.execute(plan, context);
+        ExecutionContext context = measure(
+                observation,
+                ExecutionPhase.DECODE,
+                () -> ExecutionContext.onlineBatch(
+                        request.executionId(),
+                        groups.stream().map(OnlineRequestGroup::executionId).toList(),
+                        inputDecoder.decodeOnlineSharedBatch(groups),
+                        inputDecoder.decodeOnlineCandidateBatch(groups)));
+        attachContext(observation, context);
+        ExecutionResult execution = measure(
+                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
 
-        List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
-        List<List<Map<String, List<?>>>> candidateResults = new ArrayList<>(groups.size());
-        for (OnlineRequestGroup group : groups) {
-            sharedResults.add(new LinkedHashMap<>());
-            List<Map<String, List<?>>> groupCandidates = new ArrayList<>(group.candidates().size());
-            for (int index = 0; index < group.candidates().size(); index++) {
-                groupCandidates.add(new LinkedHashMap<>());
-            }
-            candidateResults.add(groupCandidates);
-        }
-
-        for (FeatureOutputDescriptor output : outputs) {
-            try {
-                ValueHandle value = execution.feature(output.featureName());
-                if (value instanceof RequestBatchValue batch) {
-                    if (batch.size() != groups.size()) {
-                        throw new IllegalStateException(
-                                "Online request batch output size " + batch.size()
-                                        + " does not match group size " + groups.size());
-                    }
-                    for (int groupIndex = 0; groupIndex < batch.size(); groupIndex++) {
-                        sharedResults.get(groupIndex).put(
-                                output.storeName(),
-                                outputEncoder.encodeBatchElement(
-                                        output.featureName(), batch.valueAt(groupIndex)));
-                    }
-                } else if (value instanceof CandidateBatchValue batch) {
-                    if (batch.size() != context.candidateCount()) {
-                        throw new IllegalStateException(
-                                "Online candidate batch output size " + batch.size()
-                                        + " does not match candidate size "
-                                        + context.candidateCount());
-                    }
-                    for (int candidateIndex = 0; candidateIndex < batch.size(); candidateIndex++) {
-                        int groupIndex = context.candidateGroupIndex(candidateIndex);
-                        int indexInGroup = context.candidateIndexInGroup(candidateIndex);
-                        candidateResults.get(groupIndex).get(indexInGroup).put(
-                                output.storeName(),
-                                outputEncoder.encodeBatchElement(
-                                        output.featureName(), batch.valueAt(candidateIndex)));
-                    }
-                } else if (value instanceof CandidateVectorValue
-                        || value instanceof OfflineBatchValue) {
-                    throw new IllegalStateException(
-                            "Unexpected output handle for online batch: "
-                                    + value.getClass().getSimpleName());
-                } else {
-                    List<?> encoded = outputEncoder.encode(output.featureName(), value);
-                    for (Map<String, List<?>> groupResult : sharedResults) {
-                        groupResult.put(output.storeName(), encoded);
-                    }
+        return measure(observation, ExecutionPhase.ENCODE, () -> {
+            List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
+            List<List<Map<String, List<?>>>> candidateResults = new ArrayList<>(groups.size());
+            for (OnlineRequestGroup group : groups) {
+                sharedResults.add(new LinkedHashMap<>());
+                List<Map<String, List<?>>> groupCandidates =
+                        new ArrayList<>(group.candidates().size());
+                for (int index = 0; index < group.candidates().size(); index++) {
+                    groupCandidates.add(new LinkedHashMap<>());
                 }
-            } catch (RuntimeException error) {
-                throw new FeatureGenerationException(
-                        error.getMessage(), planId, request.executionId(), output.featureName(), error);
+                candidateResults.add(groupCandidates);
             }
-        }
 
-        List<GenerateResult> groupResults = new ArrayList<>(groups.size());
-        for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
-            groupResults.add(new GenerateResult(
-                    groups.get(groupIndex).executionId(),
-                    sharedResults.get(groupIndex),
-                    candidateResults.get(groupIndex)));
+            for (FeatureOutputDescriptor output : outputs) {
+                try {
+                    ValueHandle value = execution.feature(output.featureName());
+                    if (value instanceof RequestBatchValue batch) {
+                        if (batch.size() != groups.size()) {
+                            throw new IllegalStateException(
+                                    "Online request batch output size " + batch.size()
+                                            + " does not match group size " + groups.size());
+                        }
+                        for (int groupIndex = 0; groupIndex < batch.size(); groupIndex++) {
+                            sharedResults.get(groupIndex).put(
+                                    output.storeName(),
+                                    outputEncoder.encodeBatchElement(
+                                            output.featureName(), batch.valueAt(groupIndex)));
+                        }
+                    } else if (value instanceof CandidateBatchValue batch) {
+                        if (batch.size() != context.candidateCount()) {
+                            throw new IllegalStateException(
+                                    "Online candidate batch output size " + batch.size()
+                                            + " does not match candidate size "
+                                            + context.candidateCount());
+                        }
+                        for (int candidateIndex = 0;
+                                candidateIndex < batch.size();
+                                candidateIndex++) {
+                            int groupIndex = context.candidateGroupIndex(candidateIndex);
+                            int indexInGroup = context.candidateIndexInGroup(candidateIndex);
+                            candidateResults.get(groupIndex).get(indexInGroup).put(
+                                    output.storeName(),
+                                    outputEncoder.encodeBatchElement(
+                                            output.featureName(), batch.valueAt(candidateIndex)));
+                        }
+                    } else if (value instanceof CandidateVectorValue
+                            || value instanceof OfflineBatchValue) {
+                        throw new IllegalStateException(
+                                "Unexpected output handle for online batch: "
+                                        + value.getClass().getSimpleName());
+                    } else {
+                        List<?> encoded = outputEncoder.encode(output.featureName(), value);
+                        for (Map<String, List<?>> groupResult : sharedResults) {
+                            groupResult.put(output.storeName(), encoded);
+                        }
+                    }
+                } catch (RuntimeException error) {
+                    throw new FeatureGenerationException(
+                            error.getMessage(), planId, request.executionId(), output.featureName(), error);
+                }
+            }
+
+            List<GenerateResult> groupResults = new ArrayList<>(groups.size());
+            for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+                groupResults.add(new GenerateResult(
+                        groups.get(groupIndex).executionId(),
+                        sharedResults.get(groupIndex),
+                        candidateResults.get(groupIndex)));
+            }
+            return new OnlineBatchGenerateResult(request.executionId(), groupResults);
+        });
+    }
+
+    private ExecutionObservation startObservation(
+            String executionId,
+            int groupCount,
+            int candidateCount,
+            int offlineRowCount) {
+        if (runtimeObserver == RuntimeObserver.NOOP) return null;
+        return new ExecutionObservation(
+                executionId, groupCount, candidateCount, offlineRowCount);
+    }
+
+    private static <T> T measure(
+            ExecutionObservation observation,
+            ExecutionPhase phase,
+            Supplier<T> operation) {
+        if (observation == null) return operation.get();
+        long start = System.nanoTime();
+        try {
+            return operation.get();
+        } catch (RuntimeException | Error error) {
+            observation.markFailure(phase, error);
+            throw error;
+        } finally {
+            observation.addDuration(phase, System.nanoTime() - start);
         }
-        return new OnlineBatchGenerateResult(request.executionId(), groupResults);
+    }
+
+    private static void attachContext(
+            ExecutionObservation observation,
+            ExecutionContext context) {
+        if (observation != null) observation.attachContext(context);
+    }
+
+    private static void markFailure(
+            ExecutionObservation observation,
+            Throwable error) {
+        if (observation != null) observation.markFailure(ExecutionPhase.VALIDATION, error);
+    }
+
+    private void publishObservation(ExecutionObservation observation) {
+        if (observation == null) return;
+        try {
+            runtimeObserver.onExecutionCompleted(observation.snapshot(
+                    planId, featureSetName, version, environment, plan));
+        } catch (RuntimeException ignored) {
+            // 观测出口与业务执行隔离：指标适配器故障不得改变 generate 结果。
+        }
     }
 
     private static FeatureDagEngine initialize(FeatureSetConfig config, InitOptions options) {
@@ -365,7 +491,7 @@ public final class FeatureDagEngine {
             FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
             return new FeatureDagEngine(
                     options.environment(), mapped, planId, plan, new DagRuntime(operators, executors),
-                    inputDecoder, outputEncoder);
+                    inputDecoder, outputEncoder, options.runtimeObserver());
         } catch (RuntimeException error) {
             throw initializationFailure(
                     error, featureSetName, version, configuredPlanId);
@@ -379,5 +505,163 @@ public final class FeatureDagEngine {
             String planId) {
         return new FeatureDagInitializationException(
                 error.getMessage(), featureSetName, version, planId, null, error);
+    }
+
+    private static final class ExecutionObservation {
+        private final String executionId;
+        private final int groupCount;
+        private final int candidateCount;
+        private final int offlineRowCount;
+        private final long startNanos = System.nanoTime();
+        private long decodeDurationNanos;
+        private long runtimeDurationNanos;
+        private long encodeDurationNanos;
+        private ExecutionContext context;
+        private ExecutionPhase failurePhase = ExecutionPhase.NONE;
+        private Throwable failure;
+
+        private ExecutionObservation(
+                String executionId,
+                int groupCount,
+                int candidateCount,
+                int offlineRowCount) {
+            this.executionId = executionId;
+            this.groupCount = groupCount;
+            this.candidateCount = candidateCount;
+            this.offlineRowCount = offlineRowCount;
+        }
+
+        private void attachContext(ExecutionContext value) {
+            context = value;
+        }
+
+        private void addDuration(ExecutionPhase phase, long durationNanos) {
+            switch (phase) {
+                case DECODE -> decodeDurationNanos += durationNanos;
+                case RUNTIME -> runtimeDurationNanos += durationNanos;
+                case ENCODE -> encodeDurationNanos += durationNanos;
+                case NONE, VALIDATION -> {
+                    // VALIDATION 没有单独计时，包含在 totalDurationNanos 中。
+                }
+            }
+        }
+
+        private void markFailure(ExecutionPhase phase, Throwable error) {
+            if (failure == null) {
+                failurePhase = phase;
+                failure = error;
+            }
+        }
+
+        private ExecutionDiagnostics snapshot(
+                String planId,
+                String featureSetName,
+                String version,
+                ExecutionEnvironment environment,
+                PhysicalPlan plan) {
+            List<NodeExecutionSnapshot> nodes = new ArrayList<>();
+            if (context != null) {
+                for (PhysicalNode node : plan.nodes()) {
+                    RuntimeNodeState state = context.nodeStates().get(node.physicalNodeId());
+                    if (state == null) continue;
+                    nodes.add(new NodeExecutionSnapshot(
+                            node.physicalNodeId(),
+                            node.executorId(),
+                            node.executionStage(),
+                            node.cachePolicy(),
+                            state.status(),
+                            state.durationNanos(),
+                            state.cacheStats(),
+                            state.dedupInputCount(),
+                            state.uniqueInputCount(),
+                            state.fallbackUsed(),
+                            state.error() == null ? null : state.error().getClass().getName()));
+                }
+            }
+            int logicalNodeCount = plan.nodes().stream()
+                    .mapToInt(node -> node.logicalNodeIds().size())
+                    .sum();
+            int fusedNodeCount = (int) plan.nodes().stream()
+                    .filter(node -> node.logicalNodeIds().size() > 1)
+                    .count();
+            SequenceMetrics sequenceMetrics = new SequenceMetrics();
+            if (context != null) {
+                for (PhysicalNode node : plan.nodes()) {
+                    if (node.executorType() != ExecutorType.SOURCE_BINDING
+                            || node.logicalValueShape() != ValueShape.SEQUENCE) {
+                        continue;
+                    }
+                    RuntimeNodeState state = context.nodeStates().get(node.physicalNodeId());
+                    if (state != null) collectSequenceMetrics(state.resultHandle(), sequenceMetrics);
+                }
+            }
+            return new ExecutionDiagnostics(
+                    planId,
+                    featureSetName,
+                    version,
+                    executionId,
+                    environment,
+                    failure == null ? ExecutionStatus.SUCCESS : ExecutionStatus.FAILED,
+                    failurePhase,
+                    failure == null ? null : failure.getClass().getName(),
+                    System.nanoTime() - startNanos,
+                    decodeDurationNanos,
+                    runtimeDurationNanos,
+                    encodeDurationNanos,
+                    groupCount,
+                    candidateCount,
+                    offlineRowCount,
+                    sequenceMetrics.count,
+                    sequenceMetrics.elementCount,
+                    sequenceMetrics.maxLength,
+                    plan.nodes().size(),
+                    logicalNodeCount,
+                    fusedNodeCount,
+                    context == null ? Map.of() : context.runtimeCache().snapshot(),
+                    nodes);
+        }
+
+        private static void collectSequenceMetrics(
+                Object value,
+                SequenceMetrics metrics) {
+            if (value == null) return;
+            if (value instanceof SequenceValue sequence) {
+                metrics.record(sequence.size());
+                return;
+            }
+            if (value instanceof ListSequenceValue sequence) {
+                metrics.record(sequence.size());
+                return;
+            }
+            if (value instanceof OfflineBatchValue batch) {
+                batch.values().forEach(element -> collectSequenceMetrics(element, metrics));
+                return;
+            }
+            if (value instanceof RequestBatchValue batch) {
+                batch.values().forEach(element -> collectSequenceMetrics(element, metrics));
+                return;
+            }
+            if (value instanceof CandidateBatchValue batch) {
+                batch.values().forEach(element -> collectSequenceMetrics(element, metrics));
+                return;
+            }
+            if (value instanceof CandidateVectorValue vector) {
+                vector.values().forEach(element -> collectSequenceMetrics(element, metrics));
+                return;
+            }
+            if (value instanceof List<?> list) metrics.record(list.size());
+        }
+
+        private static final class SequenceMetrics {
+            private int count;
+            private long elementCount;
+            private int maxLength;
+
+            private void record(int size) {
+                count++;
+                elementCount += size;
+                maxLength = Math.max(maxLength, size);
+            }
+        }
     }
 }

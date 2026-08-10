@@ -67,25 +67,31 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
 
         SequenceIndexCacheKey indexCacheKey = new SequenceIndexCacheKey(0, keyDomain, sequence);
         IndexValue index;
-        Object cachedIndex = context.cacheRegistry().get(indexCacheKey);
-        if (cachedIndex instanceof IndexValue cached) {
+        RuntimeCache.CacheLookup cachedIndex = context.runtimeCache().lookup(
+                CacheKind.SEQUENCE_INDEX, indexCacheKey, state);
+        if (cachedIndex.hit()) {
+            if (!(cachedIndex.value() instanceof IndexValue cached)) {
+                throw new IllegalStateException("Sequence index cache contains an incompatible value");
+            }
             index = cached;
-            state.markCacheHit("REQUEST_INDEX");
         } else {
             index = provider.build(sequence);
-            context.cacheRegistry().put(indexCacheKey, index);
+            context.runtimeCache().put(
+                    CacheKind.SEQUENCE_INDEX, indexCacheKey, index, state);
         }
 
         Map<Object, Integer> countsByKey = new LinkedHashMap<>();
         for (Object key : uniqueKeys) {
             SequenceKeyCountCacheKey countCacheKey =
                     new SequenceKeyCountCacheKey(0, keyDomain, sequence, key);
-            if (context.cacheRegistry().containsKey(countCacheKey)) {
-                countsByKey.put(key, (Integer) context.cacheRegistry().get(countCacheKey));
-                state.markCacheHit("CANDIDATE_KEY");
+            RuntimeCache.CacheLookup cachedCount = context.runtimeCache().lookup(
+                    CacheKind.SEQUENCE_COUNT, countCacheKey, state);
+            if (cachedCount.hit()) {
+                countsByKey.put(key, (Integer) cachedCount.value());
             } else {
                 int count = index.count(key);
-                context.cacheRegistry().put(countCacheKey, count);
+                context.runtimeCache().put(
+                        CacheKind.SEQUENCE_COUNT, countCacheKey, count, state);
                 countsByKey.put(key, count);
             }
         }
@@ -137,25 +143,32 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             SequenceIndexCacheKey indexCacheKey =
                     new SequenceIndexCacheKey(groupIndex, keyDomain, sequence);
             IndexValue index;
-            Object cachedIndex = context.cacheRegistry().get(indexCacheKey);
-            if (cachedIndex instanceof IndexValue cached) {
+            RuntimeCache.CacheLookup cachedIndex = context.runtimeCache().lookup(
+                    CacheKind.SEQUENCE_INDEX, indexCacheKey, state);
+            if (cachedIndex.hit()) {
+                if (!(cachedIndex.value() instanceof IndexValue cached)) {
+                    throw new IllegalStateException(
+                            "Sequence index cache contains an incompatible value");
+                }
                 index = cached;
-                state.markCacheHit("REQUEST_INDEX");
             } else {
                 index = provider.build(sequence);
-                context.cacheRegistry().put(indexCacheKey, index);
+                context.runtimeCache().put(
+                        CacheKind.SEQUENCE_INDEX, indexCacheKey, index, state);
             }
 
             Map<Object, Integer> countsByKey = new LinkedHashMap<>();
             for (Object key : uniqueKeys) {
                 SequenceKeyCountCacheKey countCacheKey = new SequenceKeyCountCacheKey(
                         groupIndex, keyDomain, sequence, key);
-                if (context.cacheRegistry().containsKey(countCacheKey)) {
-                    countsByKey.put(key, (Integer) context.cacheRegistry().get(countCacheKey));
-                    state.markCacheHit("CANDIDATE_KEY");
+                RuntimeCache.CacheLookup cachedCount = context.runtimeCache().lookup(
+                        CacheKind.SEQUENCE_COUNT, countCacheKey, state);
+                if (cachedCount.hit()) {
+                    countsByKey.put(key, (Integer) cachedCount.value());
                 } else {
                     int count = index.count(key);
-                    context.cacheRegistry().put(countCacheKey, count);
+                    context.runtimeCache().put(
+                            CacheKind.SEQUENCE_COUNT, countCacheKey, count, state);
                     countsByKey.put(key, count);
                 }
             }

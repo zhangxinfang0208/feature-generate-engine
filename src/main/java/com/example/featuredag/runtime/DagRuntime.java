@@ -62,7 +62,8 @@ public final class DagRuntime {
             outputs.put(entry.getKey(), value);
         }
         // 运行时：从输出槽收集根特征结果，连同各节点运行状态一起返回
-        return new ExecutionResult(outputs, context.nodeStates());
+        return new ExecutionResult(
+                outputs, context.nodeStates(), context.runtimeCache().snapshot());
     }
 
     private void executeNode(PhysicalNode node, ExecutionContext context) {
@@ -247,12 +248,14 @@ public final class DagRuntime {
                     OperatorInvocationCacheKey cacheKey = new OperatorInvocationCacheKey(
                             node.physicalNodeId(), groupIndex, args);
                     uniqueInvocations.add(cacheKey);
-                    if (context.cacheRegistry().containsKey(cacheKey)) {
-                        value = context.cacheRegistry().get(cacheKey);
-                        state.markCacheHit("CANDIDATE_KEY");
+                    RuntimeCache.CacheLookup cached = context.runtimeCache().lookup(
+                            CacheKind.CANDIDATE_KEY, cacheKey, state);
+                    if (cached.hit()) {
+                        value = cached.value();
                     } else {
                         value = operatorRegistry.evaluate(operatorName, args);
-                        context.cacheRegistry().put(cacheKey, value);
+                        context.runtimeCache().put(
+                                CacheKind.CANDIDATE_KEY, cacheKey, value, state);
                     }
                 }
                 result.add(value);

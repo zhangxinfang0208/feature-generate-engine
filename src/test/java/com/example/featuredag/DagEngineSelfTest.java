@@ -60,9 +60,15 @@ import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.runtime.CandidateBatchValue;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.BitmapSelection;
+import com.example.featuredag.runtime.CacheKind;
+import com.example.featuredag.runtime.CacheStats;
 import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
+import com.example.featuredag.runtime.ExecutionDiagnostics;
+import com.example.featuredag.runtime.ExecutionPhase;
 import com.example.featuredag.runtime.ExecutionResult;
+import com.example.featuredag.runtime.ExecutionStatus;
+import com.example.featuredag.runtime.InMemoryRuntimeObserver;
 import com.example.featuredag.runtime.IndexSelection;
 import com.example.featuredag.runtime.ListSequenceValue;
 import com.example.featuredag.runtime.RangeSelection;
@@ -119,6 +125,9 @@ public final class DagEngineSelfTest {
         testOfflineSequenceMaterialization();
         testOnlinePublicApi();
         testOnlineBatchPublicApi();
+        testRuntimeObservability();
+        testRuntimeObservabilityCoversBatchAndFailure();
+        testRuntimeObserverFailureIsolation();
         testOnlineBaseMetadataDefaults();
         testOnlineSharedArrayOutput();
         testOnlineEngineConcurrentReuse();
@@ -1657,6 +1666,155 @@ public final class DagEngineSelfTest {
         assert missing.getMessage().contains("candidate 0") : missing.getMessage();
     }
 
+    private static void testRuntimeObservability() {
+        InMemoryRuntimeObserver observer = new InMemoryRuntimeObserver(4);
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                onlineConfigJson(),
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.ONLINE)
+                        .planId("observed-online")
+                        .runtimeObserver(observer)
+                        .build());
+
+        GenerateResult result = engine.generate(new OnlineGenerateRequest(
+                "observed-request",
+                Map.of("user_click_count", List.of(10),
+                        "user_seq1", publicIndustrySequence()),
+                List.of(
+                        Map.of("item_industry", List.of("industry1"),
+                                "item_price", List.of(100.0)),
+                        Map.of("item_industry", List.of("industry2"),
+                                "item_price", List.of(50.0)),
+                        Map.of("item_industry", List.of("industry1"),
+                                "item_price", List.of(80.0)))));
+        assert result.candidateFeatureValues().size() == 3;
+        assert observer.receivedCount() == 1 : observer.receivedCount();
+
+        ExecutionDiagnostics diagnostics = observer.latest();
+        assert diagnostics.planId().equals("observed-online") : diagnostics;
+        assert diagnostics.featureSetName().equals("online_features") : diagnostics;
+        assert diagnostics.version().equals("latest") : diagnostics;
+        assert diagnostics.executionId().equals("observed-request") : diagnostics;
+        assert diagnostics.environment() == ExecutionEnvironment.ONLINE : diagnostics;
+        assert diagnostics.status() == ExecutionStatus.SUCCESS : diagnostics;
+        assert diagnostics.failurePhase() == ExecutionPhase.NONE : diagnostics;
+        assert diagnostics.errorType() == null : diagnostics;
+        assert diagnostics.groupCount() == 1 : diagnostics;
+        assert diagnostics.candidateCount() == 3 : diagnostics;
+        assert diagnostics.offlineRowCount() == 0 : diagnostics;
+        assert diagnostics.sourceSequenceCount() == 1 : diagnostics;
+        assert diagnostics.sourceSequenceElementCount() == 6 : diagnostics;
+        assert diagnostics.maxSourceSequenceLength() == 6 : diagnostics;
+        assert diagnostics.physicalNodeCount() > 0 : diagnostics;
+        assert diagnostics.logicalNodeCount() >= diagnostics.physicalNodeCount() : diagnostics;
+        assert diagnostics.nodes().size() == diagnostics.physicalNodeCount() : diagnostics;
+        assert diagnostics.totalDurationNanos()
+                >= diagnostics.decodeDurationNanos()
+                        + diagnostics.runtimeDurationNanos()
+                        + diagnostics.encodeDurationNanos()
+                : diagnostics;
+        assert diagnostics.nodes().stream()
+                .allMatch(node -> node.status() == ExecutionStatus.SUCCESS)
+                : diagnostics.nodes();
+        assert diagnostics.nodes().stream()
+                .anyMatch(node -> node.executorId().equals(PhysicalExecutorIds.GENERIC_OPERATOR))
+                : diagnostics.nodes();
+    }
+
+    private static void testRuntimeObservabilityCoversBatchAndFailure() {
+        InMemoryRuntimeObserver offlineObserver = new InMemoryRuntimeObserver(2);
+        FeatureDagEngine offlineEngine = FeatureDagEngine.init(
+                intermediateConfigJson(),
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.OFFLINE)
+                        .planId("observed-offline-batch")
+                        .runtimeObserver(offlineObserver)
+                        .build());
+        offlineEngine.generateBatch(new OfflineBatchGenerateRequest(
+                "observed-offline-batch-request",
+                List.of(
+                        Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8)),
+                        Map.of("raw_price", List.of(200.0), "quality_score", List.of(0.5)))));
+        ExecutionDiagnostics offline = offlineObserver.latest();
+        assert offline.status() == ExecutionStatus.SUCCESS : offline;
+        assert offline.offlineRowCount() == 2 : offline;
+        assert offline.groupCount() == 0 : offline;
+        assert offline.candidateCount() == 0 : offline;
+        assert offline.sourceSequenceCount() == 0 : offline;
+
+        InMemoryRuntimeObserver onlineObserver = new InMemoryRuntimeObserver(4);
+        String requiredPriceConfig = onlineConfigJson().replace(
+                "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",\"dft\":0.0,",
+                "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",");
+        FeatureDagEngine onlineEngine = FeatureDagEngine.init(
+                requiredPriceConfig,
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.ONLINE)
+                        .planId("observed-online-batch")
+                        .runtimeObserver(onlineObserver)
+                        .build());
+        List<OnlineRequestGroup> groups = List.of(
+                new OnlineRequestGroup(
+                        "observed-user-a",
+                        Map.of("user_click_count", List.of(1),
+                                "user_seq1", publicIndustrySequence()),
+                        List.of(
+                                Map.of("item_industry", List.of("industry1"),
+                                        "item_price", List.of(10.0)),
+                                Map.of("item_industry", List.of("industry2"),
+                                        "item_price", List.of(20.0)))),
+                new OnlineRequestGroup(
+                        "observed-user-b",
+                        Map.of("user_click_count", List.of(2),
+                                "user_seq1", List.of("industry2")),
+                        List.of(Map.of(
+                                "item_industry", List.of("industry2"),
+                                "item_price", List.of(30.0)))));
+        onlineEngine.generateBatch(new OnlineBatchGenerateRequest(
+                "observed-online-batch-request", groups));
+        ExecutionDiagnostics batch = onlineObserver.latest();
+        assert batch.status() == ExecutionStatus.SUCCESS : batch;
+        assert batch.groupCount() == 2 : batch;
+        assert batch.candidateCount() == 3 : batch;
+        assert batch.sourceSequenceCount() == 2 : batch;
+        assert batch.sourceSequenceElementCount() == 7 : batch;
+        assert batch.maxSourceSequenceLength() == 6 : batch;
+
+        expectThrows(
+                FeatureGenerationException.class,
+                () -> onlineEngine.generate(new OnlineGenerateRequest(
+                        "observed-failure",
+                        Map.of("user_click_count", List.of(1),
+                                "user_seq1", publicIndustrySequence()),
+                        List.of(Map.of("item_industry", List.of("industry1"))))));
+        ExecutionDiagnostics failed = onlineObserver.latest();
+        assert failed.executionId().equals("observed-failure") : failed;
+        assert failed.status() == ExecutionStatus.FAILED : failed;
+        assert failed.failurePhase() == ExecutionPhase.RUNTIME : failed;
+        assert failed.errorType() != null : failed;
+        assert failed.nodes().stream().anyMatch(node -> node.status() == ExecutionStatus.FAILED)
+                : failed.nodes();
+        assert onlineObserver.receivedCount() == 2 : onlineObserver.receivedCount();
+    }
+
+    private static void testRuntimeObserverFailureIsolation() {
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                intermediateConfigJson(),
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.OFFLINE)
+                        .planId("observer-failure-isolation")
+                        .runtimeObserver(diagnostics -> {
+                            throw new IllegalStateException("observer unavailable");
+                        })
+                        .build());
+        GenerateResult result = engine.generate(new OfflineGenerateRequest(
+                "observer-failure-request",
+                Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8))));
+        assert Math.abs(((Number) scalarFeature(
+                result.featureValues(), "price_score_out")).doubleValue() - 0.08) < 0.000001
+                : result.featureValues();
+    }
+
     private static void testOnlineBaseMetadataDefaults() {
         String sharedJson = onlineConfigWithoutBaseMetadata("USER");
         FeatureDagEngine sharedEngine = FeatureDagEngine.init(
@@ -1773,8 +1931,14 @@ public final class DagEngineSelfTest {
     }
 
     private static void testOnlineEngineConcurrentReuse() throws Exception {
+        InMemoryRuntimeObserver observer = new InMemoryRuntimeObserver(20);
         FeatureDagEngine engine = FeatureDagEngine.init(
-                onlineConfigJson(), InitOptions.online("online-concurrent"));
+                onlineConfigJson(),
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.ONLINE)
+                        .planId("online-concurrent")
+                        .runtimeObserver(observer)
+                        .build());
         try (ExecutorService executor = Executors.newFixedThreadPool(4)) {
             List<Callable<List<Integer>>> calls = IntStream.range(0, 20)
                     .mapToObj(index -> (Callable<List<Integer>>) () -> {
@@ -1798,6 +1962,14 @@ public final class DagEngineSelfTest {
                 assert future.get().equals(List.of(3, 1)) : future.get();
             }
         }
+        assert observer.receivedCount() == 20 : observer.receivedCount();
+        assert observer.snapshots().stream()
+                .allMatch(diagnostics -> diagnostics.status() == ExecutionStatus.SUCCESS)
+                : observer.snapshots();
+        assert observer.snapshots().stream()
+                .map(ExecutionDiagnostics::executionId)
+                .collect(java.util.stream.Collectors.toSet())
+                .size() == 20 : observer.snapshots();
     }
 
     private static String onlineConfigJson() {
@@ -2925,6 +3097,17 @@ public final class DagEngineSelfTest {
         assert uncachedCalls.get() == 4 : uncachedCalls.get();
         assert result.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert result.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 3;
+        CacheStats requestCache = result.nodeStates()
+                .get(cachedNode.physicalNodeId())
+                .cacheStats()
+                .get(CacheKind.CANDIDATE_KEY);
+        assert requestCache.lookups() == 4 : requestCache;
+        assert requestCache.hits() == 1 : requestCache;
+        assert requestCache.misses() == 3 : requestCache;
+        assert requestCache.puts() == 3 : requestCache;
+        assert Math.abs(requestCache.hitRate() - 0.25) < 0.000001 : requestCache;
+        assert result.cacheStats().get(CacheKind.CANDIDATE_KEY).equals(requestCache)
+                : result.cacheStats();
 
         cachedCalls.set(0);
         uncachedCalls.set(0);
@@ -2947,6 +3130,16 @@ public final class DagEngineSelfTest {
         assert uncachedCalls.get() == 4 : uncachedCalls.get();
         assert grouped.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert grouped.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 2;
+        CacheStats groupedCache = grouped.nodeStates()
+                .get(cachedNode.physicalNodeId())
+                .cacheStats()
+                .get(CacheKind.CANDIDATE_KEY);
+        assert groupedCache.lookups() == 4 : groupedCache;
+        assert groupedCache.hits() == 2 : groupedCache;
+        assert groupedCache.misses() == 2 : groupedCache;
+        assert groupedCache.puts() == 2 : groupedCache;
+        assert grouped.cacheStats().get(CacheKind.CANDIDATE_KEY).equals(groupedCache)
+                : grouped.cacheStats();
     }
 
     private static OperatorDefinition echoOperator(

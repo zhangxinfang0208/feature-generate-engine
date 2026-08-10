@@ -201,47 +201,158 @@ public final class OperatorRegistry {
 
     private static void registerOpsListOperators(OperatorRegistry registry) {
         registry.register(simple("discrete", 2, 2, true, true, false,
-                fixed(DataType.INT, ValueShape.SCALAR), unsupported("discrete")));
+                fixed(DataType.INT, ValueShape.SCALAR), OperatorRegistry::evaluateDiscrete));
         registry.register(simple("log_base", 3, 3, true, false, false,
                 fixed(DataType.DOUBLE, ValueShape.SCALAR),
-                args -> {
-                    double value = asNumber(args.get(0)).doubleValue();
-                    double base = asNumber(args.get(1)).doubleValue();
-                    double upbound = asNumber(args.get(2)).doubleValue();
-                    if (!Double.isFinite(base) || base <= 0.0 || base == 1.0) {
-                        throw new IllegalArgumentException(
-                                "base must be finite, greater than zero, and not equal to one");
-                    }
-                    return Math.log(Math.min(value, upbound)) / Math.log(base);
-                }));
+                OperatorRegistry::evaluateLogBase));
         registry.register(simple("slice_by_indices", 2, 2, true, true, true,
-                passThrough(0), unsupported("slice_by_indices")));
+                passThrough(0), OperatorRegistry::evaluateSliceByIndices));
         registry.register(simple("find_indices", 2, 2, true, false, true,
-                fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("find_indices")));
+                fixed(DataType.INT, ValueShape.SEQUENCE), OperatorRegistry::evaluateFindIndices));
         registry.register(simple("get_seq_length", 1, 1, true, false, false,
-                fixed(DataType.INT, ValueShape.SCALAR), unsupported("get_seq_length")));
+                fixed(DataType.INT, ValueShape.SCALAR), OperatorRegistry::evaluateGetSeqLength));
         registry.register(simple("count_distinct", 1, 1, true, false, false,
-                fixed(DataType.INT, ValueShape.SCALAR), unsupported("count_distinct")));
-        registry.register(simple("zip_concat", 2, Integer.MAX_VALUE, true, false, true,
-                fixed(DataType.STRING, ValueShape.SEQUENCE), unsupported("zip_concat")));
+                fixed(DataType.INT, ValueShape.SCALAR), OperatorRegistry::evaluateCountDistinct));
+        registry.register(simple("zip_concat", 2, Integer.MAX_VALUE, true, true, true,
+                fixed(DataType.STRING, ValueShape.SEQUENCE), OperatorRegistry::evaluateZipConcat));
         registry.register(simple("calc_delta_seq", 2, 2, true, false, true,
-                fixed(DataType.DOUBLE, ValueShape.SEQUENCE),
-                args -> {
-                    Object input = args.getFirst();
-                    if (input instanceof SequenceValue) {
-                        throw new UnsupportedOperationException("TODO: calc_delta_seq");
-                    }
-                    if (!(input instanceof Collection<?> collection)) {
-                        throw new IllegalArgumentException(
-                                "calc_delta_seq expects a collection input, got: " + input);
-                    }
-                    double base = asNumber(args.get(1)).doubleValue();
-                    List<Double> result = new ArrayList<>(collection.size());
-                    for (Object value : collection) {
-                        result.add(base - asNumber(value).doubleValue());
-                    }
-                    return List.copyOf(result);
-                }));
+                fixed(DataType.DOUBLE, ValueShape.SEQUENCE), OperatorRegistry::evaluateCalcDeltaSeq));
+    }
+
+    private static Object evaluateDiscrete(List<Object> args) {
+        BigDecimal value = asPreciseDecimal(
+                asNumber(args.get(0)), "discrete requires a finite numeric value");
+        List<?> boundaries = asList(args.get(1), "discrete", "discrete_key");
+        BigDecimal previous = null;
+        int bucket = 0;
+        for (int index = 0; index < boundaries.size(); index++) {
+            Object boundary = boundaries.get(index);
+            if (!(boundary instanceof Number number)) {
+                throw new IllegalArgumentException(
+                        "discrete boundary at index " + index + " is not numeric: " + boundary);
+            }
+            BigDecimal current = asPreciseDecimal(
+                    number, "discrete boundary at index " + index + " must be finite");
+            if (previous != null && current.compareTo(previous) <= 0) {
+                throw new IllegalArgumentException(
+                        "discrete boundaries must be strictly increasing at index " + index);
+            }
+            if (value.compareTo(current) >= 0) bucket++;
+            previous = current;
+        }
+        return bucket;
+    }
+
+    private static Object evaluateLogBase(List<Object> args) {
+        double value = finiteDouble(args.get(0), "log_base value");
+        double base = finiteDouble(args.get(1), "log_base base");
+        double upbound = finiteDouble(args.get(2), "log_base upbound");
+        if (base <= 0.0 || base == 1.0) {
+            throw new IllegalArgumentException(
+                    "log_base base must be greater than zero and not equal to one");
+        }
+        if (value <= 0.0) {
+            throw new IllegalArgumentException("log_base value must be greater than zero");
+        }
+        if (upbound <= 0.0) {
+            throw new IllegalArgumentException("log_base upbound must be greater than zero");
+        }
+        return Math.log(Math.min(value, upbound)) / Math.log(base);
+    }
+
+    private static Object evaluateSliceByIndices(List<Object> args) {
+        List<?> sequence = asList(args.get(0), "slice_by_indices", "sequence");
+        List<?> indices = asList(args.get(1), "slice_by_indices", "indices");
+        List<Object> result = new ArrayList<>(indices.size());
+        for (int position = 0; position < indices.size(); position++) {
+            int index = asSequenceIndex(
+                    indices.get(position), position, sequence.size(), "slice_by_indices");
+            result.add(sequence.get(index));
+        }
+        return nullableImmutableList(result);
+    }
+
+    private static Object evaluateFindIndices(List<Object> args) {
+        List<?> sequence = asList(args.get(0), "find_indices", "sequence");
+        Object target = args.get(1);
+        List<Integer> result = new ArrayList<>();
+        for (int index = 0; index < sequence.size(); index++) {
+            if (Objects.equals(sequence.get(index), target)) result.add(index);
+        }
+        return List.copyOf(result);
+    }
+
+    private static Object evaluateGetSeqLength(List<Object> args) {
+        Object sequence = args.getFirst();
+        if (sequence instanceof SequenceValue value) return value.size();
+        if (sequence instanceof Collection<?> collection) return collection.size();
+        if (sequence != null && sequence.getClass().isArray()) {
+            return java.lang.reflect.Array.getLength(sequence);
+        }
+        throw new IllegalArgumentException("get_seq_length expects a sequence, got: " + typeName(sequence));
+    }
+
+    private static Object evaluateCountDistinct(List<Object> args) {
+        Object sequence = args.getFirst();
+        Collection<?> values;
+        if (sequence instanceof SequenceValue value) {
+            List<Object> events = new ArrayList<>(value.size());
+            for (int index = 0; index < value.size(); index++) events.add(value.eventAt(index));
+            values = events;
+        } else if (sequence instanceof Collection<?> collection) {
+            values = collection;
+        } else {
+            throw new IllegalArgumentException("count_distinct expects a sequence, got: " + typeName(sequence));
+        }
+        return new LinkedHashSet<>(values).size();
+    }
+
+    private static Object evaluateZipConcat(List<Object> args) {
+        int sequenceCount = args.size();
+        String delimiter = "#";
+        Object last = args.getLast();
+        if (last instanceof Map<?, ?> config) {
+            sequenceCount--;
+            Object configured = config.get("delimiter");
+            if (configured != null) delimiter = String.valueOf(configured);
+        }
+        if (sequenceCount < 2) {
+            throw new IllegalArgumentException("zip_concat requires at least two sequences");
+        }
+        List<List<?>> sequences = new ArrayList<>(sequenceCount);
+        int size = -1;
+        for (int index = 0; index < sequenceCount; index++) {
+            List<?> sequence = asList(args.get(index), "zip_concat", "sequence " + index);
+            if (size < 0) size = sequence.size();
+            if (sequence.size() != size) {
+                throw new IllegalArgumentException(
+                        "zip_concat requires sequences of equal length; sequence " + index
+                                + " has length " + sequence.size() + ", expected " + size);
+            }
+            sequences.add(sequence);
+        }
+        List<String> result = new ArrayList<>(size);
+        for (int row = 0; row < size; row++) {
+            StringBuilder joined = new StringBuilder();
+            for (int column = 0; column < sequences.size(); column++) {
+                if (column > 0) joined.append(delimiter);
+                joined.append(String.valueOf(sequences.get(column).get(row)));
+            }
+            result.add(joined.toString());
+        }
+        return List.copyOf(result);
+    }
+
+    private static Object evaluateCalcDeltaSeq(List<Object> args) {
+        List<?> sequence = asList(args.get(0), "calc_delta_seq", "sequence");
+        double base = finiteDouble(args.get(1), "calc_delta_seq base");
+        List<Double> result = new ArrayList<>(sequence.size());
+        for (int index = 0; index < sequence.size(); index++) {
+            double value = finiteDouble(
+                    sequence.get(index), "calc_delta_seq element at index " + index);
+            result.add(value - base);
+        }
+        return List.copyOf(result);
     }
 
     private static java.util.function.Function<List<LogicalNode>, OperatorInference> passThrough(
@@ -399,9 +510,17 @@ public final class OperatorRegistry {
     }
 
     private static int asSequenceIndex(Object value, int position, int sequenceSize) {
+        return asSequenceIndex(value, position, sequenceSize, "list_index_typed");
+    }
+
+    private static int asSequenceIndex(
+            Object value,
+            int position,
+            int sequenceSize,
+            String operator) {
         if (!(value instanceof Number number)) {
             throw new IllegalArgumentException(
-                    "list_index_typed index at position " + position + " is not numeric: " + value);
+                    operator + " index at position " + position + " is not numeric: " + value);
         }
         long longValue;
         try {
@@ -414,21 +533,33 @@ public final class OperatorRegistry {
                 longValue = number.longValue();
                 if (!Double.isFinite(doubleValue) || doubleValue != longValue) {
                     throw new IllegalArgumentException(
-                            "list_index_typed index at position " + position
+                            operator + " index at position " + position
                                     + " is out of bounds: " + value + ", size=" + sequenceSize);
                 }
             }
         } catch (ArithmeticException error) {
             throw new IllegalArgumentException(
-                    "list_index_typed index at position " + position
+                    operator + " index at position " + position
                             + " is out of bounds: " + value + ", size=" + sequenceSize);
         }
         if (longValue < 0 || longValue >= sequenceSize) {
             throw new IllegalArgumentException(
-                    "list_index_typed index at position " + position
+                    operator + " index at position " + position
                             + " is out of bounds: " + value + ", size=" + sequenceSize);
         }
         return (int) longValue;
+    }
+
+    private static double finiteDouble(Object value, String argument) {
+        double result = asNumber(value).doubleValue();
+        if (!Double.isFinite(result)) {
+            throw new IllegalArgumentException(argument + " must be finite");
+        }
+        return result;
+    }
+
+    private static String typeName(Object value) {
+        return value == null ? "null" : value.getClass().getName();
     }
 
     private static <T> List<T> nullableImmutableList(List<T> values) {

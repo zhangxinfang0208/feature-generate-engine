@@ -857,8 +857,32 @@ public final class DagEngineSelfTest {
                 .doubleValue() - 3.0) < 1e-9;
         assert Math.abs(((Number) registry.evaluate("log_base", List.of(2000, 10, 1000)))
                 .doubleValue() - 3.0) < 1e-9;
+        assert registry.evaluate("discrete", List.of(16, List.of(1, 10, 100))).equals(2);
+        assert registry.evaluate("discrete", List.of(10, List.of(1, 10, 100))).equals(2);
+        assert registry.evaluate(
+                "slice_by_indices",
+                List.of(List.of("a1", "a2", "a3", "a4"), List.of(1, 3)))
+                .equals(List.of("a2", "a4"));
+        assert registry.evaluate(
+                "find_indices", List.of(List.of("a1", "a2", "a3", "a3"), "a3"))
+                .equals(List.of(2, 3));
+        assert registry.evaluate("get_seq_length", List.of(List.of("a1", "a2", "a3", "a4")))
+                .equals(4);
+        assert registry.evaluate("get_seq_length", List.of(sequence())).equals(6);
+        assert registry.evaluate("count_distinct", List.of(List.of("a1", "a2", "a1", "a3")))
+                .equals(3);
+        assert registry.evaluate(
+                "zip_concat",
+                List.of(
+                        List.of("a1", "a2", "a3", "a4"),
+                        List.of("b1", "b2", "b3", "b4")))
+                .equals(List.of("a1#b1", "a2#b2", "a3#b3", "a4#b4"));
+        assert registry.evaluate(
+                "zip_concat",
+                List.of(List.of("a1", "a2"), List.of("b1", "b2"), Map.of("delimiter", "|")))
+                .equals(List.of("a1|b1", "a2|b2"));
         assert registry.evaluate("calc_delta_seq", List.of(List.of(2, 5, 9), 10))
-                .equals(List.of(8.0, 5.0, 1.0));
+                .equals(List.of(-8.0, -5.0, -1.0));
 
         IllegalArgumentException zeroDivisor = expectThrows(
                 IllegalArgumentException.class,
@@ -868,11 +892,22 @@ public final class DagEngineSelfTest {
                 IllegalArgumentException.class,
                 () -> registry.evaluate("log_base", List.of(8, 1, 1000)));
         assert invalidBase.getMessage().contains("base") : invalidBase.getMessage();
-        UnsupportedOperationException sequenceDelta = expectThrows(
-                UnsupportedOperationException.class,
+        IllegalArgumentException sequenceDelta = expectThrows(
+                IllegalArgumentException.class,
                 () -> registry.evaluate("calc_delta_seq", List.of(sequence(), 10)));
-        assert sequenceDelta.getMessage().equals("TODO: calc_delta_seq")
+        assert sequenceDelta.getMessage().contains("expects List")
                 : sequenceDelta.getMessage();
+        IllegalArgumentException unorderedBoundaries = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate("discrete", List.of(16, List.of(1, 100, 10))));
+        assert unorderedBoundaries.getMessage().contains("strictly increasing")
+                : unorderedBoundaries.getMessage();
+        IllegalArgumentException unequalZipLengths = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "zip_concat", List.of(List.of("a1"), List.of("b1", "b2"))));
+        assert unequalZipLengths.getMessage().contains("equal length")
+                : unequalZipLengths.getMessage();
 
         List<FeatureDefinition> inferenceDefinitions = new ArrayList<>(List.of(
                 FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 0.0),

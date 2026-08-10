@@ -10,6 +10,10 @@ import java.util.Set;
 /**
  * L0 data model. Raw features must declare entityScopes. Derived features obtain
  * their final scope from logical DAG inference.
+ *
+ * 定义层（L0）：特征是三层构建的输入契约，构造后不可变（C2）。
+ * RAW 特征必须声明实体域且禁止携带表达式；DERIVED 特征必须携带表达式，
+ * 其最终实体域由逻辑层推断，而非在此声明。
  */
 public final class FeatureDefinition {
     private final String name;
@@ -71,6 +75,10 @@ public final class FeatureDefinition {
                 .build();
     }
 
+    /**
+     * 约束 C2：RAW 必须声明实体域且不能有表达式；DERIVED 必须有表达式。
+     * 校验失败立即抛异常，不产出半成品定义。
+     */
     private void validate() {
         if (role == FeatureRole.RAW) {
             if (entityScopes.isEmpty()) {

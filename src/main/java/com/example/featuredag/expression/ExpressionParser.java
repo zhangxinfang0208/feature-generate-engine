@@ -13,6 +13,10 @@ import java.util.Map;
  */
 public final class ExpressionParser {
 
+    /**
+     * L0 解析入口：表达式字符串 → AST，是逻辑层构建（C3）的第一步；
+     * AST 仅为临时中间表示，构建完成后即丢弃，不进入持久化计划模型。
+     */
     public AstNode parse(String expression) {
         if (expression == null || expression.isBlank()) {
             throw new ExpressionParseException("Expression must not be blank");

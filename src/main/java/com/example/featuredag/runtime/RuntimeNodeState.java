@@ -1,5 +1,9 @@
 package com.example.featuredag.runtime;
 
+/**
+ * 物理节点运行状态（运行时观测）：NOT_STARTED → RUNNING → SUCCESS/FAILED 的状态机，
+ * 记录耗时、缓存命中、去重计数等诊断信息，随 ExecutionResult 返回。
+ */
 public final class RuntimeNodeState {
     private final String physicalNodeId;
     private ExecutionStatus status = ExecutionStatus.NOT_STARTED;

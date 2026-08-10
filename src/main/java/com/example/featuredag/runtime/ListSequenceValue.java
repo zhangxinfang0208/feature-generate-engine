@@ -7,6 +7,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * 序列值句柄（列表承载）：外部 List 序列的轻量包装，
+ * 携带 alignmentId 作为序列对齐标识；底层列式序列由 SequenceBlock/SequenceView 承载。
+ */
 public final class ListSequenceValue implements ValueHandle {
     private final String alignmentId;
     private final List<Object> values;

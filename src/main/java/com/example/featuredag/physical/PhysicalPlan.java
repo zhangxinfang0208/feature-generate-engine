@@ -6,6 +6,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 物理层（L2）产物：不可变的物理节点序列与输出特征槽位映射（C9/C10）。
+ * 由 PhysicalPlanner 一次性构建，构建完成后仅被运行时消费，不再可变。
+ */
 public final class PhysicalPlan {
     private final String planId;
     private final ExecutionEnvironment environment;

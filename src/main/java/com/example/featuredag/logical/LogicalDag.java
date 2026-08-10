@@ -9,6 +9,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 逻辑层（L1）产物：不可变的逻辑 DAG 快照（C7）。
+ * 节点表、根节点、特征输出映射与拓扑序在构造时统一拷贝为不可变集合，
+ * 并校验全部输入引用，保证下游（规划层/物理层）读到的图是一致的。
+ */
 public final class LogicalDag {
     private final Map<String, LogicalNode> nodes;
     private final Set<String> rootNodeIds;
@@ -50,6 +55,9 @@ public final class LogicalDag {
         return List.copyOf(ordered);
     }
 
+    /**
+     * 约束 C7：节点只能引用 DAG 内已存在的节点，根节点必须真实存在于节点表中。
+     */
     private void validateReferences() {
         for (LogicalNode node : nodes.values()) {
             for (NodeInput input : node.inputs()) {

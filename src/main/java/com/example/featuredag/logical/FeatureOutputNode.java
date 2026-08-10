@@ -6,6 +6,10 @@ import com.example.featuredag.definition.EntityScope;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * 特征输出节点：每个特征在逻辑 DAG 中的唯一边界节点（C3），
+ * 单输入（producer），输出角色决定它对外是变换输出/模型输入还是内部节点。
+ */
 public final class FeatureOutputNode extends AbstractLogicalNode {
     private final String featureName;
     private final String producerNodeId;

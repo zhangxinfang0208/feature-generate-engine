@@ -3,7 +3,12 @@ package com.example.featuredag.runtime;
 import java.util.List;
 import java.util.Objects;
 
-/** Immutable columnar base sequence. */
+/**
+ * Immutable columnar base sequence.
+ *
+ * 序列底层块：按列存储（item/industry/timestamp/eventType/value），
+ * 是所有序列视图（SequenceView）共享的数据载体；handleKey 用于缓存标识。
+ */
 public final class SequenceBlock implements SequenceValue {
     private final String sequenceId;
     private final long version;

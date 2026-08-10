@@ -9,6 +9,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 输入解码器（对外契约适配）：把调用方提供的「外部 List 值」转换为内部源值——
+ * SEQUENCE 形状保留完整 List，标量形状取首元素；
+ * 在线模式按实体域拆分：非 ITEM 源值进共享输入，ITEM 源值逐候选解码。
+ */
 final class FeatureInputDecoder {
     private record SourceSpec(String sourceBinding, ValueShape shape, boolean itemScoped) {}
 

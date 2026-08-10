@@ -19,6 +19,10 @@ import java.util.Set;
 /**
  * Keeps optimization facts outside logical nodes. The logical node model stays
  * small and semantic; planner-only facts have their own lifecycle.
+ *
+ * 规划层（L1→L2 之间）：只读分析逻辑 DAG（C8），
+ * 引用计数、可达根与融合/索引候选等优化事实全部外置在 NodePlanningMetadata，
+ * 绝不回写逻辑节点，保证逻辑模型保持小且语义化。
  */
 public final class LogicalDagOptimizer {
 
@@ -40,6 +44,7 @@ public final class LogicalDagOptimizer {
             };
 
             if (node instanceof OperatorNode operator) {
+                // C8：候选识别——extractIndustry 节点可走行业索引；count 节点匹配 extractIndustry 时可融合
                 if ("extractIndustry".equals(operator.operatorName())) {
                     indexCandidate = "INDUSTRY_INDEX";
                     reuseKeyInputs = List.of("sequenceHandle", "item_industry");
@@ -60,6 +65,7 @@ public final class LogicalDagOptimizer {
                     estimatedCost,
                     estimatedSize));
         }
+        // C8：分析产物是按逻辑节点索引的只读元数据表，物理层据此做融合/缓存决策
         return new OptimizedLogicalPlan(dag, new PlannerMetadata(result));
     }
 
@@ -93,6 +99,10 @@ public final class LogicalDagOptimizer {
                 countNode.nodeId(), extract.nodeId(), intermediateNodeIds));
     }
 
+    /**
+     * 引用计数（C8）：统计每个逻辑节点被多少条输入边引用，
+     * 是公共子表达式复用与融合安全性判断（C9 要求引用计数为 1）的依据。
+     */
     private static Map<String, Integer> computeReferenceCounts(LogicalDag dag) {
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (String nodeId : dag.nodes().keySet()) counts.put(nodeId, 0);
@@ -104,6 +114,10 @@ public final class LogicalDagOptimizer {
         return counts;
     }
 
+    /**
+     * 可达根集合（C8）：自根节点反向遍历，记录每个节点能被哪些根特征到达；
+     * 供物理层判断节点在各输出路径上的价值与缓存范围。
+     */
     private static Map<String, Set<String>> computeReachableRoots(LogicalDag dag) {
         Map<String, Set<String>> result = new LinkedHashMap<>();
         for (String nodeId : dag.nodes().keySet()) result.put(nodeId, new LinkedHashSet<>());

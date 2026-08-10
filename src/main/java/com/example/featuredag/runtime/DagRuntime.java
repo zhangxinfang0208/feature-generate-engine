@@ -34,6 +34,7 @@ public final class DagRuntime {
             throw new IllegalArgumentException(
                     "Plan environment " + plan.environment() + " does not match context " + context.environment());
         }
+        // 运行时：按物理计划顺序逐节点执行，各节点结果写入执行上下文的输出槽（slot:N）
         for (PhysicalNode node : plan.nodes()) {
             executeNode(node, context);
         }
@@ -45,6 +46,7 @@ public final class DagRuntime {
             }
             outputs.put(entry.getKey(), value);
         }
+        // 运行时：从输出槽收集根特征结果，连同各节点运行状态一起返回
         return new ExecutionResult(outputs, context.nodeStates());
     }
 
@@ -73,6 +75,10 @@ public final class DagRuntime {
         }
     }
 
+    /**
+     * 源节点取值（运行时）：取值优先级为 候选向量（ONLINE + ITEM 域）→ 共享源值 → 默认值；
+     * 候选源值缺失且无默认值时抛错，并定位到具体候选下标。
+     */
     private ValueHandle executeSource(PhysicalNode node, ExecutionContext context) {
         String featureName = String.valueOf(node.executorConfig().get("sourceBinding"));
         Object defaultValue = node.executorConfig().get("defaultValue");
@@ -107,6 +113,7 @@ public final class DagRuntime {
         return wrapSource(defaultValue, node.logicalValueShape(), context);
     }
 
+    /** 通用算子执行（运行时）：从输入槽取出已算好的值句柄，交给算子注册表求值。 */
     private ValueHandle executeGenericOperator(PhysicalNode node, ExecutionContext context) {
         String operatorName = String.valueOf(node.executorConfig().get("operatorName"));
         List<ValueHandle> inputHandles = node.inputSlots().stream()
@@ -115,6 +122,12 @@ public final class DagRuntime {
         return vectorizedApply(operatorName, inputHandles, context, node.logicalValueShape());
     }
 
+    /**
+     * 融合算子执行（countIndustry，C9 融合产物）：
+     * ① 对候选行业去重统计；② 序列行业索引按序列句柄缓存（REQUEST_INDEX），
+     * ③ 每个行业计数按「物理节点 + 序列 + 行业」缓存（CANDIDATE_KEY）；
+     * 最后把每个候选映射到对应行业计数，返回候选向量。
+     */
     private ValueHandle executeCountIndustryBatch(
             PhysicalNode node,
             ExecutionContext context,
@@ -164,6 +177,10 @@ public final class DagRuntime {
         return new CandidateVectorValue(result);
     }
 
+    /**
+     * 向量化求值（运行时）：任一输入为候选向量即按候选下标逐元素求值，
+     * 标量输入在所有候选间共享；无候选向量时退化为单次求值。
+     */
     private ValueHandle vectorizedApply(
             String operatorName,
             List<ValueHandle> inputHandles,
@@ -229,6 +246,11 @@ public final class DagRuntime {
         return wrap(value, logicalValueShape, context.executionId());
     }
 
+    /**
+     * 值包装（运行时）：按逻辑值形状把普通对象包成对应句柄——
+     * SEQUENCE 形状的 List → ListSequenceValue，CANDIDATE_VECTOR 形状的 List → 候选向量，
+     * 其余 → ScalarValue；已是句柄则原样返回。
+     */
     private static ValueHandle wrap(
             Object value,
             ValueShape logicalValueShape,

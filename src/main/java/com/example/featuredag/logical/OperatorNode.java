@@ -7,6 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 算子节点：表达式中的函数调用在逻辑 DAG 中的落点（C5/C6）。
+ * 输入经 NodeInput 端口引用；输出类型、实体域与值形状由 OperatorInference 推断，
+ * 确定性/参数化标志来自算子注册表。
+ */
 public final class OperatorNode extends AbstractLogicalNode {
     private final String operatorName;
     private final Map<String, Object> operatorParams;

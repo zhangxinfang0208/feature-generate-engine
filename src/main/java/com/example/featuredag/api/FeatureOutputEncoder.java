@@ -10,6 +10,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 输出编码器（对外契约适配）：把内部 ValueHandle 物化为外部 List——
+ * SEQUENCE 输出原样返回元素 List，其余形状包装为单元素 List；
+ * 候选向量输出的每个候选元素单独编码。
+ */
 final class FeatureOutputEncoder {
     private final Map<String, ValueShape> outputShapes;
     private final ExternalValueMaterializer materializer = new ExternalValueMaterializer();

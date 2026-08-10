@@ -8,6 +8,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 单次执行的上下文（运行时）：承载输入（共享源值 + 候选表）、
+ * 输出槽表（物理节点结果按 slot:N 写入）、缓存注册表与节点状态表；
+ * 生命周期与一次 generate 调用一致。
+ */
 public final class ExecutionContext {
     private final String executionId;
     private final ExecutionEnvironment environment;

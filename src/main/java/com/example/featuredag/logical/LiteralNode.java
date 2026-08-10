@@ -4,6 +4,9 @@ import com.example.featuredag.definition.DataType;
 
 import java.util.Set;
 
+/**
+ * 字面量节点：表达式中的常量在逻辑 DAG 中的落点（C5），无输入、无实体域。
+ */
 public final class LiteralNode extends AbstractLogicalNode {
     private final Object value;
 

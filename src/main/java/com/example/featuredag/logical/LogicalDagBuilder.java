@@ -30,6 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Builds a target-driven logical DAG. AST objects are temporary and never
  * become part of the persisted plan model.
+ *
+ * 逻辑层（L1）构建器：从目标特征出发逆向构建可达子图（C3），
+ * 表达式 AST 仅是临时中间表示，构建完成后即丢弃；
+ * 通过 canonical 签名合并等价节点（C5），并完成环检测（C4）
+ * 与声明/推断一致性校验（C6）。
  */
 public final class LogicalDagBuilder {
     private final ExpressionParser expressionParser;
@@ -47,19 +52,30 @@ public final class LogicalDagBuilder {
         if (targetFeatures == null || targetFeatures.isEmpty()) {
             throw new DagBuildException("Target feature set must not be empty");
         }
+        // C3：目标驱动构建——只展开目标特征及其依赖的可达子图，其余特征不进入 DAG
         BuildContext context = new BuildContext(definitions);
         Set<String> roots = new LinkedHashSet<>();
         for (String target : targetFeatures) {
             roots.add(buildFeature(target, context));
         }
+        // C4：拓扑排序既是执行顺序，也是对环的兜底校验
         List<String> topologicalOrder = topologicalSort(context.nodes);
+        // C3/C5：构建产物是「节点表 + 根输出 + 特征输出映射 + 拓扑序」的不可变快照（C7），
+        // 作为规划层（C8）与物理层（C9）的输入
         return new LogicalDag(context.nodes, roots, context.featureOutputIds, topologicalOrder);
     }
 
+    /**
+     * 构建单个特征的输出节点（DFS 展开）：
+     * ① 查输出映射/访问状态，已构建则复用，VISITING 说明出现依赖环（C4）；
+     * ② RAW 特征直接落为源节点，DERIVED 特征先解析表达式再递归构建子树；
+     * ③ 对生成节点做声明/推断一致性校验（C6），最后包一层 FEATURE_OUTPUT 边界节点（C3/C5）。
+     */
     private String buildFeature(String featureName, BuildContext context) {
         String existing = context.featureOutputIds.get(featureName);
         if (existing != null) return existing;
 
+        // C4：DFS 三色标记检测特征依赖环——VISITING 表示该特征还在当前展开栈内
         VisitState state = context.states.get(featureName);
         if (state == VisitState.VISITING) {
             List<String> cycle = new ArrayList<>(context.featureStack);
@@ -102,6 +118,7 @@ public final class LogicalDagBuilder {
                 default -> definition.outputPolicy() == OutputPolicy.OUTPUT
                         ? OutputRole.TRANSFORM_OUTPUT : OutputRole.INTERNAL;
             };
+            // C3/C5：每个特征对应唯一 FEATURE_OUTPUT 边界节点（ID 前缀 feature:）
             String outputId = "feature:" + featureName;
             FeatureOutputNode outputNode = new FeatureOutputNode(
                     outputId,
@@ -121,7 +138,12 @@ public final class LogicalDagBuilder {
         }
     }
 
+    /**
+     * RAW 特征落点为源节点（C2/C5）：无输入，值形状按声明或类型推断，
+     * 携带默认值与源绑定名；按 canonical 签名去重，全图共享同一个源节点。
+     */
     private String createSourceNode(FeatureDefinition definition, BuildContext context) {
+        // C5：同一 RAW 特征只建一个源节点，按 canonical 签名去重
         String signature = "source|" + definition.name();
         String existing = context.canonicalNodeIds.get(signature);
         if (existing != null) return existing;
@@ -142,6 +164,11 @@ public final class LogicalDagBuilder {
         return nodeId;
     }
 
+    /**
+     * AST → 逻辑节点 的递归转换（C3）：
+     * 特征引用展开为对应特征的输出节点；字面量（含数组/对象折叠为字面量值）落为 LiteralNode；
+     * 函数调用先递归构建参数子树，再落为 OperatorNode。
+     */
     private String buildAst(AstNode ast, FeatureDefinition owner, BuildContext context) {
         if (ast instanceof AstFeatureRef featureRef) {
             return buildFeature(featureRef.featureName(), context);
@@ -196,6 +223,10 @@ public final class LogicalDagBuilder {
         return Collections.unmodifiableList(new ArrayList<>(values));
     }
 
+    /**
+     * 字面量落点为 LiteralNode（C5）：按值类型推断 DataType 与值形状，
+     * 相同的「类型 + 值」只保留一个节点，避免常量重复构建。
+     */
     private String createLiteralNode(Object value, FeatureDefinition owner, BuildContext context) {
         DataType dataType = inferLiteralType(value);
         ValueShape shape = dataType == DataType.OBJECT ? ValueShape.OBJECT : ValueShape.SCALAR;
@@ -215,12 +246,18 @@ public final class LogicalDagBuilder {
         return nodeId;
     }
 
+    /**
+     * 函数调用落点为 OperatorNode（C5/C6）：
+     * 先经算子注册表校验存在性与参数个数，再由 OperatorInference 依据输入节点
+     * 推断输出类型/实体域/值形状；相同「算子名 + 输入集合」只保留一个节点。
+     */
     private String createOperatorNode(
             String operatorName,
             List<String> inputIds,
             FeatureDefinition owner,
             BuildContext context) {
         List<LogicalNode> inputs = inputIds.stream().map(context.nodes::get).toList();
+        // C6：输出类型/实体域/值形状由算子注册表基于输入节点推断
         OperatorDefinition definition;
         OperatorInference inference;
         try {
@@ -231,6 +268,7 @@ public final class LogicalDagBuilder {
                     "Invalid operator " + operatorName + " in feature " + owner.name() + ": " + ex.getMessage(), ex);
         }
 
+        // C5：相同算子名 + 相同输入集合的调用合并为同一个算子节点
         String signature = "operator|" + operatorName + "|" + String.join(",", inputIds);
         String existing = context.canonicalNodeIds.get(signature);
         if (existing != null) return existing;
@@ -257,6 +295,9 @@ public final class LogicalDagBuilder {
         return nodeId;
     }
 
+    /**
+     * 约束 C6：声明类型与推断类型必须一致；唯一例外是声明 DOUBLE、推断为 INT 的放宽。
+     */
     private static void validateDeclaredType(FeatureDefinition definition, DataType inferredType) {
         if (definition.dataType() != DataType.UNKNOWN
                 && inferredType != DataType.UNKNOWN
@@ -287,6 +328,11 @@ public final class LogicalDagBuilder {
         }
     }
 
+    /**
+     * Kahn 拓扑排序（C4）：按入度表 + 就绪队列逐层剥离零入度节点，
+     * 产出的顺序既是执行顺序，也是下游消费输入的前置保证；
+     * 若队列提前耗尽说明图中存在环。
+     */
     private static List<String> topologicalSort(Map<String, LogicalNode> nodes) {
         Map<String, Integer> inDegree = new LinkedHashMap<>();
         Map<String, List<String>> consumers = new LinkedHashMap<>();
@@ -313,6 +359,7 @@ public final class LogicalDagBuilder {
                 if (remaining == 0) ready.addLast(consumer);
             }
         }
+        // C4：拓扑排序兜底——仍有未排入序的节点说明逻辑 DAG 中存在环
         if (order.size() != nodes.size()) {
             Set<String> unresolved = new LinkedHashSet<>(nodes.keySet());
             unresolved.removeAll(order);
@@ -384,6 +431,10 @@ public final class LogicalDagBuilder {
 
     private enum VisitState { VISITING, VISITED }
 
+    /**
+     * 构建期上下文（C3/C4/C5）：持有定义表、节点表、特征输出映射、
+     * canonical 去重表与 DFS 三色标记，仅存在于本次构建过程中。
+     */
     private static final class BuildContext {
         private final Map<String, FeatureDefinition> definitions;
         private final Map<String, LogicalNode> nodes = new LinkedHashMap<>();

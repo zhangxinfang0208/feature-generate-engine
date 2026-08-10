@@ -7,6 +7,9 @@ import java.util.Objects;
 /**
  * Zero-copy sequence view. Every view points directly to the base block; view
  * chains are normalized when a new view is created.
+ *
+ * 零拷贝序列视图：不复制数据，只记录 baseIndex 选择（Selection）；
+ * 过滤/切片产生的下标按密度选择最优表示——连续→Range、稀疏→Index、密集→Bitmap。
  */
 public final class SequenceView implements SequenceValue {
     private final SequenceBlock baseBlock;

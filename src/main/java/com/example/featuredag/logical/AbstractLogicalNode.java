@@ -9,6 +9,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 逻辑节点公共基类（C7）：全部字段在构造时拷贝为不可变集合，
+ * 子类只允许追加只读字段，禁止提供任何可变修改入口。
+ */
 public abstract class AbstractLogicalNode implements LogicalNode {
     private final String nodeId;
     private final NodeType nodeType;

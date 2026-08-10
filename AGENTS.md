@@ -4,6 +4,21 @@
 
 本项目是一个基于 Java 21 的三层特征表达式 DAG 引擎参考实现。生产代码位于 `src/main/java/com/example/featuredag/`，并按职责划分：`definition` 和 `expression` 定义输入与表达式；`logical` 构建逻辑 DAG；`planning` 和 `physical` 完成优化及物理计划转换；`runtime` 执行计划；`operator` 提供算子行为。`demo` 仅用于可运行示例，不应承载核心抽象。无外部依赖的集成测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`。辅助脚本存放在 `scripts/`，编译产物和 JAR 文件统一写入 `target/`。
 
+## 三层 DAG 构建约束
+
+引擎按「定义 → 逻辑 → 物理」三层构建 DAG，各层职责与约束如下；代码中的中文注解均引用此处编号（如 C3），修改对应逻辑时应保持注解与约束同步。
+
+- C1 单向分层依赖：L0 定义层（`definition`/`expression`/`config`）→ L1 逻辑层（`logical`）→ 规划/物理层（`planning`/`physical`）→ 运行时（`runtime`）。上层可引用下层类型，禁止反向引用；规划层不得改写逻辑节点。
+- C2 定义层（L0）：`FeatureDefinition` 构造后不可变；RAW 特征必须声明 entityScopes 且不得携带表达式，DERIVED 特征必须有表达式。所有校验在构造器内完成，校验失败直接抛异常，不产出半成品定义。
+- C3 逻辑层构建（L1）：`LogicalDagBuilder` 采用目标驱动，从 targetFeatures 逆向构建可达子图；表达式 AST 只是临时中间表示，构建完成后即丢弃，严禁进入持久化计划模型。
+- C4 无环约束：逻辑 DAG 必须无环。构建期用 DFS 三色标记（VISITING/VISITED）检测特征依赖环，构建完成后拓扑排序再兜底校验一次。
+- C5 节点去重与命名：逻辑节点按 canonical 签名合并等价节点（`source|名字`、`literal|类型|值`、`operator|名称|输入`）；节点 ID 遵循前缀规范 `source:`、`literal:`、`operator:`、`feature:`，新增节点类型必须沿用。
+- C6 声明与推断一致性：特征的声明类型/值形状/实体域必须与 DAG 推断结果一致（唯一例外：声明 DOUBLE 允许推断为 INT），不一致时抛 `DagBuildException`。
+- C7 逻辑节点不可变：`LogicalNode` 及其实现（`SourceNode`、`LiteralNode`、`OperatorNode`、`FeatureOutputNode`）构造后不可变，依赖关系通过 `NodeInput` 的节点 ID 与端口引用。
+- C8 规划层只读：`LogicalDagOptimizer` 只读遍历 DAG，优化事实（引用计数、可达根、融合候选）外置在 `NodePlanningMetadata`，禁止回写或修改逻辑节点本身。
+- C9 物理转换（L2）：每个逻辑节点必须且只能产出一个物理输出槽（`slot:N`），物理节点保持逻辑拓扑序；节点融合（如 countIndustry）仅在 ONLINE 环境允许，且被融合的 extract/中间节点必须引用计数为 1 且不是根节点。
+- C10 环境相关决策：物理节点的执行阶段/执行模式/缓存策略只能由 `ExecutionEnvironment` 与节点特征（实体域、算子名、值形状）推导，禁止在运行时临时决定；输出特征槽位必须与逻辑根节点一一对应。
+
 ## 构建、测试与开发命令
 
 - `mvn clean package`：使用 Java 21 编译，并生成 thin JAR 与包含 Jackson 依赖的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`。
@@ -31,6 +46,8 @@
 ## 编码风格与命名约定
 
 使用四个空格缩进和 UTF-8 编码，每个文件只声明一个公共顶级类型，并遵循现有的 `com.example.featuredag.<area>` 包结构。类名和枚举名使用 `PascalCase`，方法名和变量名使用 `camelCase`，枚举常量使用 `UPPER_SNAKE_CASE`。领域类型应尽量保持小型、不可变，并在构造器或 Builder 中通过明确的异常校验输入。沿用 `LogicalDag`、`PhysicalPlan`、`ExecutionContext` 等架构术语。项目未配置格式化或静态检查工具，因此应遵循相邻代码的风格并使用显式导入。
+
+- 注解约定：层间转换点（L0 映射、L1 构建、规划分析、L2 转换、运行时执行）以中文注解说明转换语义，并引用约束编号（C1–C10）；核心链路不引入运行时日志（LOGGER），转换过程信息通过注解与各层产物类型呈现。
 
 ## 测试指南
 

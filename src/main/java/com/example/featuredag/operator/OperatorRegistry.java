@@ -19,7 +19,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Registry shared by logical inference and runtime execution. */
+/**
+ * Registry shared by logical inference and runtime execution.
+ *
+ * 算子注册表：同时服务逻辑层与运行时——构建期用 require/infer 校验算子并推断
+ * 输出类型/实体域/值形状（C6），运行期用 evaluate 执行算子求值；
+ * 每个算子名只能注册一次。
+ */
 public final class OperatorRegistry {
     private final Map<String, OperatorDefinition> definitions = new LinkedHashMap<>();
 

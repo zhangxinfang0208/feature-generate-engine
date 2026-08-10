@@ -8,6 +8,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * 物理节点：L2 中可执行的最小单元（C9）。
+ * 一个物理节点可对应一个或多个逻辑节点（融合），输入/输出通过槽位（slot:N）连接；
+ * 执行器类型、阶段、模式、缓存与物化策略在构建期已全部确定（C10）。
+ */
 public final class PhysicalNode {
     private final String physicalNodeId;
     private final List<String> logicalNodeIds;

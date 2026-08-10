@@ -21,11 +21,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 物理层（L2）转换器：按逻辑拓扑序把每个逻辑节点映射为物理节点与输出槽（C9）。
+ * 仅 ONLINE 环境允许节点融合（如 countIndustry 批量算子）；执行阶段、执行模式、
+ * 缓存与物化策略全部由 ExecutionEnvironment 与节点特征在构建期推导（C10）。
+ */
 public final class PhysicalPlanner {
     private final LogicalDagOptimizer optimizer = new LogicalDagOptimizer();
 
     public PhysicalPlan plan(OptimizedLogicalPlan optimized, ExecutionEnvironment environment, String planId) {
         LogicalDag dag = optimized.dag();
+        // C9：仅在 ONLINE 环境允许融合；被融合的 extract/中间节点将跳过单节点映射
         Map<String, CountExtractIndustryMatch> fusionByCountNode = environment == ExecutionEnvironment.ONLINE
                 ? findOnlineFusionMatches(optimized) : Map.of();
         Set<String> skippedLogicalNodes = new LinkedHashSet<>();
@@ -34,11 +40,14 @@ public final class PhysicalPlanner {
             skippedLogicalNodes.addAll(match.intermediateNodeIds());
         }
 
+        // C9：物理转换入口——每个逻辑节点产出一个物理节点与输出槽（slot:N），保持逻辑拓扑序；
+        // 融合匹配仅 ONLINE 存在，被融合的 extract/中间节点跳过单节点映射
         Map<String, String> logicalSlots = new HashMap<>();
         List<PhysicalNode> physicalNodes = new ArrayList<>();
         Map<String, String> outputFeatureSlots = new LinkedHashMap<>();
         int sequence = 0;
 
+        // C9：保持逻辑拓扑序逐节点映射，每个逻辑节点恰好产出一个物理输出槽 slot:N
         for (String logicalNodeId : dag.topologicalOrder()) {
             if (skippedLogicalNodes.contains(logicalNodeId)) continue;
             LogicalNode logicalNode = dag.node(logicalNodeId);
@@ -49,6 +58,7 @@ public final class PhysicalPlanner {
                 List<String> inputSlots = extract.inputs().stream()
                         .map(input -> requireSlot(logicalSlots, input.nodeId()))
                         .toList();
+                // C9：融合节点把 extract + 中间节点 + count 合并为单个物理节点，共用一个输出槽
                 String outputSlot = "slot:" + (++sequence);
                 List<String> fusedLogicalNodeIds = new ArrayList<>();
                 fusedLogicalNodeIds.add(fusion.extractNodeId());
@@ -87,6 +97,7 @@ public final class PhysicalPlanner {
             }
         }
 
+        // C9/C10：产物为不可变物理计划——节点序列、槽位、执行策略与输出特征槽位映射
         return new PhysicalPlan(planId, environment, physicalNodes, outputFeatureSlots);
     }
 
@@ -97,6 +108,7 @@ public final class PhysicalPlanner {
             int sequence,
             List<String> inputSlots,
             String outputSlot) {
+        // C10：执行器类型按逻辑节点类型一对一映射，执行参数固化在 config 中
         ExecutorType executorType;
         Map<String, Object> config = new LinkedHashMap<>();
         if (node instanceof SourceNode source) {
@@ -140,6 +152,10 @@ public final class PhysicalPlanner {
                 config);
     }
 
+    /**
+     * 约束 C10：OFFLINE 一律走离线批阶段；ONLINE 下 ITEM 实体域节点走候选批阶段，
+     * 其余走请求共享阶段。阶段、模式与缓存策略只允许在此类构建期推导函数中决定。
+     */
     private static ExecutionStage stageFor(LogicalNode node, ExecutionEnvironment environment) {
         if (environment == ExecutionEnvironment.OFFLINE) return ExecutionStage.OFFLINE_BATCH;
         return node.entityScopes().contains(EntityScope.ITEM)
@@ -176,6 +192,7 @@ public final class PhysicalPlanner {
             if (!"COUNT_EXTRACT_INDUSTRY".equals(metadata.fusionCandidate())) continue;
             CountExtractIndustryMatch match = optimizer.matchCountExtractIndustry(dag, countNode).orElse(null);
             if (match == null) continue;
+            // C9：融合前提——extract 节点不是根且引用计数为 1，避免破坏公共子表达式复用
             if (dag.rootNodeIds().contains(match.extractNodeId())
                     || optimized.metadata().node(match.extractNodeId()).referenceCount() != 1) continue;
             boolean unsafeIntermediate = match.intermediateNodeIds().stream().anyMatch(intermediateNodeId ->

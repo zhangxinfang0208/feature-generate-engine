@@ -5,6 +5,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 行业索引构建器（运行时）：把序列按 industry 分组为 baseIndex 数组，
+ * 供 countIndustry 融合算子 O(1) 计数；索引按序列句柄缓存（REQUEST_INDEX 缓存）。
+ */
 public final class SequenceIndustryIndex {
     private SequenceIndustryIndex() {}
 

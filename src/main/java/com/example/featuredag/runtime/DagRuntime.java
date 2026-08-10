@@ -23,6 +23,7 @@ public final class DagRuntime {
 
     private record OperatorInvocationCacheKey(
             String physicalNodeId,
+            int groupIndex,
             List<Object> arguments) {
         private OperatorInvocationCacheKey {
             arguments = Collections.unmodifiableList(new ArrayList<>(arguments));
@@ -118,6 +119,48 @@ public final class DagRuntime {
             return new OfflineBatchValue(values, node.logicalValueShape());
         }
 
+        if (context.isOnlineBatch()) {
+            if (itemScoped) {
+                List<Object> values = new ArrayList<>(context.candidateCount());
+                for (int candidateIndex = 0;
+                        candidateIndex < context.candidates().size();
+                        candidateIndex++) {
+                    Map<String, Object> candidate = context.candidates().get(candidateIndex);
+                    if (candidate.containsKey(featureName)) {
+                        values.add(candidate.get(featureName));
+                    } else if (defaultValue != null) {
+                        values.add(defaultValue);
+                    } else {
+                        int groupIndex = context.candidateGroupIndex(candidateIndex);
+                        throw new IllegalArgumentException(
+                                "Missing source feature " + featureName
+                                        + " for online batch group " + groupIndex
+                                        + " (" + context.onlineGroupExecutionId(groupIndex) + ")"
+                                        + ", candidate "
+                                        + context.candidateIndexInGroup(candidateIndex));
+                    }
+                }
+                return new CandidateBatchValue(values, node.logicalValueShape());
+            }
+            List<Object> values = new ArrayList<>(context.onlineGroupCount());
+            for (int groupIndex = 0;
+                    groupIndex < context.onlineSharedGroups().size();
+                    groupIndex++) {
+                Map<String, Object> group = context.onlineSharedGroups().get(groupIndex);
+                if (group.containsKey(featureName)) {
+                    values.add(group.get(featureName));
+                } else if (defaultValue != null) {
+                    values.add(defaultValue);
+                } else {
+                    throw new IllegalArgumentException(
+                            "Missing source feature " + featureName
+                                    + " for online batch group " + groupIndex
+                                    + " (" + context.onlineGroupExecutionId(groupIndex) + ")");
+                }
+            }
+            return new RequestBatchValue(values, node.logicalValueShape());
+        }
+
         if (context.environment() == com.example.featuredag.physical.ExecutionEnvironment.ONLINE && itemScoped) {
             List<Object> values = new ArrayList<>(context.candidateCount());
             for (int index = 0; index < context.candidates().size(); index++) {
@@ -159,8 +202,8 @@ public final class DagRuntime {
     }
 
     /**
-     * 向量化求值（运行时）：任一输入为候选向量即按候选下标逐元素求值，
-     * 标量输入在所有候选间共享；无候选向量时退化为单次求值。
+     * 向量化求值（运行时）：根据值句柄确定单候选、离线行、在线请求组或在线候选域；
+     * 在线候选域通过 groupOffsets 广播所属请求组的共享值，普通标量在整个求值域广播。
      */
     private ValueHandle vectorizedApply(
             PhysicalNode node,
@@ -169,33 +212,15 @@ public final class DagRuntime {
             ExecutionContext context,
             RuntimeNodeState state,
             ValueShape logicalValueShape) {
-        boolean candidateVector = inputHandles.stream()
-                .anyMatch(handle -> handle instanceof CandidateVectorValue);
-        boolean offlineBatch = inputHandles.stream()
-                .anyMatch(handle -> handle instanceof OfflineBatchValue);
-        if (candidateVector && offlineBatch) {
-            throw new IllegalStateException(
-                    "Cannot mix candidate vectors and offline batch values");
-        }
-        if (!candidateVector && !offlineBatch) {
+        EvaluationDomain domain = evaluationDomain(inputHandles);
+        if (domain == EvaluationDomain.NONE) {
             List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
             return wrap(operatorRegistry.evaluate(operatorName, args), logicalValueShape, context.executionId());
         }
         // C10：批维度来自执行上下文，标量/字面量在批内广播，不在运行时改变执行阶段。
-        int size = offlineBatch ? context.offlineBatchSize() : context.candidateCount();
-        if (size <= 0) {
-            size = inputHandles.stream().mapToInt(handle -> {
-                if (handle instanceof CandidateVectorValue vector) return vector.size();
-                if (handle instanceof OfflineBatchValue batch) return batch.size();
-                return 0;
-            }).max().orElse(0);
-        }
+        int size = evaluationSize(domain, context);
         for (ValueHandle handle : inputHandles) {
-            if (handle instanceof CandidateVectorValue vector) {
-                requireVectorSize(vector.size(), size, operatorName);
-            } else if (handle instanceof OfflineBatchValue batch) {
-                requireVectorSize(batch.size(), size, operatorName);
-            }
+            validateBatchValueSize(handle, domain, size, context, operatorName);
         }
         List<Object> result = new ArrayList<>(size);
         boolean memoize = node.cachePolicy() == CachePolicy.CANDIDATE_KEY;
@@ -211,42 +236,138 @@ public final class DagRuntime {
         for (int index = 0; index < size; index++) {
             List<Object> args = new ArrayList<>(inputHandles.size());
             for (ValueHandle handle : inputHandles) {
-                if (handle instanceof CandidateVectorValue vectorValue) {
-                    args.add(vectorValue.valueAt(index));
-                } else if (handle instanceof OfflineBatchValue batchValue) {
-                    args.add(batchValue.valueAt(index));
-                } else {
-                    args.add(handle.raw());
-                }
+                args.add(argumentAt(handle, domain, index, context));
             }
             try {
+                Object value;
                 if (!memoize) {
-                    result.add(operatorRegistry.evaluate(operatorName, args));
-                    continue;
-                }
-                OperatorInvocationCacheKey cacheKey =
-                        new OperatorInvocationCacheKey(node.physicalNodeId(), args);
-                uniqueInvocations.add(cacheKey);
-                if (context.cacheRegistry().containsKey(cacheKey)) {
-                    result.add(context.cacheRegistry().get(cacheKey));
-                    state.markCacheHit("CANDIDATE_KEY");
+                    value = operatorRegistry.evaluate(operatorName, args);
                 } else {
-                    Object value = operatorRegistry.evaluate(operatorName, args);
-                    context.cacheRegistry().put(cacheKey, value);
-                    result.add(value);
+                    int groupIndex = evaluationGroupIndex(domain, index, context);
+                    OperatorInvocationCacheKey cacheKey = new OperatorInvocationCacheKey(
+                            node.physicalNodeId(), groupIndex, args);
+                    uniqueInvocations.add(cacheKey);
+                    if (context.cacheRegistry().containsKey(cacheKey)) {
+                        value = context.cacheRegistry().get(cacheKey);
+                        state.markCacheHit("CANDIDATE_KEY");
+                    } else {
+                        value = operatorRegistry.evaluate(operatorName, args);
+                        context.cacheRegistry().put(cacheKey, value);
+                    }
                 }
+                result.add(value);
             } catch (RuntimeException error) {
-                String element = offlineBatch ? "offline batch row " : "candidate ";
                 throw new IllegalArgumentException(
-                        "Operator " + operatorName + " failed for " + element + index
+                        "Operator " + operatorName + " failed for "
+                                + evaluationLocation(domain, index, context)
                                 + ": " + error.getMessage(),
                         error);
             }
         }
         if (memoize) state.setDedupCounts(size, uniqueInvocations.size());
-        return offlineBatch
-                ? new OfflineBatchValue(result, logicalValueShape)
-                : new CandidateVectorValue(result);
+        return switch (domain) {
+            case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
+            case OFFLINE_ROW -> new OfflineBatchValue(result, logicalValueShape);
+            case ONLINE_REQUEST -> new RequestBatchValue(result, logicalValueShape);
+            case ONLINE_CANDIDATE -> new CandidateBatchValue(result, logicalValueShape);
+            case NONE -> throw new IllegalStateException("Missing evaluation domain");
+        };
+    }
+
+    private static EvaluationDomain evaluationDomain(List<ValueHandle> handles) {
+        boolean singleCandidate = handles.stream().anyMatch(CandidateVectorValue.class::isInstance);
+        boolean offlineRow = handles.stream().anyMatch(OfflineBatchValue.class::isInstance);
+        boolean onlineRequest = handles.stream().anyMatch(RequestBatchValue.class::isInstance);
+        boolean onlineCandidate = handles.stream().anyMatch(CandidateBatchValue.class::isInstance);
+        int incompatibleDomains = (singleCandidate ? 1 : 0)
+                + (offlineRow ? 1 : 0)
+                + ((onlineRequest || onlineCandidate) ? 1 : 0);
+        if (incompatibleDomains > 1) {
+            throw new IllegalStateException("Cannot mix values from different batch domains");
+        }
+        if (onlineCandidate) return EvaluationDomain.ONLINE_CANDIDATE;
+        if (onlineRequest) return EvaluationDomain.ONLINE_REQUEST;
+        if (offlineRow) return EvaluationDomain.OFFLINE_ROW;
+        if (singleCandidate) return EvaluationDomain.SINGLE_CANDIDATE;
+        return EvaluationDomain.NONE;
+    }
+
+    private static int evaluationSize(EvaluationDomain domain, ExecutionContext context) {
+        return switch (domain) {
+            case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> context.candidateCount();
+            case OFFLINE_ROW -> context.offlineBatchSize();
+            case ONLINE_REQUEST -> context.onlineGroupCount();
+            case NONE -> 1;
+        };
+    }
+
+    private static void validateBatchValueSize(
+            ValueHandle handle,
+            EvaluationDomain domain,
+            int evaluationSize,
+            ExecutionContext context,
+            String operatorName) {
+        if (handle instanceof CandidateVectorValue value) {
+            requireVectorSize(value.size(), evaluationSize, operatorName);
+        } else if (handle instanceof OfflineBatchValue value) {
+            requireVectorSize(value.size(), evaluationSize, operatorName);
+        } else if (handle instanceof RequestBatchValue value) {
+            requireVectorSize(value.size(), context.onlineGroupCount(), operatorName);
+        } else if (handle instanceof CandidateBatchValue value) {
+            if (domain != EvaluationDomain.ONLINE_CANDIDATE) {
+                throw new IllegalStateException(
+                        "Candidate batch value requires online candidate evaluation");
+            }
+            requireVectorSize(value.size(), evaluationSize, operatorName);
+        }
+    }
+
+    private static Object argumentAt(
+            ValueHandle handle,
+            EvaluationDomain domain,
+            int index,
+            ExecutionContext context) {
+        if (handle instanceof CandidateVectorValue value) return value.valueAt(index);
+        if (handle instanceof OfflineBatchValue value) return value.valueAt(index);
+        if (handle instanceof CandidateBatchValue value) return value.valueAt(index);
+        if (handle instanceof RequestBatchValue value) {
+            int groupIndex = domain == EvaluationDomain.ONLINE_CANDIDATE
+                    ? context.candidateGroupIndex(index)
+                    : index;
+            return value.valueAt(groupIndex);
+        }
+        return handle.raw();
+    }
+
+    private static int evaluationGroupIndex(
+            EvaluationDomain domain,
+            int index,
+            ExecutionContext context) {
+        return switch (domain) {
+            case ONLINE_CANDIDATE -> context.candidateGroupIndex(index);
+            case ONLINE_REQUEST -> index;
+            case SINGLE_CANDIDATE -> 0;
+            case OFFLINE_ROW, NONE -> -1;
+        };
+    }
+
+    private static String evaluationLocation(
+            EvaluationDomain domain,
+            int index,
+            ExecutionContext context) {
+        return switch (domain) {
+            case OFFLINE_ROW -> "offline batch row " + index;
+            case SINGLE_CANDIDATE -> "candidate " + index;
+            case ONLINE_REQUEST -> "online batch group " + index + " ("
+                    + context.onlineGroupExecutionId(index) + ")";
+            case ONLINE_CANDIDATE -> {
+                int groupIndex = context.candidateGroupIndex(index);
+                yield "online batch group " + groupIndex + " ("
+                        + context.onlineGroupExecutionId(groupIndex) + "), candidate "
+                        + context.candidateIndexInGroup(index);
+            }
+            case NONE -> "scalar value";
+        };
     }
 
     private static void requireVectorSize(int actual, int expected, String operatorName) {
@@ -255,6 +376,14 @@ public final class DagRuntime {
                     "Operator " + operatorName + " received vector size " + actual
                             + ", expected " + expected);
         }
+    }
+
+    private enum EvaluationDomain {
+        NONE,
+        SINGLE_CANDIDATE,
+        OFFLINE_ROW,
+        ONLINE_REQUEST,
+        ONLINE_CANDIDATE
     }
 
     private static ValueHandle requireSingleInput(PhysicalNode node, ExecutionContext context) {

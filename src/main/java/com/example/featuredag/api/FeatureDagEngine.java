@@ -14,12 +14,14 @@ import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.PhysicalPlanner;
 import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
 import com.example.featuredag.planning.LogicalDagOptimizer;
+import com.example.featuredag.runtime.CandidateBatchValue;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExecutionResult;
 import com.example.featuredag.runtime.OfflineBatchValue;
 import com.example.featuredag.runtime.PhysicalExecutorRegistry;
+import com.example.featuredag.runtime.RequestBatchValue;
 import com.example.featuredag.runtime.SequenceIndexRegistry;
 import com.example.featuredag.runtime.ValueHandle;
 
@@ -120,6 +122,26 @@ public final class FeatureDagEngine {
         }
         try {
             return generateOfflineBatch(request);
+        } catch (FeatureGenerationException error) {
+            throw error;
+        } catch (RuntimeException error) {
+            throw new FeatureGenerationException(
+                    error.getMessage(), planId, request.executionId(), null, error);
+        }
+    }
+
+    /**
+     * 在线分组批推理：每个 group 保持独立的共享输入和候选边界，整批只遍历一次物理计划。
+     */
+    public OnlineBatchGenerateResult generateBatch(OnlineBatchGenerateRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (environment != ExecutionEnvironment.ONLINE) {
+            throw new FeatureGenerationException(
+                    "OFFLINE engine does not support OnlineBatchGenerateRequest",
+                    planId, request.executionId(), null, null);
+        }
+        try {
+            return generateOnlineBatch(request);
         } catch (FeatureGenerationException error) {
             throw error;
         } catch (RuntimeException error) {
@@ -235,6 +257,83 @@ public final class FeatureDagEngine {
             }
         }
         return new GenerateResult(request.executionId(), sharedResults, candidateResults);
+    }
+
+    private OnlineBatchGenerateResult generateOnlineBatch(OnlineBatchGenerateRequest request) {
+        List<OnlineRequestGroup> groups = request.groups();
+        ExecutionContext context = ExecutionContext.onlineBatch(
+                request.executionId(),
+                groups.stream().map(OnlineRequestGroup::executionId).toList(),
+                inputDecoder.decodeOnlineSharedBatch(groups),
+                inputDecoder.decodeOnlineCandidateBatch(groups));
+        ExecutionResult execution = runtime.execute(plan, context);
+
+        List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
+        List<List<Map<String, List<?>>>> candidateResults = new ArrayList<>(groups.size());
+        for (OnlineRequestGroup group : groups) {
+            sharedResults.add(new LinkedHashMap<>());
+            List<Map<String, List<?>>> groupCandidates = new ArrayList<>(group.candidates().size());
+            for (int index = 0; index < group.candidates().size(); index++) {
+                groupCandidates.add(new LinkedHashMap<>());
+            }
+            candidateResults.add(groupCandidates);
+        }
+
+        for (FeatureOutputDescriptor output : outputs) {
+            try {
+                ValueHandle value = execution.feature(output.featureName());
+                if (value instanceof RequestBatchValue batch) {
+                    if (batch.size() != groups.size()) {
+                        throw new IllegalStateException(
+                                "Online request batch output size " + batch.size()
+                                        + " does not match group size " + groups.size());
+                    }
+                    for (int groupIndex = 0; groupIndex < batch.size(); groupIndex++) {
+                        sharedResults.get(groupIndex).put(
+                                output.storeName(),
+                                outputEncoder.encodeBatchElement(
+                                        output.featureName(), batch.valueAt(groupIndex)));
+                    }
+                } else if (value instanceof CandidateBatchValue batch) {
+                    if (batch.size() != context.candidateCount()) {
+                        throw new IllegalStateException(
+                                "Online candidate batch output size " + batch.size()
+                                        + " does not match candidate size "
+                                        + context.candidateCount());
+                    }
+                    for (int candidateIndex = 0; candidateIndex < batch.size(); candidateIndex++) {
+                        int groupIndex = context.candidateGroupIndex(candidateIndex);
+                        int indexInGroup = context.candidateIndexInGroup(candidateIndex);
+                        candidateResults.get(groupIndex).get(indexInGroup).put(
+                                output.storeName(),
+                                outputEncoder.encodeBatchElement(
+                                        output.featureName(), batch.valueAt(candidateIndex)));
+                    }
+                } else if (value instanceof CandidateVectorValue
+                        || value instanceof OfflineBatchValue) {
+                    throw new IllegalStateException(
+                            "Unexpected output handle for online batch: "
+                                    + value.getClass().getSimpleName());
+                } else {
+                    List<?> encoded = outputEncoder.encode(output.featureName(), value);
+                    for (Map<String, List<?>> groupResult : sharedResults) {
+                        groupResult.put(output.storeName(), encoded);
+                    }
+                }
+            } catch (RuntimeException error) {
+                throw new FeatureGenerationException(
+                        error.getMessage(), planId, request.executionId(), output.featureName(), error);
+            }
+        }
+
+        List<GenerateResult> groupResults = new ArrayList<>(groups.size());
+        for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            groupResults.add(new GenerateResult(
+                    groups.get(groupIndex).executionId(),
+                    sharedResults.get(groupIndex),
+                    candidateResults.get(groupIndex)));
+        }
+        return new OnlineBatchGenerateResult(request.executionId(), groupResults);
     }
 
     private static FeatureDagEngine initialize(FeatureSetConfig config, InitOptions options) {

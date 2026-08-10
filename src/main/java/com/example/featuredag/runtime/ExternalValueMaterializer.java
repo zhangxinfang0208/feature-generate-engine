@@ -21,6 +21,12 @@ public final class ExternalValueMaterializer {
         if (handle instanceof OfflineBatchValue batch) {
             return batch.values().stream().map(this::materializeRaw).toList();
         }
+        if (handle instanceof RequestBatchValue batch) {
+            return batch.values().stream().map(this::materializeRaw).toList();
+        }
+        if (handle instanceof CandidateBatchValue batch) {
+            return batch.values().stream().map(this::materializeRaw).toList();
+        }
         throw new IllegalArgumentException(
                 "Unsupported public output handle: " + handle.getClass().getName());
     }

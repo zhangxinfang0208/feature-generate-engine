@@ -231,6 +231,22 @@ GenerateResult result = engine.generate(
         new OnlineGenerateRequest(requestId, sharedValues, candidates));
 ```
 
+一次需要处理多个 user/request 时，使用分组 Batch，避免把不同 user 的 candidate 混入同一个共享上下文：
+
+```java
+List<OnlineRequestGroup> groups = List.of(
+        new OnlineRequestGroup("user-a", userAValues, userACandidates),
+        new OnlineRequestGroup("user-b", userBValues, userBCandidates));
+
+OnlineBatchGenerateResult batchResult = engine.generateBatch(
+        new OnlineBatchGenerateRequest("online-batch-1", groups));
+
+GenerateResult userAResult = batchResult.groupResults().get(0);
+```
+
+在线 Batch 会把 candidate 展平执行，但通过 group offsets 保持 USER/SCENE 广播、缓存和输出边界；详细设计见
+[在线分组 Batch 执行设计](docs/architecture/online-grouped-batch-execution.md)。
+
 输出也始终使用 `List`，包括标量输出。DAG 阶段在 `preTransform`、hash 或模型编码之前运行。
 `featureValues()` 合并到 shared/user features；`candidateFeatureValues().get(i)` 按原有顺序合并到
 candidate `i`。合并时的名称冲突和 `ExecutionSession` 写入属于外部

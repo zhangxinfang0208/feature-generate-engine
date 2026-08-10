@@ -14,10 +14,12 @@ import java.util.Set;
 /** “按 key 过滤序列后计数”的通用融合执行器。 */
 public final class SequenceKeyCountExecutor implements PhysicalExecutor {
     private record SequenceIndexCacheKey(
+            int groupIndex,
             SequenceKeyDomain keyDomain,
             SequenceValue sequence) {}
 
     private record SequenceKeyCountCacheKey(
+            int groupIndex,
             SequenceKeyDomain keyDomain,
             SequenceValue sequence,
             Object key) {}
@@ -41,15 +43,21 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         if (node.inputSlots().size() != 2) {
             throw new IllegalStateException("sequence-key-count requires sequence and key inputs");
         }
-        Object sequenceRaw = requireSlot(context, node.inputSlots().get(0)).raw();
+        SequenceKeyDomain keyDomain = keyDomain(node);
+        SequenceIndexProvider provider = indexRegistry.require(keyDomain);
+        ValueHandle sequenceHandle = requireSlot(context, node.inputSlots().get(0));
+        ValueHandle keyHandle = requireSlot(context, node.inputSlots().get(1));
+        if (context.isOnlineBatch()) {
+            return executeOnlineBatch(
+                    node, context, state, keyDomain, provider, sequenceHandle, keyHandle);
+        }
+
+        Object sequenceRaw = sequenceHandle.raw();
         if (!(sequenceRaw instanceof SequenceValue sequence)) {
             throw new IllegalArgumentException("First input must be SequenceValue");
         }
-
-        SequenceKeyDomain keyDomain = keyDomain(node);
-        SequenceIndexProvider provider = indexRegistry.require(keyDomain);
         List<Object> rawKeys = toCandidateValues(
-                requireSlot(context, node.inputSlots().get(1)), context.candidateCount());
+                keyHandle, context.candidateCount());
         List<Object> normalizedKeys = rawKeys.stream()
                 .map(provider::normalizeQueryKey)
                 .toList();
@@ -57,7 +65,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         Set<Object> uniqueKeys = new LinkedHashSet<>(normalizedKeys);
         state.setDedupCounts(normalizedKeys.size(), uniqueKeys.size());
 
-        SequenceIndexCacheKey indexCacheKey = new SequenceIndexCacheKey(keyDomain, sequence);
+        SequenceIndexCacheKey indexCacheKey = new SequenceIndexCacheKey(0, keyDomain, sequence);
         IndexValue index;
         Object cachedIndex = context.cacheRegistry().get(indexCacheKey);
         if (cachedIndex instanceof IndexValue cached) {
@@ -71,7 +79,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         Map<Object, Integer> countsByKey = new LinkedHashMap<>();
         for (Object key : uniqueKeys) {
             SequenceKeyCountCacheKey countCacheKey =
-                    new SequenceKeyCountCacheKey(keyDomain, sequence, key);
+                    new SequenceKeyCountCacheKey(0, keyDomain, sequence, key);
             if (context.cacheRegistry().containsKey(countCacheKey)) {
                 countsByKey.put(key, (Integer) context.cacheRegistry().get(countCacheKey));
                 state.markCacheHit("CANDIDATE_KEY");
@@ -85,6 +93,99 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         List<Object> result = new ArrayList<>(normalizedKeys.size());
         for (Object key : normalizedKeys) result.add(countsByKey.get(key));
         return new CandidateVectorValue(result);
+    }
+
+    private ValueHandle executeOnlineBatch(
+            PhysicalNode node,
+            ExecutionContext context,
+            RuntimeNodeState state,
+            SequenceKeyDomain keyDomain,
+            SequenceIndexProvider provider,
+            ValueHandle sequenceHandle,
+            ValueHandle keyHandle) {
+        List<Object> result = new ArrayList<>(context.candidateCount());
+        int totalUniqueKeys = 0;
+        for (int groupIndex = 0; groupIndex < context.onlineGroupCount(); groupIndex++) {
+            Object sequenceRaw = requestValue(sequenceHandle, groupIndex);
+            if (!(sequenceRaw instanceof SequenceValue sequence)) {
+                throw new IllegalArgumentException(
+                        "First input must be SequenceValue for online batch group "
+                                + groupIndex + " ("
+                                + context.onlineGroupExecutionId(groupIndex) + ")");
+            }
+            int start = context.candidateGroupStart(groupIndex);
+            int end = context.candidateGroupEnd(groupIndex);
+            if (start == end) continue;
+            List<Object> normalizedKeys = new ArrayList<>(end - start);
+            for (int candidateIndex = start; candidateIndex < end; candidateIndex++) {
+                try {
+                    normalizedKeys.add(provider.normalizeQueryKey(
+                            candidateValue(keyHandle, candidateIndex, groupIndex)));
+                } catch (RuntimeException error) {
+                    throw new IllegalArgumentException(
+                            "Invalid key for online batch group " + groupIndex + " ("
+                                    + context.onlineGroupExecutionId(groupIndex)
+                                    + "), candidate "
+                                    + context.candidateIndexInGroup(candidateIndex)
+                                    + ": " + error.getMessage(),
+                            error);
+                }
+            }
+            Set<Object> uniqueKeys = new LinkedHashSet<>(normalizedKeys);
+            totalUniqueKeys += uniqueKeys.size();
+
+            SequenceIndexCacheKey indexCacheKey =
+                    new SequenceIndexCacheKey(groupIndex, keyDomain, sequence);
+            IndexValue index;
+            Object cachedIndex = context.cacheRegistry().get(indexCacheKey);
+            if (cachedIndex instanceof IndexValue cached) {
+                index = cached;
+                state.markCacheHit("REQUEST_INDEX");
+            } else {
+                index = provider.build(sequence);
+                context.cacheRegistry().put(indexCacheKey, index);
+            }
+
+            Map<Object, Integer> countsByKey = new LinkedHashMap<>();
+            for (Object key : uniqueKeys) {
+                SequenceKeyCountCacheKey countCacheKey = new SequenceKeyCountCacheKey(
+                        groupIndex, keyDomain, sequence, key);
+                if (context.cacheRegistry().containsKey(countCacheKey)) {
+                    countsByKey.put(key, (Integer) context.cacheRegistry().get(countCacheKey));
+                    state.markCacheHit("CANDIDATE_KEY");
+                } else {
+                    int count = index.count(key);
+                    context.cacheRegistry().put(countCacheKey, count);
+                    countsByKey.put(key, count);
+                }
+            }
+            for (Object key : normalizedKeys) result.add(countsByKey.get(key));
+        }
+        state.setDedupCounts(context.candidateCount(), totalUniqueKeys);
+        return new CandidateBatchValue(result, node.logicalValueShape());
+    }
+
+    private static Object requestValue(ValueHandle handle, int groupIndex) {
+        if (handle instanceof RequestBatchValue batch) return batch.valueAt(groupIndex);
+        if (handle instanceof CandidateBatchValue || handle instanceof CandidateVectorValue
+                || handle instanceof OfflineBatchValue) {
+            throw new IllegalArgumentException(
+                    "Sequence input must be request-scoped in online batch execution");
+        }
+        return handle.raw();
+    }
+
+    private static Object candidateValue(
+            ValueHandle handle,
+            int candidateIndex,
+            int groupIndex) {
+        if (handle instanceof CandidateBatchValue batch) return batch.valueAt(candidateIndex);
+        if (handle instanceof RequestBatchValue batch) return batch.valueAt(groupIndex);
+        if (handle instanceof CandidateVectorValue || handle instanceof OfflineBatchValue) {
+            throw new IllegalArgumentException(
+                    "Candidate input has incompatible runtime value handle");
+        }
+        return handle.raw();
     }
 
     private static ValueHandle requireSlot(ExecutionContext context, String slot) {

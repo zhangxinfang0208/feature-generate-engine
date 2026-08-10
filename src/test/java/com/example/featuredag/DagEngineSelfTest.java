@@ -9,7 +9,10 @@ import com.example.featuredag.api.InitOptions;
 import com.example.featuredag.api.OfflineBatchGenerateRequest;
 import com.example.featuredag.api.OfflineBatchGenerateResult;
 import com.example.featuredag.api.OfflineGenerateRequest;
+import com.example.featuredag.api.OnlineBatchGenerateRequest;
+import com.example.featuredag.api.OnlineBatchGenerateResult;
 import com.example.featuredag.api.OnlineGenerateRequest;
+import com.example.featuredag.api.OnlineRequestGroup;
 import com.example.featuredag.config.FeatureConfigLoader;
 import com.example.featuredag.config.FeatureConfigMapper;
 import com.example.featuredag.config.FeatureSetConfig;
@@ -52,6 +55,7 @@ import com.example.featuredag.physical.PhysicalPlanPrinter;
 import com.example.featuredag.physical.PhysicalPlanner;
 import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
 import com.example.featuredag.planning.LogicalDagOptimizer;
+import com.example.featuredag.runtime.CandidateBatchValue;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.BitmapSelection;
 import com.example.featuredag.runtime.DagRuntime;
@@ -111,6 +115,7 @@ public final class DagEngineSelfTest {
         testConfigPathInit();
         testOfflineSequenceMaterialization();
         testOnlinePublicApi();
+        testOnlineBatchPublicApi();
         testOnlineBaseMetadataDefaults();
         testOnlineSharedArrayOutput();
         testOnlineEngineConcurrentReuse();
@@ -127,6 +132,7 @@ public final class DagEngineSelfTest {
         testCandidateCardinalityAndDefaults();
         testEmptySequenceAndOfflineOutputSet();
         testCandidateDeduplicationAndFusion();
+        testOnlineBatchSpecializedGrouping();
         testDirectNestedCountIndustryFusion();
         testObservableExtractIndustryPreventsFusion();
         testFusedIndustryCountsRespectSequenceViews();
@@ -1482,6 +1488,120 @@ public final class DagEngineSelfTest {
                 : result.candidateFeatureValues().getFirst();
     }
 
+    private static void testOnlineBatchPublicApi() {
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                onlineConfigJson(),
+                InitOptions.online("online-batch-public-api"));
+        List<OnlineRequestGroup> groups = List.of(
+                new OnlineRequestGroup(
+                        "user-a",
+                        Map.of(
+                                "user_click_count", List.of(10),
+                                "user_seq1", publicIndustrySequence()),
+                        List.of(
+                                Map.of("item_industry", List.of("industry1"),
+                                        "item_price", List.of(100.0)),
+                                Map.of("item_industry", List.of("industry2"),
+                                        "item_price", List.of(50.0)),
+                                Map.of("item_industry", List.of("industry1"),
+                                        "item_price", List.of(80.0)))),
+                new OnlineRequestGroup(
+                        "user-b",
+                        Map.of(
+                                "user_click_count", List.of(20),
+                                "user_seq1", List.of("industry2", "industry2", "industry3")),
+                        List.of(
+                                Map.of("item_industry", List.of("industry2"),
+                                        "item_price", List.of(25.0)),
+                                Map.of("item_industry", List.of("industry1"),
+                                        "item_price", List.of(5.0)))),
+                new OnlineRequestGroup(
+                        "user-empty",
+                        Map.of("user_seq1", List.of()),
+                        List.of()));
+
+        OnlineBatchGenerateResult batch = engine.generateBatch(
+                new OnlineBatchGenerateRequest("online-batch-1", groups));
+        assert batch.executionId().equals("online-batch-1") : batch.executionId();
+        assert batch.groupResults().size() == groups.size() : batch.groupResults();
+        assert batch.groupResults().get(0).candidateFeatureValues().stream()
+                .map(values -> scalarFeature(values, "same_industry_count"))
+                .toList().equals(List.of(3, 1, 3)) : batch.groupResults();
+        assert batch.groupResults().get(1).candidateFeatureValues().stream()
+                .map(values -> scalarFeature(values, "same_industry_count"))
+                .toList().equals(List.of(2, 0)) : batch.groupResults();
+        assert batch.groupResults().get(2).candidateFeatureValues().isEmpty()
+                : batch.groupResults();
+        for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            OnlineRequestGroup group = groups.get(groupIndex);
+            GenerateResult single = engine.generate(new OnlineGenerateRequest(
+                    group.executionId(), group.sharedValues(), group.candidates()));
+            GenerateResult grouped = batch.groupResults().get(groupIndex);
+            assert grouped.executionId().equals(group.executionId()) : grouped.executionId();
+            assert grouped.featureValues().equals(single.featureValues())
+                    : "grouped=" + grouped.featureValues() + ", single=" + single.featureValues();
+            assert grouped.candidateFeatureValues().equals(single.candidateFeatureValues())
+                    : "grouped=" + grouped.candidateFeatureValues()
+                            + ", single=" + single.candidateFeatureValues();
+        }
+
+        String sharedJson = """
+                {
+                  "feature_set_name":"online-batch-shared",
+                  "version":"1",
+                  "features":[
+                    {"name":"scene_value","raw_name":"scene_value","type":"DOUBLE",
+                     "definition_type":"BASE","entity_scopes":["SCENE"],"value_shape":"SCALAR"},
+                    {"name":"scene_score","store_name":"scene_score","type":"DOUBLE",
+                     "definition_type":"DERIVED","expression":"multiply(scene_value, 2.0)",
+                     "output_policy":"OUTPUT","entity_scopes":["SCENE"],"value_shape":"SCALAR"}
+                  ]
+                }
+                """;
+        FeatureDagEngine sharedEngine = FeatureDagEngine.init(
+                sharedJson, InitOptions.online("online-batch-shared"));
+        OnlineBatchGenerateResult sharedBatch = sharedEngine.generateBatch(
+                new OnlineBatchGenerateRequest(
+                        "shared-batch",
+                        List.of(
+                                new OnlineRequestGroup(
+                                        "scene-a", Map.of("scene_value", List.of(2.0)),
+                                        List.of(Map.of(), Map.of())),
+                                new OnlineRequestGroup(
+                                        "scene-b", Map.of("scene_value", List.of(3.0)),
+                                        List.of()))));
+        assert sharedBatch.groupResults().get(0).featureValues()
+                .equals(Map.of("scene_score", List.of(4.0))) : sharedBatch.groupResults();
+        assert sharedBatch.groupResults().get(1).featureValues()
+                .equals(Map.of("scene_score", List.of(6.0))) : sharedBatch.groupResults();
+
+        OnlineBatchGenerateResult empty = engine.generateBatch(
+                new OnlineBatchGenerateRequest("empty-online-batch", List.of()));
+        assert empty.groupResults().isEmpty() : empty.groupResults();
+
+        String requiredPriceConfig = onlineConfigJson().replace(
+                "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",\"dft\":0.0,",
+                "\"name\":\"item_price\",\"raw_name\":\"item_price\",\"type\":\"DOUBLE\",");
+        FeatureDagEngine requiredPrice = FeatureDagEngine.init(
+                requiredPriceConfig, InitOptions.online("online-batch-required-price"));
+        FeatureGenerationException missing = expectThrows(
+                FeatureGenerationException.class,
+                () -> requiredPrice.generateBatch(new OnlineBatchGenerateRequest(
+                        "missing-online-batch",
+                        List.of(
+                                groups.getFirst(),
+                                new OnlineRequestGroup(
+                                        "user-missing-price",
+                                        Map.of(
+                                                "user_click_count", List.of(1),
+                                                "user_seq1", List.of("industry1")),
+                                        List.of(Map.of(
+                                                "item_industry", List.of("industry1"))))))));
+        assert missing.getMessage().contains("item_price") : missing.getMessage();
+        assert missing.getMessage().contains("online batch group 1") : missing.getMessage();
+        assert missing.getMessage().contains("candidate 0") : missing.getMessage();
+    }
+
     private static void testOnlineBaseMetadataDefaults() {
         String sharedJson = onlineConfigWithoutBaseMetadata("USER");
         FeatureDagEngine sharedEngine = FeatureDagEngine.init(
@@ -2413,6 +2533,68 @@ public final class DagEngineSelfTest {
         assert view.baseBlock().sequenceId().equals("seq-test") : view.baseBlock().sequenceId();
     }
 
+    private static void testOnlineBatchSpecializedGrouping() {
+        OperatorRegistry operators = OperatorRegistry.standard();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), operators).build(
+                ExampleFeatures.definitions(), Set.of("same_industry_count"));
+        PhysicalPlan plan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(dag),
+                ExecutionEnvironment.ONLINE,
+                "online-batch-specialized");
+        PhysicalNode specialized = plan.nodes().stream()
+                .filter(node -> node.executorType() == ExecutorType.SPECIALIZED)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(PhysicalPlanPrinter.print(plan)));
+
+        SequenceBlock secondSequence = new SequenceBlock(
+                "online-batch-sequence-2",
+                1L,
+                List.of(
+                        new SequenceEvent("b-1", "industry2", 3L, "click", 1.0),
+                        new SequenceEvent("b-2", "industry2", 2L, "click", 1.0),
+                        new SequenceEvent("b-3", "industry3", 1L, "click", 1.0)));
+        ExecutionContext context = ExecutionContext.onlineBatch(
+                "specialized-batch",
+                List.of("specialized-user-a", "specialized-user-b"),
+                List.of(
+                        Map.of("user_seq1", sequence()),
+                        Map.of("user_seq1", secondSequence)),
+                List.of(
+                        List.of(
+                                Map.of("item_industry", "industry1"),
+                                Map.of("item_industry", "industry1")),
+                        List.of(
+                                Map.of("item_industry", "industry1"),
+                                Map.of("item_industry", "industry2"))));
+        ExecutionResult execution = new DagRuntime(operators).execute(plan, context);
+        CandidateBatchValue counts =
+                (CandidateBatchValue) execution.feature("same_industry_count");
+
+        assert counts.values().equals(List.of(3, 3, 0, 2)) : counts.values();
+        assert context.candidateGroupStart(0) == 0 : context.candidateGroupStart(0);
+        assert context.candidateGroupEnd(0) == 2 : context.candidateGroupEnd(0);
+        assert context.candidateGroupStart(1) == 2 : context.candidateGroupStart(1);
+        assert context.candidateGroupEnd(1) == 4 : context.candidateGroupEnd(1);
+        assert execution.nodeStates().values().stream().anyMatch(state ->
+                state.dedupInputCount() == 4 && state.uniqueInputCount() == 3)
+                : "Expected per-group key dedup counts 4 -> 3";
+
+        SequenceBlock sharedSequence = sequence();
+        ExecutionResult isolated = new DagRuntime(operators).execute(
+                plan,
+                ExecutionContext.onlineBatch(
+                        "specialized-cache-isolation",
+                        List.of("isolation-user-a", "isolation-user-b"),
+                        List.of(
+                                Map.of("user_seq1", sharedSequence),
+                                Map.of("user_seq1", sharedSequence)),
+                        List.of(
+                                List.of(Map.of("item_industry", "industry1")),
+                                List.of(Map.of("item_industry", "industry1")))));
+        assert !isolated.nodeStates().get(specialized.physicalNodeId()).cacheHit()
+                : "Sequence index/count cache must not cross online batch groups";
+    }
+
     private static void testDirectNestedCountIndustryFusion() {
         OperatorRegistry operators = OperatorRegistry.standard();
         LogicalDagBuilder builder = new LogicalDagBuilder(new ExpressionParser(), operators);
@@ -2688,6 +2870,28 @@ public final class DagEngineSelfTest {
         assert uncachedCalls.get() == 4 : uncachedCalls.get();
         assert result.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert result.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 3;
+
+        cachedCalls.set(0);
+        uncachedCalls.set(0);
+        ExecutionResult grouped = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.onlineBatch(
+                        "generic-candidate-cache-batch",
+                        List.of("cache-user-a", "cache-user-b"),
+                        List.of(Map.of(), Map.of()),
+                        List.of(
+                                List.of(
+                                        Map.of("candidate_key", "A"),
+                                        Map.of("candidate_key", "A")),
+                                List.of(
+                                        Map.of("candidate_key", "A"),
+                                        Map.of("candidate_key", "A")))));
+        assert grouped.feature("cached_value") instanceof CandidateBatchValue
+                : grouped.feature("cached_value").getClass();
+        assert cachedCalls.get() == 2 : "Cache must be isolated by group: " + cachedCalls.get();
+        assert uncachedCalls.get() == 4 : uncachedCalls.get();
+        assert grouped.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
+        assert grouped.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 2;
     }
 
     private static OperatorDefinition echoOperator(

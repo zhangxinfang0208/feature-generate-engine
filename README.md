@@ -208,6 +208,17 @@ Map<String, List<?>> features = engine.generate(
         new OfflineGenerateRequest("row-1", rowValues)).featureValues();
 ```
 
+离线吞吐场景应一次提交多行；引擎只遍历一次物理计划，结果行与输入行按下标一一对应：
+
+```java
+List<Map<String, List<?>>> rows = List.of(
+        Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8)),
+        Map.of("raw_price", List.of(500.0), "quality_score", List.of(0.5)));
+OfflineBatchGenerateResult result = engine.generateBatch(
+        new OfflineBatchGenerateRequest("partition-1-batch-1", rows));
+List<Map<String, List<?>>> outputRows = result.rows();
+```
+
 在线 Java 在进程启动时初始化一次，之后并发复用同一个 engine：
 
 ```java
@@ -226,9 +237,11 @@ candidate `i`。合并时的名称冲突和 `ExecutionSession` 写入属于外�
 `FeatureDagGenerateTask`，不在本仓库处理。v1 采用 fail-fast：失败时不会返回部分输出或 Runtime
 fallback。
 
-Spark/Scala 不需要引擎依赖 Spark API，在每个 partition 初始化一次：
+Spark/Scala 不需要引擎依赖 Spark API，在每个 partition 初始化一次并分批执行：
 
 ```scala
+import scala.jdk.CollectionConverters.*
+
 val configBroadcast = spark.sparkContext.broadcast(configJson)
 
 dataset.mapPartitions { rows =>
@@ -236,10 +249,11 @@ dataset.mapPartitions { rows =>
     configBroadcast.value,
     InitOptions.offline("offline-plan-v1")
   )
-  rows.map { row =>
-    engine.generate(
-      new OfflineGenerateRequest(row.getAs[String]("id"), rowValues(row))
-    ).featureValues()
+  rows.grouped(1024).flatMap { batch =>
+    val rawBatch = batch.map(rowValues).asJava
+    engine.generateBatch(
+      new OfflineBatchGenerateRequest("partition-batch", rawBatch)
+    ).rows().asScala
   }
 }
 ```
@@ -297,5 +311,5 @@ FEATURES: {auid_omnichannel_paid_cnt_3d=[1]}
 ## 设计边界
 
 - 该实现不直接依赖 Spark Dataset API，也不包含 RPC 服务、模型热更新或分布式缓存。
-- 离线跨行复用在数据已按用户聚簇时可扩展为 `USER_GROUP` 执行；当前 Demo 以单行执行展示语义。
+- 离线批执行在一次运行时遍历中传播整批值；跨行的用户级状态复用仍可在数据按用户聚簇时扩展为 `USER_GROUP` 执行。
 - `SequenceView` 解决执行期中间数组复制；最终必须落盘的序列特征仍需在输出边界物化或使用专用引用格式。

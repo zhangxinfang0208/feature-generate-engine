@@ -18,6 +18,7 @@ import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExecutionResult;
+import com.example.featuredag.runtime.OfflineBatchValue;
 import com.example.featuredag.runtime.PhysicalExecutorRegistry;
 import com.example.featuredag.runtime.SequenceIndexRegistry;
 import com.example.featuredag.runtime.ValueHandle;
@@ -107,6 +108,26 @@ public final class FeatureDagEngine {
         }
     }
 
+    /**
+     * 离线批推理：一次解码整批 RAW 行并只遍历一次物理计划，结果顺序与输入行一致。
+     */
+    public OfflineBatchGenerateResult generateBatch(OfflineBatchGenerateRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (environment != ExecutionEnvironment.OFFLINE) {
+            throw new FeatureGenerationException(
+                    "ONLINE engine does not support OfflineBatchGenerateRequest",
+                    planId, request.executionId(), null, null);
+        }
+        try {
+            return generateOfflineBatch(request);
+        } catch (FeatureGenerationException error) {
+            throw error;
+        } catch (RuntimeException error) {
+            throw new FeatureGenerationException(
+                    error.getMessage(), planId, request.executionId(), null, error);
+        }
+    }
+
     public String featureSetName() { return featureSetName; }
     public String version() { return version; }
     public String planId() { return planId; }
@@ -133,6 +154,44 @@ public final class FeatureDagEngine {
             }
         }
         return new GenerateResult(request.executionId(), result, List.of());
+    }
+
+    private OfflineBatchGenerateResult generateOfflineBatch(OfflineBatchGenerateRequest request) {
+        ExecutionResult execution = runtime.execute(
+                plan,
+                ExecutionContext.offlineBatch(
+                        request.executionId(), inputDecoder.decodeOfflineBatch(request.rows())));
+        List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
+        for (int index = 0; index < request.rows().size(); index++) {
+            rows.add(new LinkedHashMap<>());
+        }
+        for (FeatureOutputDescriptor output : outputs) {
+            try {
+                ValueHandle value = execution.feature(output.featureName());
+                if (value instanceof OfflineBatchValue batch) {
+                    if (batch.size() != rows.size()) {
+                        throw new IllegalStateException(
+                                "Offline batch output size " + batch.size()
+                                        + " does not match input size " + rows.size());
+                    }
+                    for (int index = 0; index < batch.size(); index++) {
+                        rows.get(index).put(
+                                output.storeName(),
+                                outputEncoder.encodeBatchElement(
+                                        output.featureName(), batch.valueAt(index)));
+                    }
+                } else {
+                    List<?> encoded = outputEncoder.encode(output.featureName(), value);
+                    for (Map<String, List<?>> row : rows) {
+                        row.put(output.storeName(), encoded);
+                    }
+                }
+            } catch (RuntimeException error) {
+                throw new FeatureGenerationException(
+                        error.getMessage(), planId, request.executionId(), output.featureName(), error);
+            }
+        }
+        return new OfflineBatchGenerateResult(request.executionId(), rows);
     }
 
     /**

@@ -100,6 +100,24 @@ public final class DagRuntime {
         List<String> scopes = (List<String>) node.executorConfig().getOrDefault("entityScopes", List.of());
         boolean itemScoped = scopes.contains("ITEM");
 
+        if (context.isOfflineBatch()) {
+            // C10：OFFLINE_BATCH 已由物理计划确定；运行时只按批内行号绑定 RAW 值。
+            List<Object> values = new ArrayList<>(context.offlineBatchSize());
+            for (int index = 0; index < context.offlineRows().size(); index++) {
+                Map<String, Object> row = context.offlineRows().get(index);
+                if (row.containsKey(featureName)) {
+                    values.add(row.get(featureName));
+                } else if (defaultValue != null) {
+                    values.add(defaultValue);
+                } else {
+                    throw new IllegalArgumentException(
+                            "Missing source feature " + featureName
+                                    + " for offline batch row " + index);
+                }
+            }
+            return new OfflineBatchValue(values, node.logicalValueShape());
+        }
+
         if (context.environment() == com.example.featuredag.physical.ExecutionEnvironment.ONLINE && itemScoped) {
             List<Object> values = new ArrayList<>(context.candidateCount());
             for (int index = 0; index < context.candidates().size(); index++) {
@@ -151,19 +169,33 @@ public final class DagRuntime {
             ExecutionContext context,
             RuntimeNodeState state,
             ValueShape logicalValueShape) {
-        boolean vector = inputHandles.stream().anyMatch(handle -> handle instanceof CandidateVectorValue);
-        if (!vector) {
+        boolean candidateVector = inputHandles.stream()
+                .anyMatch(handle -> handle instanceof CandidateVectorValue);
+        boolean offlineBatch = inputHandles.stream()
+                .anyMatch(handle -> handle instanceof OfflineBatchValue);
+        if (candidateVector && offlineBatch) {
+            throw new IllegalStateException(
+                    "Cannot mix candidate vectors and offline batch values");
+        }
+        if (!candidateVector && !offlineBatch) {
             List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
             return wrap(operatorRegistry.evaluate(operatorName, args), logicalValueShape, context.executionId());
         }
-        int size = context.candidateCount();
+        // C10：批维度来自执行上下文，标量/字面量在批内广播，不在运行时改变执行阶段。
+        int size = offlineBatch ? context.offlineBatchSize() : context.candidateCount();
         if (size <= 0) {
-            size = inputHandles.stream()
-                    .filter(CandidateVectorValue.class::isInstance)
-                    .map(CandidateVectorValue.class::cast)
-                    .mapToInt(CandidateVectorValue::size)
-                    .max()
-                    .orElseThrow();
+            size = inputHandles.stream().mapToInt(handle -> {
+                if (handle instanceof CandidateVectorValue vector) return vector.size();
+                if (handle instanceof OfflineBatchValue batch) return batch.size();
+                return 0;
+            }).max().orElse(0);
+        }
+        for (ValueHandle handle : inputHandles) {
+            if (handle instanceof CandidateVectorValue vector) {
+                requireVectorSize(vector.size(), size, operatorName);
+            } else if (handle instanceof OfflineBatchValue batch) {
+                requireVectorSize(batch.size(), size, operatorName);
+            }
         }
         List<Object> result = new ArrayList<>(size);
         boolean memoize = node.cachePolicy() == CachePolicy.CANDIDATE_KEY;
@@ -181,28 +213,48 @@ public final class DagRuntime {
             for (ValueHandle handle : inputHandles) {
                 if (handle instanceof CandidateVectorValue vectorValue) {
                     args.add(vectorValue.valueAt(index));
+                } else if (handle instanceof OfflineBatchValue batchValue) {
+                    args.add(batchValue.valueAt(index));
                 } else {
                     args.add(handle.raw());
                 }
             }
-            if (!memoize) {
-                result.add(operatorRegistry.evaluate(operatorName, args));
-                continue;
-            }
-            OperatorInvocationCacheKey cacheKey =
-                    new OperatorInvocationCacheKey(node.physicalNodeId(), args);
-            uniqueInvocations.add(cacheKey);
-            if (context.cacheRegistry().containsKey(cacheKey)) {
-                result.add(context.cacheRegistry().get(cacheKey));
-                state.markCacheHit("CANDIDATE_KEY");
-            } else {
-                Object value = operatorRegistry.evaluate(operatorName, args);
-                context.cacheRegistry().put(cacheKey, value);
-                result.add(value);
+            try {
+                if (!memoize) {
+                    result.add(operatorRegistry.evaluate(operatorName, args));
+                    continue;
+                }
+                OperatorInvocationCacheKey cacheKey =
+                        new OperatorInvocationCacheKey(node.physicalNodeId(), args);
+                uniqueInvocations.add(cacheKey);
+                if (context.cacheRegistry().containsKey(cacheKey)) {
+                    result.add(context.cacheRegistry().get(cacheKey));
+                    state.markCacheHit("CANDIDATE_KEY");
+                } else {
+                    Object value = operatorRegistry.evaluate(operatorName, args);
+                    context.cacheRegistry().put(cacheKey, value);
+                    result.add(value);
+                }
+            } catch (RuntimeException error) {
+                String element = offlineBatch ? "offline batch row " : "candidate ";
+                throw new IllegalArgumentException(
+                        "Operator " + operatorName + " failed for " + element + index
+                                + ": " + error.getMessage(),
+                        error);
             }
         }
         if (memoize) state.setDedupCounts(size, uniqueInvocations.size());
-        return new CandidateVectorValue(result);
+        return offlineBatch
+                ? new OfflineBatchValue(result, logicalValueShape)
+                : new CandidateVectorValue(result);
+    }
+
+    private static void requireVectorSize(int actual, int expected, String operatorName) {
+        if (actual != expected) {
+            throw new IllegalStateException(
+                    "Operator " + operatorName + " received vector size " + actual
+                            + ", expected " + expected);
+        }
     }
 
     private static ValueHandle requireSingleInput(PhysicalNode node, ExecutionContext context) {

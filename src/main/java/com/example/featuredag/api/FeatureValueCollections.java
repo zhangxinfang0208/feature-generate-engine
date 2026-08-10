@@ -31,8 +31,19 @@ final class FeatureValueCollections {
 
     static List<Map<String, List<?>>> immutableCandidates(
             List<? extends Map<String, ? extends List<?>>> candidates) {
-        Objects.requireNonNull(candidates, "candidates");
-        return candidates.stream()
+        return immutableFeatureRows(candidates, "candidates");
+    }
+
+    static List<Map<String, List<?>>> immutableFeatureRows(
+            List<? extends Map<String, ? extends List<?>>> rows) {
+        return immutableFeatureRows(rows, "rows");
+    }
+
+    private static List<Map<String, List<?>>> immutableFeatureRows(
+            List<? extends Map<String, ? extends List<?>>> rows,
+            String field) {
+        Objects.requireNonNull(rows, field);
+        return rows.stream()
                 .map(FeatureValueCollections::immutableFeatureMap)
                 .toList();
     }

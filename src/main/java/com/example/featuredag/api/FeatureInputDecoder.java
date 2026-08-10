@@ -39,6 +39,11 @@ final class FeatureInputDecoder {
         return decode(external, sources);
     }
 
+    List<Map<String, Object>> decodeOfflineBatch(
+            List<Map<String, List<?>>> externalRows) {
+        return externalRows.stream().map(row -> decode(row, sources)).toList();
+    }
+
     Map<String, Object> decodeOnlineShared(Map<String, List<?>> external) {
         return decode(external, sources.stream().filter(source -> !source.itemScoped()).toList());
     }

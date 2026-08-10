@@ -1,19 +1,20 @@
 package com.example.featuredag.planning;
 
-import com.example.featuredag.logical.FeatureOutputNode;
+import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.NodeInput;
 import com.example.featuredag.logical.OperatorNode;
+import com.example.featuredag.operator.OperatorDefinition;
+import com.example.featuredag.operator.OperatorRegistry;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -21,10 +22,19 @@ import java.util.Set;
  * small and semantic; planner-only facts have their own lifecycle.
  *
  * 规划层（L1→L2 之间）：只读分析逻辑 DAG（C8），
- * 引用计数、可达根与融合/索引候选等优化事实全部外置在 NodePlanningMetadata，
+ * 引用计数、可达根、依赖维度、缓存资格与成本等事实全部外置在 NodePlanningMetadata，
  * 绝不回写逻辑节点，保证逻辑模型保持小且语义化。
  */
 public final class LogicalDagOptimizer {
+    private final OperatorRegistry operatorRegistry;
+
+    public LogicalDagOptimizer() {
+        this(OperatorRegistry.standard());
+    }
+
+    public LogicalDagOptimizer(OperatorRegistry operatorRegistry) {
+        this.operatorRegistry = Objects.requireNonNull(operatorRegistry, "operatorRegistry");
+    }
 
     public OptimizedLogicalPlan analyze(LogicalDag dag) {
         Map<String, Integer> referenceCounts = computeReferenceCounts(dag);
@@ -33,10 +43,8 @@ public final class LogicalDagOptimizer {
 
         for (String nodeId : dag.topologicalOrder()) {
             LogicalNode node = dag.node(nodeId);
-            String fusionCandidate = null;
-            String indexCandidate = null;
-            List<String> reuseKeyInputs = List.of();
             long estimatedCost = 1L;
+            boolean cacheEligible = true;
             long estimatedSize = switch (node.valueShape()) {
                 case SEQUENCE -> 4_096L;
                 case INDEX -> 2_048L;
@@ -44,24 +52,20 @@ public final class LogicalDagOptimizer {
             };
 
             if (node instanceof OperatorNode operator) {
-                // C8：候选识别——extractIndustry 节点可走行业索引；count 节点匹配 extractIndustry 时可融合
-                if ("extractIndustry".equals(operator.operatorName())) {
-                    indexCandidate = "INDUSTRY_INDEX";
-                    reuseKeyInputs = List.of("sequenceHandle", "item_industry");
-                    estimatedCost = 1_000L;
-                } else if ("count".equals(operator.operatorName()) && matchesCountExtractIndustry(dag, operator)) {
-                    fusionCandidate = "COUNT_EXTRACT_INDUSTRY";
-                    reuseKeyInputs = List.of("sequenceHandle", "item_industry");
-                    estimatedCost = 1_000L;
+                OperatorDefinition definition = operatorRegistry.find(operator.operatorName()).orElse(null);
+                if (definition == null) {
+                    cacheEligible = false;
+                } else {
+                    estimatedCost = definition.estimatedCost();
+                    cacheEligible = definition.deterministic() && definition.sideEffectFree();
                 }
             }
 
             result.put(nodeId, new NodePlanningMetadata(
                     referenceCounts.getOrDefault(nodeId, 0),
                     reachableRoots.getOrDefault(nodeId, Set.of()),
-                    reuseKeyInputs,
-                    fusionCandidate,
-                    indexCandidate,
+                    dependencyDimensions(node),
+                    cacheEligible,
                     estimatedCost,
                     estimatedSize));
         }
@@ -69,34 +73,17 @@ public final class LogicalDagOptimizer {
         return new OptimizedLogicalPlan(dag, new PlannerMetadata(result));
     }
 
-    public boolean matchesCountExtractIndustry(LogicalDag dag, OperatorNode countNode) {
-        return matchCountExtractIndustry(dag, countNode).isPresent();
-    }
-
-    public Optional<CountExtractIndustryMatch> matchCountExtractIndustry(
-            LogicalDag dag, OperatorNode countNode) {
-        if (!"count".equals(countNode.operatorName()) || countNode.inputs().size() != 1) {
-            return Optional.empty();
+    private static Set<DependencyDimension> dependencyDimensions(LogicalNode node) {
+        Set<DependencyDimension> dimensions = new LinkedHashSet<>();
+        for (EntityScope scope : node.entityScopes()) {
+            dimensions.add(switch (scope) {
+                case USER -> DependencyDimension.USER;
+                case SCENE -> DependencyDimension.SCENE;
+                case ITEM -> DependencyDimension.ITEM;
+            });
         }
-        LogicalNode input = dag.node(countNode.inputs().get(0).nodeId());
-        OperatorNode extract;
-        List<String> intermediateNodeIds;
-        if (input instanceof OperatorNode directOperator) {
-            extract = directOperator;
-            intermediateNodeIds = List.of();
-        } else if (input instanceof FeatureOutputNode featureOutput) {
-            LogicalNode producer = dag.node(featureOutput.producerNodeId());
-            if (!(producer instanceof OperatorNode producerOperator)) return Optional.empty();
-            extract = producerOperator;
-            intermediateNodeIds = List.of(featureOutput.nodeId());
-        } else {
-            return Optional.empty();
-        }
-        if (!"extractIndustry".equals(extract.operatorName()) || extract.inputs().size() != 2) {
-            return Optional.empty();
-        }
-        return Optional.of(new CountExtractIndustryMatch(
-                countNode.nodeId(), extract.nodeId(), intermediateNodeIds));
+        if (dimensions.isEmpty()) dimensions.add(DependencyDimension.CONSTANT);
+        return dimensions;
     }
 
     /**

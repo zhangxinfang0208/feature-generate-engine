@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -46,6 +47,10 @@ public final class OperatorRegistry {
         return definition;
     }
 
+    public Optional<OperatorDefinition> find(String name) {
+        return Optional.ofNullable(definitions.get(name));
+    }
+
     public OperatorInference infer(String name, List<LogicalNode> inputs) {
         OperatorDefinition definition = require(name);
         validateArity(definition, inputs.size());
@@ -56,6 +61,16 @@ public final class OperatorRegistry {
         OperatorDefinition definition = require(name);
         validateArity(definition, arguments.size());
         return definition.evaluate(arguments);
+    }
+
+    public <T extends OperatorSemantic> Optional<T> semantic(String operatorName, Class<T> semanticType) {
+        Objects.requireNonNull(semanticType, "semanticType");
+        OperatorDefinition definition = definitions.get(operatorName);
+        if (definition == null) return Optional.empty();
+        return definition.semantics().stream()
+                .filter(semanticType::isInstance)
+                .map(semanticType::cast)
+                .findFirst();
     }
 
     public static OperatorRegistry standard() {
@@ -81,6 +96,8 @@ public final class OperatorRegistry {
                 }));
 
         registry.register(simple("extractIndustry", 2, 2, true, false, true,
+                1_000L,
+                List.of(new KeyedSequenceFilterSemantic(0, 1, SequenceKeyDomains.INDUSTRY)),
                 inputs -> new OperatorInference(DataType.EVENT_SEQUENCE, unionScopes(inputs), ValueShape.SEQUENCE),
                 args -> {
                     SequenceValue sequence = asSequence(args.get(0));
@@ -89,6 +106,8 @@ public final class OperatorRegistry {
                 }));
 
         registry.register(simple("count", 1, 1, true, false, true,
+                10L,
+                List.of(new SequenceCardinalitySemantic(0)),
                 inputs -> {
                     LogicalNode input = inputs.getFirst();
                     if (input.valueShape() != ValueShape.SEQUENCE) {
@@ -421,6 +440,22 @@ public final class OperatorRegistry {
             boolean supportsView,
             java.util.function.Function<List<LogicalNode>, OperatorInference> inference,
             java.util.function.Function<List<Object>, Object> evaluator) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                1L, List.of(), inference, evaluator);
+    }
+
+    private static OperatorDefinition simple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            long estimatedCost,
+            List<OperatorSemantic> semantics,
+            java.util.function.Function<List<LogicalNode>, OperatorInference> inference,
+            java.util.function.Function<List<Object>, Object> evaluator) {
         return new OperatorDefinition() {
             @Override public String name() { return name; }
             @Override public int minArguments() { return minArgs; }
@@ -428,6 +463,8 @@ public final class OperatorRegistry {
             @Override public boolean deterministic() { return deterministic; }
             @Override public boolean parameterized() { return parameterized; }
             @Override public boolean supportsSequenceView() { return supportsView; }
+            @Override public long estimatedCost() { return estimatedCost; }
+            @Override public List<OperatorSemantic> semantics() { return List.copyOf(semantics); }
             @Override public OperatorInference infer(List<LogicalNode> inputs) { return inference.apply(inputs); }
             @Override public Object evaluate(List<Object> arguments) { return evaluator.apply(arguments); }
         };

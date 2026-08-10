@@ -1,0 +1,115 @@
+package com.example.featuredag.physical.rewrite;
+
+import com.example.featuredag.definition.EntityScope;
+import com.example.featuredag.logical.FeatureOutputNode;
+import com.example.featuredag.logical.LogicalDag;
+import com.example.featuredag.logical.LogicalNode;
+import com.example.featuredag.logical.NodeInput;
+import com.example.featuredag.logical.OperatorNode;
+import com.example.featuredag.operator.KeyedSequenceFilterSemantic;
+import com.example.featuredag.operator.OperatorRegistry;
+import com.example.featuredag.operator.SequenceCardinalitySemantic;
+import com.example.featuredag.physical.CachePolicy;
+import com.example.featuredag.physical.ExecutionEnvironment;
+import com.example.featuredag.physical.ExecutionMode;
+import com.example.featuredag.physical.ExecutionStage;
+import com.example.featuredag.physical.MaterializationPolicy;
+import com.example.featuredag.physical.PhysicalExecutorIds;
+import com.example.featuredag.planning.OptimizedLogicalPlan;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/** 把“序列基数聚合(按 key 过滤序列)”改写为通用按 key 索引计数执行器。 */
+public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteRule {
+    public static final String RULE_ID = "count-after-keyed-sequence-filter";
+
+    @Override public String ruleId() { return RULE_ID; }
+    @Override public int priority() { return 100; }
+
+    @Override
+    public Optional<PhysicalRewrite> match(
+            OptimizedLogicalPlan optimized,
+            String rootNodeId,
+            ExecutionEnvironment environment,
+            OperatorRegistry operatorRegistry) {
+        if (environment != ExecutionEnvironment.ONLINE) return Optional.empty();
+
+        LogicalDag dag = optimized.dag();
+        LogicalNode root = dag.node(rootNodeId);
+        if (!(root instanceof OperatorNode aggregate)) return Optional.empty();
+
+        SequenceCardinalitySemantic cardinality = operatorRegistry
+                .semantic(aggregate.operatorName(), SequenceCardinalitySemantic.class)
+                .orElse(null);
+        if (cardinality == null || cardinality.sequenceInputIndex() >= aggregate.inputs().size()) {
+            return Optional.empty();
+        }
+
+        LogicalNode aggregateInput = dag.node(
+                aggregate.inputs().get(cardinality.sequenceInputIndex()).nodeId());
+        OperatorNode filter;
+        List<String> intermediateNodeIds = new ArrayList<>();
+        if (aggregateInput instanceof OperatorNode directFilter) {
+            filter = directFilter;
+        } else if (aggregateInput instanceof FeatureOutputNode featureOutput) {
+            LogicalNode producer = dag.node(featureOutput.producerNodeId());
+            if (!(producer instanceof OperatorNode producerOperator)) return Optional.empty();
+            filter = producerOperator;
+            intermediateNodeIds.add(featureOutput.nodeId());
+        } else {
+            return Optional.empty();
+        }
+
+        KeyedSequenceFilterSemantic filterSemantic = operatorRegistry
+                .semantic(filter.operatorName(), KeyedSequenceFilterSemantic.class)
+                .orElse(null);
+        if (filterSemantic == null
+                || filterSemantic.sequenceInputIndex() >= filter.inputs().size()
+                || filterSemantic.keyInputIndex() >= filter.inputs().size()) {
+            return Optional.empty();
+        }
+
+        if (!optimized.metadata().node(aggregate.nodeId()).cacheEligible()
+                || !optimized.metadata().node(filter.nodeId()).cacheEligible()) {
+            return Optional.empty();
+        }
+        if (!safeToConsume(optimized, filter.nodeId())) return Optional.empty();
+        for (String intermediateNodeId : intermediateNodeIds) {
+            if (!safeToConsume(optimized, intermediateNodeId)) return Optional.empty();
+        }
+
+        NodeInput sequenceInput = filter.inputs().get(filterSemantic.sequenceInputIndex());
+        NodeInput keyInput = filter.inputs().get(filterSemantic.keyInputIndex());
+        if (!dag.node(keyInput.nodeId()).entityScopes().contains(EntityScope.ITEM)) {
+            return Optional.empty();
+        }
+        List<String> consumedNodeIds = new ArrayList<>();
+        consumedNodeIds.add(filter.nodeId());
+        consumedNodeIds.addAll(intermediateNodeIds);
+        consumedNodeIds.add(aggregate.nodeId());
+
+        long benefit = optimized.metadata().node(filter.nodeId()).estimatedCost()
+                + optimized.metadata().node(aggregate.nodeId()).estimatedCost();
+        return Optional.of(new PhysicalRewrite(
+                RULE_ID,
+                priority(),
+                benefit,
+                aggregate.nodeId(),
+                consumedNodeIds,
+                List.of(sequenceInput.nodeId(), keyInput.nodeId()),
+                PhysicalExecutorIds.SEQUENCE_KEY_COUNT,
+                ExecutionStage.CANDIDATE_BATCH,
+                ExecutionMode.CANDIDATE_KEY,
+                CachePolicy.CANDIDATE_KEY,
+                MaterializationPolicy.LAZY,
+                Map.of("keyDomain", filterSemantic.keyDomain().value())));
+    }
+
+    private static boolean safeToConsume(OptimizedLogicalPlan optimized, String nodeId) {
+        return !optimized.dag().rootNodeIds().contains(nodeId)
+                && optimized.metadata().node(nodeId).referenceCount() == 1;
+    }
+}

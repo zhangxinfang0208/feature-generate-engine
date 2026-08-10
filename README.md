@@ -16,7 +16,7 @@
 - 循环依赖检测和类型推导。
 - 实体范围推导：`USER`、`SCENE`、`ITEM`。
 - 在线阶段划分：`REQUEST_SHARED`、`CANDIDATE_BATCH`。
-- 在线算子融合：`count(extractIndustry(...))` 融合成 `COUNT_INDUSTRY_BATCH`。
+- 在线算子融合：根据算子语义把“按 key 过滤序列后计数”改写为注册式 `sequence-key-count` 执行器。
 - 候选参数去重：按 `item_industry` 去重，而不是按 `itemId` 重复执行。
 - 序列索引：`industry -> positions`。
 - 零拷贝序列：`SequenceBlock + SequenceView`。
@@ -80,6 +80,9 @@ src/main/java/com/example/featuredag
 ├── operator     # 算子定义、推导和执行注册表
 └── demo         # 完整构图与执行案例
 ```
+
+算子语义、物理改写、专用执行器、序列索引与缓存的扩展约束见
+[`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)。
 
 ## 直接运行
 
@@ -288,7 +291,7 @@ FEATURES: {auid_omnichannel_paid_cnt_3d=[1]}
 ```
 
 `timestamp` 恰好等于窗口边界的事件不会被计入，因为窗口判断使用严格大于 `>`。
-行业融合计数仍严格遵守输入 `SequenceView` 的可见范围；行业索引和候选计数缓存仅属于当前
+按行业 key 的融合计数仍严格遵守输入 `SequenceView` 的可见范围；索引和候选计数缓存仅属于当前
 `generate` 请求，不会跨请求共享。
 
 ## 设计边界

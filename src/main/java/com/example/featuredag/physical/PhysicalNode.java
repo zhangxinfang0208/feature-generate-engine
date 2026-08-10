@@ -11,12 +11,13 @@ import java.util.Objects;
 /**
  * 物理节点：L2 中可执行的最小单元（C9）。
  * 一个物理节点可对应一个或多个逻辑节点（融合），输入/输出通过槽位（slot:N）连接；
- * 执行器类型、阶段、模式、缓存与物化策略在构建期已全部确定（C10）。
+ * 执行器类型/注册标识、阶段、模式、缓存与物化策略在构建期已全部确定（C10）。
  */
 public final class PhysicalNode {
     private final String physicalNodeId;
     private final List<String> logicalNodeIds;
     private final ExecutorType executorType;
+    private final String executorId;
     private final ExecutionStage executionStage;
     private final ExecutionMode executionMode;
     private final ValueShape logicalValueShape;
@@ -30,6 +31,7 @@ public final class PhysicalNode {
             String physicalNodeId,
             List<String> logicalNodeIds,
             ExecutorType executorType,
+            String executorId,
             ExecutionStage executionStage,
             ExecutionMode executionMode,
             ValueShape logicalValueShape,
@@ -41,6 +43,7 @@ public final class PhysicalNode {
         this.physicalNodeId = Objects.requireNonNull(physicalNodeId, "physicalNodeId");
         this.logicalNodeIds = List.copyOf(logicalNodeIds);
         this.executorType = Objects.requireNonNull(executorType, "executorType");
+        this.executorId = Objects.requireNonNull(executorId, "executorId");
         this.executionStage = Objects.requireNonNull(executionStage, "executionStage");
         this.executionMode = Objects.requireNonNull(executionMode, "executionMode");
         this.logicalValueShape = Objects.requireNonNull(logicalValueShape, "logicalValueShape");
@@ -54,6 +57,7 @@ public final class PhysicalNode {
     public String physicalNodeId() { return physicalNodeId; }
     public List<String> logicalNodeIds() { return logicalNodeIds; }
     public ExecutorType executorType() { return executorType; }
+    public String executorId() { return executorId; }
     public ExecutionStage executionStage() { return executionStage; }
     public ExecutionMode executionMode() { return executionMode; }
     public ValueShape logicalValueShape() { return logicalValueShape; }

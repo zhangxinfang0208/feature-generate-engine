@@ -46,8 +46,14 @@
 | `sign` | `sign(a)` | 返回 `-1`、`0` 或 `1` |
 | `div_num` | `div_num(a, {"divisor": d})` | 数值除法 |
 | `round` | `round(a)` | 四舍五入为整数 |
+| `discrete` | `discrete(a, boundaries)` | 按严格递增边界分桶；命中边界进入右侧桶 |
 | `log_base` | `log_base(a, base, upbound)` | 指定底数并带上限的对数计算 |
-| `calc_delta_seq` | `calc_delta_seq(seq, base)` | 对普通数值集合计算 `base - element`；`SequenceValue` 暂不支持 |
+| `slice_by_indices` | `slice_by_indices(seq, indices)` | 按下标数组抽取序列元素 |
+| `find_indices` | `find_indices(seq, target)` | 返回所有等于目标值的下标 |
+| `get_seq_length` | `get_seq_length(seq)` | 返回序列、集合或数组长度 |
+| `count_distinct` | `count_distinct(seq)` | 计算序列中的不同值个数 |
+| `zip_concat` | `zip_concat(seq1, seq2, ..., {"delimiter":"#"})` | 等长序列逐位置拼接，分隔符默认 `#` |
+| `calc_delta_seq` | `calc_delta_seq(seq, base)` | 对普通数值列表计算 `element - base` |
 
 ### 已注册但暂不支持 Runtime 计算
 
@@ -55,11 +61,11 @@
 
 | 分类 | 算子 |
 |---|---|
-| 序列索引与选择 | `greater_than_index_typed`、`reverse_typed`、`slice_v3_typed`、`intersection_typed`、`uniq_key_index`、`slice_by_indices`、`find_indices` |
-| 序列与映射转换 | `64`、`list_2_map`、`thf_default_`、`value2key`、`k2v`、`k2v_f`、`v2v`、`multi_v2`、`zip_concat` |
-| 序列或离散计算 | `list_multi`、`dis2xl`、`default_key_if`、`discrete`、`get_seq_length`、`count_distinct` |
+| 序列索引与选择 | `greater_than_index_typed`、`reverse_typed`、`slice_v3_typed`、`intersection_typed`、`uniq_key_index` |
+| 序列与映射转换 | `64`、`list_2_map`、`thf_default_`、`value2key`、`k2v`、`k2v_f`、`v2v`、`multi_v2` |
+| 序列或离散计算 | `list_multi`、`dis2xl`、`default_key_if` |
 
-例如，`discrete(price, [0, 100, 1000])` 可以完成解析和 DAG 构建，但当前不能在 Runtime 中直接求值。业务接入时应根据上表确认目标算子是否具备执行实现。
+业务接入时应根据上表确认目标算子是否具备执行实现。
 
 ## 目录
 

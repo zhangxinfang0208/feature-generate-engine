@@ -7,18 +7,22 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class IndexValue implements ValueHandle {
-    private final Map<String, int[]> positionsByKey;
+    private final Map<Object, int[]> positionsByKey;
 
-    public IndexValue(Map<String, int[]> positionsByKey) {
-        this.positionsByKey = Collections.unmodifiableMap(new LinkedHashMap<>(positionsByKey));
+    public IndexValue(Map<?, int[]> positionsByKey) {
+        Map<Object, int[]> copy = new LinkedHashMap<>();
+        for (Map.Entry<?, int[]> entry : positionsByKey.entrySet()) {
+            copy.put(entry.getKey(), java.util.Arrays.copyOf(entry.getValue(), entry.getValue().length));
+        }
+        this.positionsByKey = Collections.unmodifiableMap(copy);
     }
 
-    public int count(String key) {
+    public int count(Object key) {
         int[] positions = positionsByKey.get(key);
         return positions == null ? 0 : positions.length;
     }
 
-    public int[] positions(String key) {
+    public int[] positions(Object key) {
         int[] positions = positionsByKey.get(key);
         return positions == null ? new int[0] : java.util.Arrays.copyOf(positions, positions.length);
     }

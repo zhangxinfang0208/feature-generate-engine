@@ -36,13 +36,19 @@ import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorRegistry;
+import com.example.featuredag.operator.KeyedSequenceFilterSemantic;
+import com.example.featuredag.operator.SequenceCardinalitySemantic;
+import com.example.featuredag.operator.SequenceKeyDomains;
+import com.example.featuredag.physical.CachePolicy;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutionStage;
 import com.example.featuredag.physical.ExecutorType;
+import com.example.featuredag.physical.PhysicalExecutorIds;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.PhysicalPlanPrinter;
 import com.example.featuredag.physical.PhysicalPlanner;
+import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
 import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.BitmapSelection;
@@ -55,6 +61,7 @@ import com.example.featuredag.runtime.RangeSelection;
 import com.example.featuredag.runtime.ScalarValue;
 import com.example.featuredag.runtime.SequenceBlock;
 import com.example.featuredag.runtime.SequenceEvent;
+import com.example.featuredag.runtime.SequenceValue;
 import com.example.featuredag.runtime.SequenceView;
 import com.example.featuredag.runtime.ValueHandle;
 
@@ -72,6 +79,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 /** Dependency-free self test. Run with java -ea. */
@@ -119,6 +127,8 @@ public final class DagEngineSelfTest {
         testDirectNestedCountIndustryFusion();
         testObservableExtractIndustryPreventsFusion();
         testFusedIndustryCountsRespectSequenceViews();
+        testFusionMatchesRegisteredSemanticsInsteadOfOperatorNames();
+        testGenericCandidateCacheUsesOperatorTraits();
         testSequenceSelectionStrategies();
         testOfflineOnlineConsistency();
 
@@ -134,7 +144,7 @@ public final class DagEngineSelfTest {
         assert onlineDag.featureOutputNodeIds().containsKey("user_click_score");
         assert onlineDag.featureOutputNodeIds().containsKey("item_price_log");
         assert !onlineDag.featureOutputNodeIds().containsKey("unused_feature");
-        assert onlinePlan.nodes().stream().anyMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+        assert onlinePlan.nodes().stream().anyMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "Online plan should fuse extractIndustry + count";
 
         SequenceBlock sequence = sequence();
@@ -156,7 +166,7 @@ public final class DagEngineSelfTest {
         LogicalDag offlineDag = builder.build(ExampleFeatures.definitions(), ExampleFeatures.transformTargets());
         PhysicalPlan offlinePlan = planner.plan(
                 optimizer.analyze(offlineDag), ExecutionEnvironment.OFFLINE, "offline-test");
-        assert offlinePlan.nodes().stream().noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+        assert offlinePlan.nodes().stream().noneMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "Transform must retain same_industry_seq output";
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("user_click_count", 10);
@@ -2285,7 +2295,7 @@ public final class DagEngineSelfTest {
         PhysicalPlan onlinePlan = planner.plan(
                 optimizer.analyze(countDag), ExecutionEnvironment.ONLINE, "dedup-four");
         assert onlinePlan.nodes().stream()
-                .anyMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .anyMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "Online count plan should fuse extraction and count";
 
         ExecutionResult result = runtime.execute(
@@ -2319,7 +2329,7 @@ public final class DagEngineSelfTest {
         PhysicalPlan offlinePlan = planner.plan(
                 optimizer.analyze(transformDag), ExecutionEnvironment.OFFLINE, "view-not-fused");
         assert offlinePlan.nodes().stream()
-                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .noneMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "An observable sequence output must prevent count fusion";
         ExecutionResult offline = runtime.execute(
                 offlinePlan,
@@ -2351,7 +2361,7 @@ public final class DagEngineSelfTest {
         PhysicalPlan onlinePlan = planner.plan(
                 optimizer.analyze(directDag), ExecutionEnvironment.ONLINE, "direct-nested-online");
         assert onlinePlan.nodes().stream()
-                .anyMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .anyMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "Direct nested count/extractIndustry should fuse online";
 
         ExecutionResult result = runtime.execute(
@@ -2369,7 +2379,7 @@ public final class DagEngineSelfTest {
         PhysicalPlan offlinePlan = planner.plan(
                 optimizer.analyze(directDag), ExecutionEnvironment.OFFLINE, "direct-nested-offline");
         assert offlinePlan.nodes().stream()
-                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .noneMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "Direct nested count/extractIndustry must remain unfused offline";
 
         List<FeatureDefinition> sharedDefinitions = List.of(
@@ -2390,7 +2400,7 @@ public final class DagEngineSelfTest {
         PhysicalPlan sharedPlan = planner.plan(
                 optimizer.analyze(sharedDag), ExecutionEnvironment.ONLINE, "shared-extract-online");
         assert sharedPlan.nodes().stream()
-                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .noneMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "A shared extractIndustry operator must not be eliminated by fusion";
     }
 
@@ -2422,7 +2432,7 @@ public final class DagEngineSelfTest {
         PhysicalPlan plan = planner.plan(
                 optimizer.analyze(observableExtractDag), ExecutionEnvironment.ONLINE, "observable-extract");
         assert plan.nodes().stream()
-                .noneMatch(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .noneMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 : "An observable extractIndustry operator must prevent count fusion";
         assert plan.nodes().stream()
                 .anyMatch(node -> node.logicalNodeIds().equals(List.of(extractNodeId))
@@ -2454,7 +2464,7 @@ public final class DagEngineSelfTest {
                 ExecutionEnvironment.ONLINE,
                 "view-aware-fusion");
         assert plan.nodes().stream()
-                .filter(node -> node.executorType() == ExecutorType.COUNT_INDUSTRY_BATCH)
+                .filter(node -> node.executorType() == ExecutorType.SPECIALIZED)
                 .count() == 2 : PhysicalPlanPrinter.print(plan);
 
         SequenceBlock base = sequence();
@@ -2473,6 +2483,164 @@ public final class DagEngineSelfTest {
                 (CandidateVectorValue) result.feature("second_count");
         assert firstCount.values().equals(List.of(1)) : firstCount.values();
         assert secondCount.values().equals(List.of(2)) : secondCount.values();
+    }
+
+    private static void testFusionMatchesRegisteredSemanticsInsteadOfOperatorNames() {
+        OperatorRegistry registry = new OperatorRegistry()
+                .register(new OperatorDefinition() {
+                    @Override public String name() { return "select_by_registered_key"; }
+                    @Override public int minArguments() { return 2; }
+                    @Override public int maxArguments() { return 2; }
+                    @Override public boolean deterministic() { return true; }
+                    @Override public boolean parameterized() { return false; }
+                    @Override public boolean supportsSequenceView() { return true; }
+                    @Override public long estimatedCost() { return 1_000L; }
+                    @Override public List<com.example.featuredag.operator.OperatorSemantic> semantics() {
+                        return List.of(new KeyedSequenceFilterSemantic(
+                                0, 1, SequenceKeyDomains.INDUSTRY));
+                    }
+                    @Override public OperatorInference infer(List<LogicalNode> inputs) {
+                        return new OperatorInference(
+                                DataType.EVENT_SEQUENCE,
+                                unionEntityScopes(inputs),
+                                ValueShape.SEQUENCE);
+                    }
+                    @Override public Object evaluate(List<Object> arguments) {
+                        return SequenceView.filterByIndustry(
+                                (SequenceValue) arguments.get(0),
+                                String.valueOf(arguments.get(1)));
+                    }
+                })
+                .register(new OperatorDefinition() {
+                    @Override public String name() { return "registered_cardinality"; }
+                    @Override public int minArguments() { return 1; }
+                    @Override public int maxArguments() { return 1; }
+                    @Override public boolean deterministic() { return true; }
+                    @Override public boolean parameterized() { return false; }
+                    @Override public boolean supportsSequenceView() { return true; }
+                    @Override public long estimatedCost() { return 1_000L; }
+                    @Override public List<com.example.featuredag.operator.OperatorSemantic> semantics() {
+                        return List.of(new SequenceCardinalitySemantic(0));
+                    }
+                    @Override public OperatorInference infer(List<LogicalNode> inputs) {
+                        return new OperatorInference(
+                                DataType.INT,
+                                unionEntityScopes(inputs),
+                                ValueShape.SCALAR);
+                    }
+                    @Override public Object evaluate(List<Object> arguments) {
+                        return ((SequenceValue) arguments.getFirst()).size();
+                    }
+                });
+
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "history", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "candidate_key", DataType.STRING, EntityScope.ITEM, "unknown"),
+                        FeatureDefinition.derived(
+                                "registered_count",
+                                DataType.INT,
+                                "registered_cardinality(select_by_registered_key(history, candidate_key))",
+                                OutputPolicy.OUTPUT)),
+                Set.of("registered_count"));
+        PhysicalPlan plan = new PhysicalPlanner(registry, PhysicalRewriteRegistry.standard()).plan(
+                new LogicalDagOptimizer(registry).analyze(dag),
+                ExecutionEnvironment.ONLINE,
+                "registered-semantics");
+        PhysicalNode specialized = plan.nodes().stream()
+                .filter(node -> node.executorType() == ExecutorType.SPECIALIZED)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(PhysicalPlanPrinter.print(plan)));
+        assert specialized.executorId().equals(PhysicalExecutorIds.SEQUENCE_KEY_COUNT)
+                : specialized.executorId();
+
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.onlineRequest(
+                        "registered-semantics-request",
+                        Map.of("history", sequence()),
+                        naturalFourCandidates().stream()
+                                .map(candidate -> Map.<String, Object>of(
+                                        "candidate_key", candidate.get("item_industry")))
+                                .toList()));
+        CandidateVectorValue counts = (CandidateVectorValue) result.feature("registered_count");
+        assert counts.values().equals(List.of(3, 1, 3, 0)) : counts.values();
+    }
+
+    private static void testGenericCandidateCacheUsesOperatorTraits() {
+        AtomicInteger cachedCalls = new AtomicInteger();
+        AtomicInteger uncachedCalls = new AtomicInteger();
+        OperatorRegistry registry = new OperatorRegistry()
+                .register(echoOperator("cached_echo", true, cachedCalls))
+                .register(echoOperator("uncached_echo", false, uncachedCalls));
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "candidate_key", DataType.STRING, EntityScope.ITEM, null),
+                        FeatureDefinition.derived(
+                                "cached_value", DataType.STRING,
+                                "cached_echo(candidate_key)", OutputPolicy.OUTPUT),
+                        FeatureDefinition.derived(
+                                "uncached_value", DataType.STRING,
+                                "uncached_echo(candidate_key)", OutputPolicy.OUTPUT)),
+                linkedSet("cached_value", "uncached_value"));
+        PhysicalPlan plan = new PhysicalPlanner(registry).plan(
+                new LogicalDagOptimizer(registry).analyze(dag),
+                ExecutionEnvironment.ONLINE,
+                "generic-candidate-cache");
+        PhysicalNode cachedNode = plan.nodes().stream()
+                .filter(node -> "cached_echo".equals(node.executorConfig().get("operatorName")))
+                .findFirst()
+                .orElseThrow();
+        PhysicalNode uncachedNode = plan.nodes().stream()
+                .filter(node -> "uncached_echo".equals(node.executorConfig().get("operatorName")))
+                .findFirst()
+                .orElseThrow();
+        assert cachedNode.cachePolicy() == CachePolicy.CANDIDATE_KEY
+                : PhysicalPlanPrinter.print(plan);
+        assert uncachedNode.cachePolicy() == CachePolicy.NONE
+                : PhysicalPlanPrinter.print(plan);
+
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.onlineRequest(
+                        "generic-candidate-cache-request",
+                        Map.of(),
+                        List.of(
+                                Map.of("candidate_key", "A"),
+                                Map.of("candidate_key", "B"),
+                                Map.of("candidate_key", "A"),
+                                Map.of("candidate_key", "C"))));
+        assert cachedCalls.get() == 3 : cachedCalls.get();
+        assert uncachedCalls.get() == 4 : uncachedCalls.get();
+        assert result.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
+        assert result.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 3;
+    }
+
+    private static OperatorDefinition echoOperator(
+            String name,
+            boolean deterministic,
+            AtomicInteger calls) {
+        return new OperatorDefinition() {
+            @Override public String name() { return name; }
+            @Override public int minArguments() { return 1; }
+            @Override public int maxArguments() { return 1; }
+            @Override public boolean deterministic() { return deterministic; }
+            @Override public boolean parameterized() { return false; }
+            @Override public boolean supportsSequenceView() { return false; }
+            @Override public long estimatedCost() { return 1_000L; }
+            @Override public OperatorInference infer(List<LogicalNode> inputs) {
+                LogicalNode input = inputs.getFirst();
+                return new OperatorInference(
+                        input.outputType(), input.entityScopes(), ValueShape.SCALAR);
+            }
+            @Override public Object evaluate(List<Object> arguments) {
+                calls.incrementAndGet();
+                return arguments.getFirst();
+            }
+        };
     }
 
     private static void testSequenceSelectionStrategies() {
@@ -2629,6 +2797,12 @@ public final class DagEngineSelfTest {
 
     private static LinkedHashSet<String> linkedSet(String... values) {
         return new LinkedHashSet<>(List.of(values));
+    }
+
+    private static Set<EntityScope> unionEntityScopes(List<LogicalNode> inputs) {
+        Set<EntityScope> result = new LinkedHashSet<>();
+        for (LogicalNode input : inputs) result.addAll(input.entityScopes());
+        return result;
     }
 
     private static <T extends Throwable> T expectThrows(Class<T> type, Runnable action) {

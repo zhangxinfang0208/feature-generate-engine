@@ -2,11 +2,13 @@ package com.example.featuredag.runtime;
 
 import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
+import com.example.featuredag.physical.CachePolicy;
 import com.example.featuredag.physical.ExecutorType;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -17,16 +19,27 @@ import java.util.Set;
 /** Executes a physical plan without reparsing expressions. */
 public final class DagRuntime {
     private final OperatorRegistry operatorRegistry;
+    private final PhysicalExecutorRegistry executorRegistry;
 
-    private record IndustryIndexCacheKey(SequenceValue sequence) {}
-
-    private record CandidateCountCacheKey(
+    private record OperatorInvocationCacheKey(
             String physicalNodeId,
-            SequenceValue sequence,
-            String industry) {}
+            List<Object> arguments) {
+        private OperatorInvocationCacheKey {
+            arguments = Collections.unmodifiableList(new ArrayList<>(arguments));
+        }
+    }
 
     public DagRuntime(OperatorRegistry operatorRegistry) {
+        this(
+                operatorRegistry,
+                PhysicalExecutorRegistry.standard(SequenceIndexRegistry.standard()));
+    }
+
+    public DagRuntime(
+            OperatorRegistry operatorRegistry,
+            PhysicalExecutorRegistry executorRegistry) {
         this.operatorRegistry = Objects.requireNonNull(operatorRegistry, "operatorRegistry");
+        this.executorRegistry = Objects.requireNonNull(executorRegistry, "executorRegistry");
     }
 
     public ExecutionResult execute(PhysicalPlan plan, ExecutionContext context) {
@@ -34,6 +47,7 @@ public final class DagRuntime {
             throw new IllegalArgumentException(
                     "Plan environment " + plan.environment() + " does not match context " + context.environment());
         }
+        executorRegistry.validate(plan);
         // 运行时：按物理计划顺序逐节点执行，各节点结果写入执行上下文的输出槽（slot:N）
         for (PhysicalNode node : plan.nodes()) {
             executeNode(node, context);
@@ -62,8 +76,8 @@ public final class DagRuntime {
                         node.logicalValueShape(),
                         context.executionId());
                 case FEATURE_OUTPUT -> requireSingleInput(node, context);
-                case GENERIC_OPERATOR -> executeGenericOperator(node, context);
-                case COUNT_INDUSTRY_BATCH -> executeCountIndustryBatch(node, context, state);
+                case GENERIC_OPERATOR -> executeGenericOperator(node, context, state);
+                case SPECIALIZED -> executorRegistry.require(node.executorId()).execute(node, context, state);
             };
             context.resultSlots().put(node.outputSlot(), result);
             state.markSuccess(result, System.nanoTime() - start);
@@ -114,67 +128,16 @@ public final class DagRuntime {
     }
 
     /** 通用算子执行（运行时）：从输入槽取出已算好的值句柄，交给算子注册表求值。 */
-    private ValueHandle executeGenericOperator(PhysicalNode node, ExecutionContext context) {
+    private ValueHandle executeGenericOperator(
+            PhysicalNode node,
+            ExecutionContext context,
+            RuntimeNodeState state) {
         String operatorName = String.valueOf(node.executorConfig().get("operatorName"));
         List<ValueHandle> inputHandles = node.inputSlots().stream()
                 .map(slot -> requireSlot(context, slot))
                 .toList();
-        return vectorizedApply(operatorName, inputHandles, context, node.logicalValueShape());
-    }
-
-    /**
-     * 融合算子执行（countIndustry，C9 融合产物）：
-     * ① 对候选行业去重统计；② 序列行业索引按序列句柄缓存（REQUEST_INDEX），
-     * ③ 每个行业计数按「物理节点 + 序列 + 行业」缓存（CANDIDATE_KEY）；
-     * 最后把每个候选映射到对应行业计数，返回候选向量。
-     */
-    private ValueHandle executeCountIndustryBatch(
-            PhysicalNode node,
-            ExecutionContext context,
-            RuntimeNodeState state) {
-        if (node.inputSlots().size() != 2) {
-            throw new IllegalStateException("COUNT_INDUSTRY_BATCH requires sequence and industry inputs");
-        }
-        Object sequenceRaw = requireSlot(context, node.inputSlots().get(0)).raw();
-        if (!(sequenceRaw instanceof SequenceValue sequence)) {
-            throw new IllegalArgumentException("First input must be SequenceValue");
-        }
-        ValueHandle industriesHandle = requireSlot(context, node.inputSlots().get(1));
-        List<Object> industries = toCandidateValues(industriesHandle, context.candidateCount());
-
-        Set<String> uniqueIndustries = new LinkedHashSet<>();
-        for (Object industry : industries) uniqueIndustries.add(String.valueOf(industry));
-        state.setDedupCounts(industries.size(), uniqueIndustries.size());
-
-        Object indexKey = new IndustryIndexCacheKey(sequence);
-        IndexValue index;
-        Object cachedIndex = context.cacheRegistry().get(indexKey);
-        if (cachedIndex instanceof IndexValue cached) {
-            index = cached;
-            state.markCacheHit("REQUEST_INDEX");
-        } else {
-            index = SequenceIndustryIndex.build(sequence);
-            context.cacheRegistry().put(indexKey, index);
-        }
-
-        Map<String, Integer> countsByIndustry = new LinkedHashMap<>();
-        for (String industry : uniqueIndustries) {
-            Object cacheKey = new CandidateCountCacheKey(
-                    node.physicalNodeId(), sequence, industry);
-            Object cached = context.cacheRegistry().get(cacheKey);
-            if (cached instanceof Integer value) {
-                countsByIndustry.put(industry, value);
-                state.markCacheHit("CANDIDATE_KEY");
-            } else {
-                int value = index.count(industry);
-                context.cacheRegistry().put(cacheKey, value);
-                countsByIndustry.put(industry, value);
-            }
-        }
-
-        List<Object> result = new ArrayList<>(industries.size());
-        for (Object industry : industries) result.add(countsByIndustry.get(String.valueOf(industry)));
-        return new CandidateVectorValue(result);
+        return vectorizedApply(
+                node, operatorName, inputHandles, context, state, node.logicalValueShape());
     }
 
     /**
@@ -182,9 +145,11 @@ public final class DagRuntime {
      * 标量输入在所有候选间共享；无候选向量时退化为单次求值。
      */
     private ValueHandle vectorizedApply(
+            PhysicalNode node,
             String operatorName,
             List<ValueHandle> inputHandles,
             ExecutionContext context,
+            RuntimeNodeState state,
             ValueShape logicalValueShape) {
         boolean vector = inputHandles.stream().anyMatch(handle -> handle instanceof CandidateVectorValue);
         if (!vector) {
@@ -201,6 +166,16 @@ public final class DagRuntime {
                     .orElseThrow();
         }
         List<Object> result = new ArrayList<>(size);
+        boolean memoize = node.cachePolicy() == CachePolicy.CANDIDATE_KEY;
+        if (memoize) {
+            var definition = operatorRegistry.require(operatorName);
+            if (!definition.deterministic() || !definition.sideEffectFree()) {
+                throw new IllegalStateException(
+                        "CANDIDATE_KEY cache requires a deterministic side-effect-free operator: "
+                                + operatorName);
+            }
+        }
+        Set<OperatorInvocationCacheKey> uniqueInvocations = new LinkedHashSet<>();
         for (int index = 0; index < size; index++) {
             List<Object> args = new ArrayList<>(inputHandles.size());
             for (ValueHandle handle : inputHandles) {
@@ -210,8 +185,23 @@ public final class DagRuntime {
                     args.add(handle.raw());
                 }
             }
-            result.add(operatorRegistry.evaluate(operatorName, args));
+            if (!memoize) {
+                result.add(operatorRegistry.evaluate(operatorName, args));
+                continue;
+            }
+            OperatorInvocationCacheKey cacheKey =
+                    new OperatorInvocationCacheKey(node.physicalNodeId(), args);
+            uniqueInvocations.add(cacheKey);
+            if (context.cacheRegistry().containsKey(cacheKey)) {
+                result.add(context.cacheRegistry().get(cacheKey));
+                state.markCacheHit("CANDIDATE_KEY");
+            } else {
+                Object value = operatorRegistry.evaluate(operatorName, args);
+                context.cacheRegistry().put(cacheKey, value);
+                result.add(value);
+            }
         }
+        if (memoize) state.setDedupCounts(size, uniqueInvocations.size());
         return new CandidateVectorValue(result);
     }
 
@@ -226,13 +216,6 @@ public final class DagRuntime {
         ValueHandle value = context.resultSlots().get(slot);
         if (value == null) throw new IllegalStateException("Input slot not available: " + slot);
         return value;
-    }
-
-    private static List<Object> toCandidateValues(ValueHandle handle, int candidateCount) {
-        if (handle instanceof CandidateVectorValue vector) return vector.values();
-        List<Object> result = new ArrayList<>(candidateCount);
-        for (int i = 0; i < candidateCount; i++) result.add(handle.raw());
-        return result;
     }
 
     private static ValueHandle wrapSource(

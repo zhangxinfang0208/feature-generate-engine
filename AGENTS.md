@@ -15,9 +15,20 @@
 - C5 节点去重与命名：逻辑节点按 canonical 签名合并等价节点（`source|名字`、`literal|类型|值`、`operator|名称|输入`）；节点 ID 遵循前缀规范 `source:`、`literal:`、`operator:`、`feature:`，新增节点类型必须沿用。
 - C6 声明与推断一致性：特征的声明类型/值形状/实体域必须与 DAG 推断结果一致（唯一例外：声明 DOUBLE 允许推断为 INT），不一致时抛 `DagBuildException`。
 - C7 逻辑节点不可变：`LogicalNode` 及其实现（`SourceNode`、`LiteralNode`、`OperatorNode`、`FeatureOutputNode`）构造后不可变，依赖关系通过 `NodeInput` 的节点 ID 与端口引用。
-- C8 规划层只读：`LogicalDagOptimizer` 只读遍历 DAG，优化事实（引用计数、可达根、融合候选）外置在 `NodePlanningMetadata`，禁止回写或修改逻辑节点本身。
-- C9 物理转换（L2）：每个逻辑节点必须且只能产出一个物理输出槽（`slot:N`），物理节点保持逻辑拓扑序；节点融合（如 countIndustry）仅在 ONLINE 环境允许，且被融合的 extract/中间节点必须引用计数为 1 且不是根节点。
-- C10 环境相关决策：物理节点的执行阶段/执行模式/缓存策略只能由 `ExecutionEnvironment` 与节点特征（实体域、算子名、值形状）推导，禁止在运行时临时决定；输出特征槽位必须与逻辑根节点一一对应。
+- C8 规划层只读：`LogicalDagOptimizer` 只读遍历 DAG，通用优化事实（引用计数、可达根、依赖维度、缓存资格、成本与大小）外置在 `NodePlanningMetadata`，禁止回写或修改逻辑节点本身；融合由注册的物理改写规则根据算子语义匹配。
+- C9 物理转换（L2）：每个未融合逻辑节点必须且只能产出一个物理输出槽（`slot:N`），物理节点保持逻辑拓扑序；节点融合仅在规则允许的环境执行，且被消费的中间节点必须引用计数为 1 且不是根节点，融合节点记录全部 consumed logical node IDs。
+- C10 环境相关决策：物理节点的执行阶段/执行模式/缓存策略只能由 `ExecutionEnvironment`、实体域、算子语义、成本与值形状推导，禁止按业务算子名特判或在运行时临时决定；输出特征槽位必须与逻辑根节点一一对应。
+
+## 算子优化与缓存扩展规范
+
+后续新增算子优化、融合、索引或缓存能力必须遵循 `docs/architecture/operator-optimization-extension.md`：
+
+- `operator` 层通过 `OperatorSemantic` 声明逻辑语义，不得引用物理或运行时类型。
+- `planning`/`physical`/`runtime` 核心类禁止按业务算子名增加判断；DAG 模式通过 `PhysicalRewriteRule` 注册。
+- 专用算法通过 `PhysicalExecutorRegistry` 注册，`DagRuntime` 只按 `executorId` 路由。
+- 等值序列索引通过 `SequenceIndexProvider` 注册；字段不同但算法相同不得复制业务专用索引类。
+- `CachePolicy` 必须有对应运行时实现；缓存 key 必须覆盖 keyDomain、具体序列视图和所有候选变化输入。
+- 每项优化必须验证语义别名匹配、未声明语义不匹配、共享/根节点安全、ONLINE/OFFLINE、SequenceView 与缓存隔离。
 
 ## 构建、测试与开发命令
 

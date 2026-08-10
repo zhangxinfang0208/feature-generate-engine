@@ -5,5 +5,5 @@ public enum ExecutorType {
     LITERAL,
     GENERIC_OPERATOR,
     FEATURE_OUTPUT,
-    COUNT_INDUSTRY_BATCH
+    SPECIALIZED
 }

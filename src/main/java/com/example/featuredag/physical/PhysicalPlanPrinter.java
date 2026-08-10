@@ -10,6 +10,7 @@ public final class PhysicalPlanPrinter {
         for (PhysicalNode node : plan.nodes()) {
             builder.append("- ").append(node.physicalNodeId())
                     .append(" executor=").append(node.executorType())
+                    .append('/').append(node.executorId())
                     .append(" stage=").append(node.executionStage())
                     .append(" mode=").append(node.executionMode())
                     .append(" inputs=").append(node.inputSlots())

@@ -12,11 +12,14 @@ import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.PhysicalPlanner;
+import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
 import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.DagRuntime;
 import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExecutionResult;
+import com.example.featuredag.runtime.PhysicalExecutorRegistry;
+import com.example.featuredag.runtime.SequenceIndexRegistry;
 import com.example.featuredag.runtime.ValueHandle;
 
 import java.nio.file.Path;
@@ -191,15 +194,19 @@ public final class FeatureDagEngine {
                             + options.environment().name().toLowerCase(Locale.ROOT)
                     : configuredPlanId;
             OperatorRegistry operators = OperatorRegistry.standard();
+            PhysicalRewriteRegistry rewriteRules = PhysicalRewriteRegistry.standard();
+            SequenceIndexRegistry sequenceIndexes = SequenceIndexRegistry.standard();
+            PhysicalExecutorRegistry executors = PhysicalExecutorRegistry.standard(sequenceIndexes);
             // C1：按「定义 → 逻辑 → 规划 → 物理 → 运行时」逐层构建，各层产物依次作为下一层的输入
             LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), operators)
                     .build(mapped.definitions(), mapped.targetFeatures());
-            PhysicalPlan plan = new PhysicalPlanner().plan(
-                    new LogicalDagOptimizer().analyze(dag), options.environment(), planId);
+            PhysicalPlan plan = new PhysicalPlanner(operators, rewriteRules).plan(
+                    new LogicalDagOptimizer(operators).analyze(dag), options.environment(), planId);
+            executors.validate(plan);
             FeatureInputDecoder inputDecoder = FeatureInputDecoder.from(dag);
             FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
             return new FeatureDagEngine(
-                    options.environment(), mapped, planId, plan, new DagRuntime(operators),
+                    options.environment(), mapped, planId, plan, new DagRuntime(operators, executors),
                     inputDecoder, outputEncoder);
         } catch (RuntimeException error) {
             throw initializationFailure(

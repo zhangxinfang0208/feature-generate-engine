@@ -23,6 +23,8 @@ import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.OutputPolicy;
 import com.example.featuredag.demo.ExampleFeatures;
+import com.example.featuredag.demo.OfflineBatchDemo;
+import com.example.featuredag.demo.OnlineGroupedBatchDemo;
 import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstCall;
 import com.example.featuredag.expression.AstFeatureRef;
@@ -112,6 +114,7 @@ public final class DagEngineSelfTest {
         testIntermediateFeatureMapping();
         testOfflinePublicApi();
         testOfflineBatchPublicApi();
+        testBatchDemos();
         testConfigPathInit();
         testOfflineSequenceMaterialization();
         testOnlinePublicApi();
@@ -1444,6 +1447,58 @@ public final class DagEngineSelfTest {
                                 "missing-sequence-batch", missingSequenceRows)));
         assert missing.getMessage().contains("values") : missing.getMessage();
         assert missing.getMessage().contains("offline batch row 1") : missing.getMessage();
+    }
+
+    private static void testBatchDemos() {
+        OfflineBatchGenerateResult offline = OfflineBatchDemo.run();
+        assert offline.rows().size() == 3 : offline.rows();
+        assert offline.rows().stream()
+                .map(values -> scalarFeature(values, "user_tag_count"))
+                .toList().equals(List.of(3, 3, 3)) : offline.rows();
+        assert offline.rows().stream()
+                .map(values -> scalarFeature(values, "score"))
+                .toList().equals(List.of(20.0, 10.0, 12.0)) : offline.rows();
+        assert offline.rows().stream()
+                .map(values -> scalarFeature(values, "matching_tag_count"))
+                .toList().equals(List.of(2, 1, 2)) : offline.rows();
+
+        OnlineBatchGenerateResult online = OnlineGroupedBatchDemo.run();
+        assert online.groupResults().size() == 3 : online.groupResults();
+        GenerateResult userA = online.groupResults().get(0);
+        GenerateResult userB = online.groupResults().get(1);
+        GenerateResult empty = online.groupResults().get(2);
+        assert userA.executionId().equals("user-a") : userA.executionId();
+        assert scalarFeature(userA.featureValues(), "user_tag_count").equals(3)
+                : userA.featureValues();
+        assert userA.candidateFeatureValues().stream()
+                .map(values -> scalarFeature(values, "matching_tag_count"))
+                .toList().equals(List.of(2, 1)) : userA.candidateFeatureValues();
+        assert userA.candidateFeatureValues().stream()
+                .map(values -> scalarFeature(values, "score"))
+                .toList().equals(List.of(20.0, 10.0)) : userA.candidateFeatureValues();
+        assert userB.executionId().equals("user-b") : userB.executionId();
+        assert userB.candidateFeatureValues().stream()
+                .map(values -> scalarFeature(values, "score"))
+                .toList().equals(List.of(12.0)) : userB.candidateFeatureValues();
+        assert scalarFeature(empty.featureValues(), "user_tag_count").equals(0)
+                : empty.featureValues();
+        assert empty.candidateFeatureValues().isEmpty() : empty.candidateFeatureValues();
+
+        List<Map<String, List<?>>> onlineRows = List.of(
+                mergeFeatureValues(userA.featureValues(), userA.candidateFeatureValues().get(0)),
+                mergeFeatureValues(userA.featureValues(), userA.candidateFeatureValues().get(1)),
+                mergeFeatureValues(userB.featureValues(), userB.candidateFeatureValues().get(0)));
+        assert offline.rows().equals(onlineRows)
+                : "shared config produced different offline/online rows: offline="
+                        + offline.rows() + ", online=" + onlineRows;
+    }
+
+    private static Map<String, List<?>> mergeFeatureValues(
+            Map<String, List<?>> shared,
+            Map<String, List<?>> candidate) {
+        Map<String, List<?>> merged = new LinkedHashMap<>(shared);
+        merged.putAll(candidate);
+        return merged;
     }
 
     private static void testConfigPathInit() throws Exception {

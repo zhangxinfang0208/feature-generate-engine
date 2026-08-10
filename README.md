@@ -92,6 +92,27 @@ src/main/java/com/example/featuredag
 ./scripts/run-demo.sh
 ```
 
+`DagDemo`、`OfflineBatchDemo` 和 `OnlineGroupedBatchDemo` 都加载同一份
+[`src/main/resources/demo/config.json`](src/main/resources/demo/config.json)，并通过
+`InitOptions.targetFeatures` 选择各自需要的目标子图。上面的命令仍以原有 `DagDemo` 作为
+JAR 入口；它保留三天 app 点击计数，并用同一份输入分别执行离线与在线计划、校验结果一致。
+两个 Batch Demo 使用独立入口，不会替换 JAR manifest：
+
+```bash
+mvn -q -DskipTests package
+
+java -cp target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar \
+  com.example.featuredag.demo.OfflineBatchDemo
+
+java -cp target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar \
+  com.example.featuredag.demo.OnlineGroupedBatchDemo
+```
+
+- `OfflineBatchDemo`：把两个 user 的三个 candidate 展平为三行 RAW 输入，展示离线逐行 Batch；
+- `OnlineGroupedBatchDemo`：一次提交 `user-a`、`user-b`、`user-empty` 三个分组，展示
+  USER 共享值广播、不同 candidate 数量、请求级输出和候选级输出。自测试会把在线共享输出与
+  candidate 输出合并后逐行对照离线结果，验证统一配置在两种执行环境下的语义一致。
+
 运行断言自测试（需要启用 Java assertions）：
 
 ```bash

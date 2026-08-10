@@ -38,6 +38,11 @@
 - SEQUENCE 使用完整元素 List；第一版不执行跨序列 alignment 校验。
 - 调用方负责在调用引擎前把 "1|0|1|v2" 等旧协议转换为干净数组。
 - 三天计数公共输出为 auid_omnichannel_paid_cnt_3d=[1]。
+- 另有两个派生特征复用该计数作为输入：
+  `auid_appc3_omnichannel_paid_cnt_div10_365d = LEAST(ROUND(cnt/10), 1000)`、
+  `auid_appc3_omnichannel_paid_cnt_log_365d = LEAST(ROUND(LOG(cnt)/LOG(1.1)), 1000)`，
+  经 `div_num`/`div`/`log`/`round`/`least` 计算；输入计数为 1 时两者输出均为 [0]，
+  同时验证「派生特征引用派生特征」的目标驱动构建（C3）。
 - 两条序列按时间从近到远排列；示例时间戳单位是秒。
 - `request_time - 259200` 是三天前的边界，窗口判断为严格 `timestamp > boundary`。
 - 目标特征 `auid_omnichannel_paid_cnt_3d` 应通过 `greater_in_sequence_typed`、`list_index_typed`、

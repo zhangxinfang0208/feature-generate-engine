@@ -199,6 +199,37 @@ public final class OperatorRegistry {
         registry.register(simple("round", 1, 1, true, false, false,
                 fixed(DataType.INT, ValueShape.SCALAR),
                 args -> Math.toIntExact(Math.round(asNumber(args.getFirst()).doubleValue()))));
+        registry.register(simple("div", 2, 2, true, false, false,
+                fixed(DataType.DOUBLE, ValueShape.SCALAR),
+                args -> {
+                    double divisor = asNumber(args.getLast()).doubleValue();
+                    if (divisor == 0.0) {
+                        throw new IllegalArgumentException("divisor must not be zero");
+                    }
+                    return asNumber(args.getFirst()).doubleValue() / divisor;
+                }));
+        registry.register(simple("least", 2, Integer.MAX_VALUE, true, false, false,
+                inputs -> {
+                    boolean allInt = true;
+                    for (LogicalNode input : inputs) {
+                        if (input.outputType() != DataType.INT) {
+                            allInt = false;
+                            break;
+                        }
+                    }
+                    return new OperatorInference(
+                            allInt ? DataType.INT : DataType.DOUBLE,
+                            unionScopes(inputs),
+                            ValueShape.SCALAR);
+                },
+                args -> {
+                    Number minimum = asNumber(args.getFirst());
+                    for (int index = 1; index < args.size(); index++) {
+                        Number candidate = asNumber(args.get(index));
+                        if (candidate.doubleValue() < minimum.doubleValue()) minimum = candidate;
+                    }
+                    return minimum;
+                }));
         registry.register(simple("dis2xl", 2, 2, true, true, false,
                 fixed(DataType.INT, ValueShape.SCALAR), unsupported("dis2xl")));
         registry.register(simple("default_key_if", 2, 2, true, true, false,

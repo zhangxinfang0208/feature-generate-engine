@@ -648,6 +648,16 @@ public final class DagEngineSelfTest {
                      "definition_type":"DERIVED",
                      "expression":"count(find_list_index_typed(list_index_typed(auid_app_time_seq, greater_in_sequence_typed(timestamp, request_time, {\\"margin\\":259200})), target_app))",
                      "output_policy":"OUTPUT","entity_scopes":["USER","SCENE"],
+                     "value_shape":"SCALAR"},
+                    {"name":"auid_appc3_omnichannel_paid_cnt_div10_365d","type":"INT",
+                     "definition_type":"DERIVED",
+                     "expression":"least(round(div_num(auid_omnichannel_paid_cnt_3d, {\\"divisor\\":10})), 1000)",
+                     "output_policy":"OUTPUT","entity_scopes":["USER","SCENE"],
+                     "value_shape":"SCALAR"},
+                    {"name":"auid_appc3_omnichannel_paid_cnt_log_365d","type":"INT",
+                     "definition_type":"DERIVED",
+                     "expression":"least(round(div(log(auid_omnichannel_paid_cnt_3d), log(1.1))), 1000)",
+                     "output_policy":"OUTPUT","entity_scopes":["USER","SCENE"],
                      "value_shape":"SCALAR"}
                   ],
                   "feature_set_name":"three_day_app_count","version":"1"
@@ -667,6 +677,10 @@ public final class DagEngineSelfTest {
 
         assert result.featureValues().get("auid_omnichannel_paid_cnt_3d").equals(List.of(1))
                 : result.featureValues();
+        assert result.featureValues().get("auid_appc3_omnichannel_paid_cnt_div10_365d")
+                .equals(List.of(0)) : result.featureValues();
+        assert result.featureValues().get("auid_appc3_omnichannel_paid_cnt_log_365d")
+                .equals(List.of(0)) : result.featureValues();
     }
 
     private static void testObjectListsRemainScalarAtRuntime() {
@@ -828,6 +842,8 @@ public final class DagEngineSelfTest {
                 Map.entry("list_multi", List.of(3, 3)),
                 Map.entry("div_num", List.of(2, 2)),
                 Map.entry("round", List.of(1, 1)),
+                Map.entry("div", List.of(2, 2)),
+                Map.entry("least", List.of(2, Integer.MAX_VALUE)),
                 Map.entry("dis2xl", List.of(2, 2)),
                 Map.entry("default_key_if", List.of(2, 2)),
                 Map.entry("discrete", List.of(2, 2)),
@@ -855,6 +871,9 @@ public final class DagEngineSelfTest {
         assert ((Number) registry.evaluate("div_num", List.of(9, Map.of("divisor", 2))))
                 .doubleValue() == 4.5;
         assert registry.evaluate("round", List.of(4.6)).equals(5);
+        assert registry.evaluate("div", List.of(9, 2)).equals(4.5);
+        assert registry.evaluate("least", List.of(3, 5, 1)).equals(1);
+        assert registry.evaluate("least", List.of(2.5, 3)).equals(2.5);
         assert Math.abs(((Number) registry.evaluate("log_base", List.of(8, 2, 1000)))
                 .doubleValue() - 3.0) < 1e-9;
         assert Math.abs(((Number) registry.evaluate("log_base", List.of(2000, 10, 1000)))
@@ -890,6 +909,11 @@ public final class DagEngineSelfTest {
                 IllegalArgumentException.class,
                 () -> registry.evaluate("div_num", List.of(9, Map.of("divisor", 0))));
         assert zeroDivisor.getMessage().contains("divisor") : zeroDivisor.getMessage();
+        IllegalArgumentException zeroDivisorPlain = expectThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate("div", List.of(9, 0)));
+        assert zeroDivisorPlain.getMessage().contains("divisor")
+                : zeroDivisorPlain.getMessage();
         IllegalArgumentException invalidBase = expectThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("log_base", List.of(8, 1, 1000)));
@@ -1067,11 +1091,17 @@ public final class DagEngineSelfTest {
                         DataType.STRING, ValueShape.SEQUENCE),
                 new BusinessOperatorCase(
                         "calc_delta_seq", "calc_delta_seq(seq, a)",
-                        DataType.DOUBLE, ValueShape.SEQUENCE));
+                        DataType.DOUBLE, ValueShape.SEQUENCE),
+                new BusinessOperatorCase(
+                        "div", "div(a, b)",
+                        DataType.DOUBLE, ValueShape.SCALAR),
+                new BusinessOperatorCase(
+                        "least", "least(target, a3)",
+                        DataType.INT, ValueShape.SCALAR));
         assert cases.stream()
                 .map(BusinessOperatorCase::operatorName)
                 .collect(java.util.stream.Collectors.toSet())
-                .size() == 32 : "Business operator cases must contain 32 distinct names";
+                .size() == 34 : "Business operator cases must contain 34 distinct names";
 
         OperatorRegistry registry = OperatorRegistry.standard();
         ExpressionParser parser = new ExpressionParser();
@@ -1106,7 +1136,7 @@ public final class DagEngineSelfTest {
         }
 
         LogicalDag dag = new LogicalDagBuilder(parser, registry).build(definitions, targets);
-        assert casesByFeature.size() == 32 : casesByFeature.keySet();
+        assert casesByFeature.size() == 34 : casesByFeature.keySet();
         for (Map.Entry<String, BusinessOperatorCase> entry : casesByFeature.entrySet()) {
             BusinessOperatorCase operatorCase = entry.getValue();
             assertOutput(

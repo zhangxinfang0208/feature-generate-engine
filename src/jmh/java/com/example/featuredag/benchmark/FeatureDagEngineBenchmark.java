@@ -9,6 +9,8 @@ import com.example.featuredag.api.OnlineGenerateRequest;
 import com.example.featuredag.api.OnlineRequestGroup;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.runtime.InMemoryRuntimeObserver;
+import com.example.featuredag.runtime.ObservabilityOptions;
+import com.example.featuredag.runtime.ObservationDetailLevel;
 
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -59,15 +61,15 @@ public class FeatureDagEngineBenchmark {
         @Param({"1", "10"})
         public int distinctKeyCount;
 
-        @Param({"false", "true"})
-        public boolean diagnosticsEnabled;
+        @Param({"OFF", "BASIC", "CACHE", "NODE"})
+        public String observabilityMode;
 
         private FeatureDagEngine engine;
         private OnlineGenerateRequest request;
 
         @Setup(Level.Trial)
         public void setup() {
-            engine = onlineEngine("jmh-online-single", diagnosticsEnabled);
+            engine = onlineEngine("jmh-online-single", observabilityMode);
             request = new OnlineGenerateRequest(
                     "jmh-single-request",
                     sharedValues(),
@@ -83,15 +85,15 @@ public class FeatureDagEngineBenchmark {
         @Param({"1", "10", "100"})
         public int candidatesPerGroup;
 
-        @Param({"false", "true"})
-        public boolean diagnosticsEnabled;
+        @Param({"OFF", "BASIC", "CACHE", "NODE"})
+        public String observabilityMode;
 
         private FeatureDagEngine engine;
         private OnlineBatchGenerateRequest request;
 
         @Setup(Level.Trial)
         public void setup() {
-            engine = onlineEngine("jmh-online-grouped", diagnosticsEnabled);
+            engine = onlineEngine("jmh-online-grouped", observabilityMode);
             List<OnlineRequestGroup> groups = new ArrayList<>(groupCount);
             for (int groupIndex = 0; groupIndex < groupCount; groupIndex++) {
                 groups.add(new OnlineRequestGroup(
@@ -105,13 +107,18 @@ public class FeatureDagEngineBenchmark {
 
     private static FeatureDagEngine onlineEngine(
             String planId,
-            boolean diagnosticsEnabled) {
+            String observabilityMode) {
         InitOptions.Builder options = InitOptions.builder()
                 .environment(ExecutionEnvironment.ONLINE)
                 .planId(planId)
                 .targetFeatures(TARGETS);
-        if (diagnosticsEnabled) {
-            options.runtimeObserver(new InMemoryRuntimeObserver(1));
+        if (!observabilityMode.equals("OFF")) {
+            ObservationDetailLevel detailLevel = ObservationDetailLevel.valueOf(observabilityMode);
+            options.observabilityOptions(ObservabilityOptions.builder()
+                            .sampleRate(1.0)
+                            .detailLevel(detailLevel)
+                            .build())
+                    .runtimeObserver(new InMemoryRuntimeObserver(1));
         }
         return FeatureDagEngine.init(
                 loadDemoConfig(),

@@ -27,10 +27,13 @@ import com.example.featuredag.runtime.ExecutionResult;
 import com.example.featuredag.runtime.ExecutionStatus;
 import com.example.featuredag.runtime.ListSequenceValue;
 import com.example.featuredag.runtime.NodeExecutionSnapshot;
+import com.example.featuredag.runtime.ObservabilityOptions;
+import com.example.featuredag.runtime.ObservationDetailLevel;
 import com.example.featuredag.runtime.OfflineBatchValue;
 import com.example.featuredag.runtime.PhysicalExecutorRegistry;
 import com.example.featuredag.runtime.RequestBatchValue;
 import com.example.featuredag.runtime.RuntimeNodeState;
+import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.RuntimeObserver;
 import com.example.featuredag.runtime.SequenceIndexRegistry;
 import com.example.featuredag.runtime.SequenceValue;
@@ -55,6 +58,7 @@ public final class FeatureDagEngine {
     private final DagRuntime runtime;
     private final FeatureInputDecoder inputDecoder;
     private final FeatureOutputEncoder outputEncoder;
+    private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
 
     private FeatureDagEngine(
@@ -65,6 +69,7 @@ public final class FeatureDagEngine {
             DagRuntime runtime,
             FeatureInputDecoder inputDecoder,
             FeatureOutputEncoder outputEncoder,
+            RuntimeObservabilityController observabilityController,
             RuntimeObserver runtimeObserver) {
         this.environment = environment;
         this.featureSetName = mapped.featureSetName();
@@ -75,6 +80,8 @@ public final class FeatureDagEngine {
         this.runtime = runtime;
         this.inputDecoder = inputDecoder;
         this.outputEncoder = outputEncoder;
+        this.observabilityController = Objects.requireNonNull(
+                observabilityController, "observabilityController");
         this.runtimeObserver = Objects.requireNonNull(runtimeObserver, "runtimeObserver");
     }
 
@@ -420,8 +427,15 @@ public final class FeatureDagEngine {
             int candidateCount,
             int offlineRowCount) {
         if (runtimeObserver == RuntimeObserver.NOOP) return null;
+        ObservabilityOptions options = observabilityController.options();
+        if (!options.canCaptureAnyRequest()) return null;
         return new ExecutionObservation(
-                executionId, groupCount, candidateCount, offlineRowCount);
+                executionId,
+                groupCount,
+                candidateCount,
+                offlineRowCount,
+                options,
+                deterministicSample(executionId, options.sampleRate()));
     }
 
     private static <T> T measure(
@@ -454,12 +468,39 @@ public final class FeatureDagEngine {
 
     private void publishObservation(ExecutionObservation observation) {
         if (observation == null) return;
+        long totalDurationNanos = observation.elapsedNanos();
+        if (!observation.shouldPublish(totalDurationNanos)) return;
         try {
             runtimeObserver.onExecutionCompleted(observation.snapshot(
-                    planId, featureSetName, version, environment, plan));
+                    planId,
+                    featureSetName,
+                    version,
+                    environment,
+                    plan,
+                    totalDurationNanos));
         } catch (RuntimeException ignored) {
             // 观测出口与业务执行隔离：指标适配器故障不得改变 generate 结果。
         }
+    }
+
+    private boolean deterministicSample(String executionId, double sampleRate) {
+        if (sampleRate <= 0.0) return false;
+        if (sampleRate >= 1.0) return true;
+        long hash = hashText(0xcbf29ce484222325L, planId);
+        hash ^= 0xff;
+        hash *= 0x100000001b3L;
+        hash = hashText(hash, executionId);
+        double normalized = (hash >>> 11) * 0x1.0p-53;
+        return normalized < sampleRate;
+    }
+
+    private static long hashText(long initial, String value) {
+        long hash = initial;
+        for (int index = 0; index < value.length(); index++) {
+            hash ^= value.charAt(index);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
     }
 
     private static FeatureDagEngine initialize(FeatureSetConfig config, InitOptions options) {
@@ -491,7 +532,10 @@ public final class FeatureDagEngine {
             FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
             return new FeatureDagEngine(
                     options.environment(), mapped, planId, plan, new DagRuntime(operators, executors),
-                    inputDecoder, outputEncoder, options.runtimeObserver());
+                    inputDecoder,
+                    outputEncoder,
+                    options.observabilityController(),
+                    options.runtimeObserver());
         } catch (RuntimeException error) {
             throw initializationFailure(
                     error, featureSetName, version, configuredPlanId);
@@ -512,6 +556,8 @@ public final class FeatureDagEngine {
         private final int groupCount;
         private final int candidateCount;
         private final int offlineRowCount;
+        private final ObservabilityOptions options;
+        private final boolean sampled;
         private final long startNanos = System.nanoTime();
         private long decodeDurationNanos;
         private long runtimeDurationNanos;
@@ -524,11 +570,15 @@ public final class FeatureDagEngine {
                 String executionId,
                 int groupCount,
                 int candidateCount,
-                int offlineRowCount) {
+                int offlineRowCount,
+                ObservabilityOptions options,
+                boolean sampled) {
             this.executionId = executionId;
             this.groupCount = groupCount;
             this.candidateCount = candidateCount;
             this.offlineRowCount = offlineRowCount;
+            this.options = options;
+            this.sampled = sampled;
         }
 
         private void attachContext(ExecutionContext value) {
@@ -553,14 +603,31 @@ public final class FeatureDagEngine {
             }
         }
 
+        private long elapsedNanos() {
+            return System.nanoTime() - startNanos;
+        }
+
+        private boolean shouldPublish(long totalDurationNanos) {
+            return sampled
+                    || (failure != null && options.captureFailuresAlways())
+                    || isSlow(totalDurationNanos);
+        }
+
+        private boolean isSlow(long totalDurationNanos) {
+            long threshold = options.slowRequestThresholdNanos();
+            return threshold > 0 && totalDurationNanos >= threshold;
+        }
+
         private ExecutionDiagnostics snapshot(
                 String planId,
                 String featureSetName,
                 String version,
                 ExecutionEnvironment environment,
-                PhysicalPlan plan) {
+                PhysicalPlan plan,
+                long totalDurationNanos) {
+            ObservationDetailLevel detailLevel = options.detailLevel();
             List<NodeExecutionSnapshot> nodes = new ArrayList<>();
-            if (context != null) {
+            if (context != null && detailLevel.includesNodes()) {
                 for (PhysicalNode node : plan.nodes()) {
                     RuntimeNodeState state = context.nodeStates().get(node.physicalNodeId());
                     if (state == null) continue;
@@ -604,7 +671,10 @@ public final class FeatureDagEngine {
                     failure == null ? ExecutionStatus.SUCCESS : ExecutionStatus.FAILED,
                     failurePhase,
                     failure == null ? null : failure.getClass().getName(),
-                    System.nanoTime() - startNanos,
+                    sampled,
+                    isSlow(totalDurationNanos),
+                    detailLevel,
+                    totalDurationNanos,
                     decodeDurationNanos,
                     runtimeDurationNanos,
                     encodeDurationNanos,
@@ -617,7 +687,9 @@ public final class FeatureDagEngine {
                     plan.nodes().size(),
                     logicalNodeCount,
                     fusedNodeCount,
-                    context == null ? Map.of() : context.runtimeCache().snapshot(),
+                    context == null || !detailLevel.includesCache()
+                            ? Map.of()
+                            : context.runtimeCache().snapshot(),
                     nodes);
         }
 

@@ -60,6 +60,8 @@ import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.runtime.CandidateBatchValue;
 import com.example.featuredag.runtime.CandidateVectorValue;
 import com.example.featuredag.runtime.BitmapSelection;
+import com.example.featuredag.runtime.AsyncObserverStats;
+import com.example.featuredag.runtime.AsyncRuntimeObserver;
 import com.example.featuredag.runtime.CacheKind;
 import com.example.featuredag.runtime.CacheStats;
 import com.example.featuredag.runtime.DagRuntime;
@@ -71,7 +73,10 @@ import com.example.featuredag.runtime.ExecutionStatus;
 import com.example.featuredag.runtime.InMemoryRuntimeObserver;
 import com.example.featuredag.runtime.IndexSelection;
 import com.example.featuredag.runtime.ListSequenceValue;
+import com.example.featuredag.runtime.ObservabilityOptions;
+import com.example.featuredag.runtime.ObservationDetailLevel;
 import com.example.featuredag.runtime.RangeSelection;
+import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.ScalarValue;
 import com.example.featuredag.runtime.SequenceBlock;
 import com.example.featuredag.runtime.SequenceEvent;
@@ -82,6 +87,7 @@ import com.example.featuredag.runtime.ValueHandle;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -90,9 +96,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
@@ -127,6 +135,8 @@ public final class DagEngineSelfTest {
         testOnlineBatchPublicApi();
         testRuntimeObservability();
         testRuntimeObservabilityCoversBatchAndFailure();
+        testRuntimeObservabilityControls();
+        testAsyncRuntimeObserver();
         testRuntimeObserverFailureIsolation();
         testOnlineBaseMetadataDefaults();
         testOnlineSharedArrayOutput();
@@ -1795,6 +1805,183 @@ public final class DagEngineSelfTest {
         assert failed.nodes().stream().anyMatch(node -> node.status() == ExecutionStatus.FAILED)
                 : failed.nodes();
         assert onlineObserver.receivedCount() == 2 : onlineObserver.receivedCount();
+    }
+
+    private static void testRuntimeObservabilityControls() {
+        InMemoryRuntimeObserver observer = new InMemoryRuntimeObserver(12);
+        RuntimeObservabilityController controller = new RuntimeObservabilityController(
+                ObservabilityOptions.builder()
+                        .enabled(false)
+                        .sampleRate(1.0)
+                        .detailLevel(ObservationDetailLevel.NODE)
+                        .build());
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                intermediateConfigJson(),
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.OFFLINE)
+                        .planId("controlled-observer")
+                        .observabilityController(controller)
+                        .runtimeObserver(observer)
+                        .build());
+
+        engine.generate(observabilityOfflineRequest("disabled-request"));
+        assert observer.receivedCount() == 0 : observer.receivedCount();
+
+        controller.update(ObservabilityOptions.builder()
+                .sampleRate(0.0)
+                .captureFailuresAlways(false)
+                .detailLevel(ObservationDetailLevel.BASIC)
+                .build());
+        engine.generate(observabilityOfflineRequest("unsampled-request"));
+        assert observer.receivedCount() == 0 : observer.receivedCount();
+
+        controller.update(ObservabilityOptions.builder()
+                .sampleRate(1.0)
+                .detailLevel(ObservationDetailLevel.BASIC)
+                .build());
+        engine.generate(observabilityOfflineRequest("basic-request"));
+        ExecutionDiagnostics basic = observer.latest();
+        assert basic.sampled() : basic;
+        assert !basic.slow() : basic;
+        assert basic.detailLevel() == ObservationDetailLevel.BASIC : basic;
+        assert basic.cacheStats().isEmpty() : basic;
+        assert basic.nodes().isEmpty() : basic;
+
+        controller.update(ObservabilityOptions.builder()
+                .sampleRate(1.0)
+                .detailLevel(ObservationDetailLevel.NODE)
+                .build());
+        engine.generate(observabilityOfflineRequest("node-request"));
+        ExecutionDiagnostics node = observer.latest();
+        assert node.detailLevel() == ObservationDetailLevel.NODE : node;
+        assert !node.nodes().isEmpty() : node;
+
+        controller.setEnabled(false);
+        engine.generate(observabilityOfflineRequest("dynamically-disabled-request"));
+        assert observer.receivedCount() == 2 : observer.receivedCount();
+
+        controller.update(ObservabilityOptions.builder()
+                .sampleRate(0.0)
+                .captureFailuresAlways(true)
+                .detailLevel(ObservationDetailLevel.BASIC)
+                .build());
+        expectThrows(
+                FeatureGenerationException.class,
+                () -> engine.generate(new OnlineGenerateRequest(
+                        "forced-failure-request", Map.of(), List.of())));
+        ExecutionDiagnostics failed = observer.latest();
+        assert observer.receivedCount() == 3 : observer.receivedCount();
+        assert failed.status() == ExecutionStatus.FAILED : failed;
+        assert !failed.sampled() : failed;
+        assert failed.failurePhase() == ExecutionPhase.VALIDATION : failed;
+
+        controller.update(ObservabilityOptions.builder()
+                .sampleRate(0.0)
+                .captureFailuresAlways(false)
+                .slowRequestThreshold(Duration.ofNanos(1))
+                .detailLevel(ObservationDetailLevel.CACHE)
+                .build());
+        engine.generate(observabilityOfflineRequest("forced-slow-request"));
+        ExecutionDiagnostics slow = observer.latest();
+        assert observer.receivedCount() == 4 : observer.receivedCount();
+        assert slow.slow() : slow;
+        assert !slow.sampled() : slow;
+        assert slow.detailLevel() == ObservationDetailLevel.CACHE : slow;
+        assert slow.nodes().isEmpty() : slow;
+
+        controller.update(ObservabilityOptions.builder()
+                .sampleRate(0.5)
+                .captureFailuresAlways(false)
+                .detailLevel(ObservationDetailLevel.BASIC)
+                .build());
+        long beforeDeterministicSample = observer.receivedCount();
+        engine.generate(observabilityOfflineRequest("deterministic-request"));
+        engine.generate(observabilityOfflineRequest("deterministic-request"));
+        long deterministicDelta = observer.receivedCount() - beforeDeterministicSample;
+        assert deterministicDelta == 0 || deterministicDelta == 2 : deterministicDelta;
+
+        expectThrows(
+                IllegalArgumentException.class,
+                () -> ObservabilityOptions.builder().sampleRate(1.01).build());
+        expectThrows(
+                IllegalArgumentException.class,
+                () -> ObservabilityOptions.builder()
+                        .slowRequestThreshold(Duration.ofNanos(-1))
+                        .build());
+    }
+
+    private static void testAsyncRuntimeObserver() throws Exception {
+        InMemoryRuntimeObserver templateObserver = new InMemoryRuntimeObserver(1);
+        FeatureDagEngine templateEngine = FeatureDagEngine.init(
+                intermediateConfigJson(),
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.OFFLINE)
+                        .planId("async-observer-template")
+                        .runtimeObserver(templateObserver)
+                        .build());
+        templateEngine.generate(observabilityOfflineRequest("async-template-request"));
+        ExecutionDiagnostics template = templateObserver.latest();
+
+        List<ExecutionDiagnostics> exported = Collections.synchronizedList(new ArrayList<>());
+        try (AsyncRuntimeObserver observer = new AsyncRuntimeObserver(
+                8, 4, Duration.ofMillis(10), exported::addAll)) {
+            observer.onExecutionCompleted(template);
+            observer.onExecutionCompleted(template);
+            observer.onExecutionCompleted(template);
+            assert observer.awaitDrained(Duration.ofSeconds(2)) : observer.stats();
+            AsyncObserverStats stats = observer.stats();
+            assert stats.accepted() == 3 : stats;
+            assert stats.dropped() == 0 : stats;
+            assert stats.exported() == 3 : stats;
+            assert stats.exportFailures() == 0 : stats;
+            assert stats.pending() == 0 : stats;
+            assert exported.size() == 3 : exported;
+        }
+
+        CountDownLatch exportStarted = new CountDownLatch(1);
+        CountDownLatch releaseExport = new CountDownLatch(1);
+        AsyncRuntimeObserver bounded = new AsyncRuntimeObserver(
+                1,
+                1,
+                Duration.ofMillis(10),
+                batch -> {
+                    exportStarted.countDown();
+                    try {
+                        releaseExport.await();
+                    } catch (InterruptedException error) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+        bounded.onExecutionCompleted(template);
+        assert exportStarted.await(2, TimeUnit.SECONDS) : bounded.stats();
+        bounded.onExecutionCompleted(template);
+        bounded.onExecutionCompleted(template);
+        assert bounded.stats().dropped() == 1 : bounded.stats();
+        releaseExport.countDown();
+        assert bounded.awaitDrained(Duration.ofSeconds(2)) : bounded.stats();
+        assert bounded.close(Duration.ofSeconds(2)) : bounded.stats();
+        long droppedBeforeClosedWrite = bounded.stats().dropped();
+        bounded.onExecutionCompleted(template);
+        assert bounded.stats().dropped() == droppedBeforeClosedWrite + 1 : bounded.stats();
+
+        try (AsyncRuntimeObserver failing = new AsyncRuntimeObserver(
+                2,
+                2,
+                Duration.ofMillis(10),
+                batch -> {
+                    throw new IllegalStateException("metrics backend unavailable");
+                })) {
+            failing.onExecutionCompleted(template);
+            assert failing.awaitDrained(Duration.ofSeconds(2)) : failing.stats();
+            assert failing.stats().exportFailures() == 1 : failing.stats();
+            assert failing.stats().exported() == 0 : failing.stats();
+        }
+    }
+
+    private static OfflineGenerateRequest observabilityOfflineRequest(String executionId) {
+        return new OfflineGenerateRequest(
+                executionId,
+                Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8)));
     }
 
     private static void testRuntimeObserverFailureIsolation() {

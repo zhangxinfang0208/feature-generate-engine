@@ -21,6 +21,9 @@ public record ExecutionDiagnostics(
         ExecutionStatus status,
         ExecutionPhase failurePhase,
         String errorType,
+        boolean sampled,
+        boolean slow,
+        ObservationDetailLevel detailLevel,
         long totalDurationNanos,
         long decodeDurationNanos,
         long runtimeDurationNanos,
@@ -45,6 +48,7 @@ public record ExecutionDiagnostics(
         Objects.requireNonNull(environment, "environment");
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(failurePhase, "failurePhase");
+        Objects.requireNonNull(detailLevel, "detailLevel");
         if (totalDurationNanos < 0 || decodeDurationNanos < 0
                 || runtimeDurationNanos < 0 || encodeDurationNanos < 0) {
             throw new IllegalArgumentException("Execution durations must not be negative");

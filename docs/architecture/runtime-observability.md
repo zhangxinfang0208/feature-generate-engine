@@ -18,15 +18,70 @@ engine.generate(request);
 ExecutionDiagnostics diagnostics = observer.latest();
 ```
 
-生产环境应实现线程安全、非阻塞的 `RuntimeObserver` 适配器，把一次执行的局部计数批量写入指标系统。
-适配器抛出的 `RuntimeException` 会被公共 API 隔离，不会改变 `generate` 的结果。`InMemoryRuntimeObserver`
-是有界、线程安全的实现，只用于测试、压测断言和临时诊断。
+`InMemoryRuntimeObserver` 是有界、线程安全的实现，只用于测试、压测断言和临时诊断；生产环境不应轮询
+`latest()`。生产接入使用可热更新策略和有界异步出口：
+
+```java
+RuntimeObservabilityController controller = new RuntimeObservabilityController(
+        ObservabilityOptions.builder()
+                .enabled(true)
+                .sampleRate(0.01)
+                .captureFailuresAlways(true)
+                .slowRequestThreshold(Duration.ofMillis(50))
+                .detailLevel(ObservationDetailLevel.CACHE)
+                .build());
+
+AsyncRuntimeObserver observer = new AsyncRuntimeObserver(
+        10_000,
+        200,
+        Duration.ofMillis(100),
+        batch -> metricsExporter.export(batch));
+
+InitOptions options = InitOptions.builder()
+        .environment(ExecutionEnvironment.ONLINE)
+        .planId("ranking-v1")
+        .observabilityController(controller)
+        .runtimeObserver(observer)
+        .build();
+```
+
+配置中心变更时原子替换策略，不需要重建引擎：
+
+```java
+controller.setEnabled(false);
+controller.update(newOptions);
+```
+
+应用退出时调用 `observer.close()` 尽量排空队列。`AsyncRuntimeObserver` 在请求线程只执行非阻塞
+`offer`；队列满或关闭后增加 drop 计数，不回压 DAG。后台 sink 抛出的 `RuntimeException` 被隔离并计入
+export failure。应把 `AsyncObserverStats.dropped`、`pending` 和 `exportFailures` 接入自身监控。
+
+## 采集控制语义
+
+- 未配置 `RuntimeObserver` 时使用 `NOOP`，不会创建观测对象或诊断快照；
+- `enabled=false` 可在运行中立即停止新请求采集；
+- 正常请求按 `planId + executionId` 做确定性采样，同一执行 ID 的采样结果稳定；
+- `captureFailuresAlways=true` 时失败请求绕过采样；
+- 超过 `slowRequestThreshold` 的请求绕过采样，阈值为 `Duration.ZERO` 时关闭慢请求强制采集；
+- 策略在请求开始时读取一次，运行中的配置更新从后续请求生效，单次请求不会混用两份策略；
+- 当采样率为 0 且失败、慢请求强制采集都关闭时，不创建观测对象。
+
+明细级别控制快照成本：
+
+- `BASIC`：状态、阶段耗时、请求规模、序列规模和计划规模；
+- `CACHE`：在 BASIC 基础上增加按 `CacheKind` 汇总的 lookup/hit/miss/put；
+- `NODE`：在 CACHE 基础上增加逐物理节点的执行状态、耗时、去重和缓存快照。
+
+为兼容原有调用，配置自定义 Observer 但未显式传入策略时，默认是 `enabled=true`、100% 采样、失败全量、
+慢请求强制采集关闭、`NODE` 明细。现网必须显式设置生产策略。Observer 回调抛出的 `RuntimeException`
+会被公共 API 隔离，不会改变 `generate` 的结果。
 
 ## 诊断模型
 
 `ExecutionDiagnostics` 记录：
 
 - plan、feature set、version、execution、环境和成功/失败状态；
+- 是否被正常采样、是否属于慢请求，以及本次快照明细级别；
 - decode、runtime、encode 和端到端耗时；
 - group、candidate、offline row、源序列数量、源序列元素总量和最大源序列长度；
 - 物理节点、逻辑节点和融合物理节点数量；
@@ -107,7 +162,7 @@ bash ./scripts/run-benchmark.sh
 
 ```bash
 bash ./scripts/run-benchmark.sh \
-  'FeatureDagEngineBenchmark.onlineSingle -p candidateCount=10 -p distinctKeyCount=1 -p diagnosticsEnabled=false'
+  'FeatureDagEngineBenchmark.onlineSingle -p candidateCount=10 -p distinctKeyCount=1 -p observabilityMode=OFF'
 ```
 
 默认结果写入 `target/jmh-result.json`，正式基线应保留 fork、预热和 GC profiler，不应使用非 fork 的冒烟结果。

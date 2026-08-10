@@ -6,6 +6,8 @@ import com.example.featuredag.api.FeatureGenerationException;
 import com.example.featuredag.api.FeatureValueCodecSelfTest;
 import com.example.featuredag.api.GenerateResult;
 import com.example.featuredag.api.InitOptions;
+import com.example.featuredag.api.OfflineBatchGenerateRequest;
+import com.example.featuredag.api.OfflineBatchGenerateResult;
 import com.example.featuredag.api.OfflineGenerateRequest;
 import com.example.featuredag.api.OnlineGenerateRequest;
 import com.example.featuredag.config.FeatureConfigLoader;
@@ -105,6 +107,7 @@ public final class DagEngineSelfTest {
         testLegacyDerivedFeaturesRejected();
         testIntermediateFeatureMapping();
         testOfflinePublicApi();
+        testOfflineBatchPublicApi();
         testConfigPathInit();
         testOfflineSequenceMaterialization();
         testOnlinePublicApi();
@@ -1367,6 +1370,74 @@ public final class DagEngineSelfTest {
         assert result.candidateFeatureValues().isEmpty();
         assert !result.featureValues().containsKey("normalized_price")
                 : "Internal feature leaked through the public boundary";
+    }
+
+    private static void testOfflineBatchPublicApi() {
+        FeatureDagEngine engine = FeatureDagEngine.init(
+                intermediateConfigJson(),
+                InitOptions.offline("offline-batch-public-api"));
+
+        List<Map<String, List<?>>> inputRows = List.of(
+                Map.of("raw_price", List.of(100.0), "quality_score", List.of(0.8)),
+                Map.of("raw_price", List.of(500.0), "quality_score", List.of(0.5)),
+                Map.of("quality_score", List.of(0.9)));
+        OfflineBatchGenerateResult result = engine.generateBatch(
+                new OfflineBatchGenerateRequest("batch-1", inputRows));
+
+        assert result.executionId().equals("batch-1");
+        assert result.rows().size() == inputRows.size() : result.rows();
+        assert Math.abs(((Number) scalarFeature(
+                result.rows().get(0), "price_score_out")).doubleValue() - 0.08) < 0.000001
+                : result.rows();
+        assert Math.abs(((Number) scalarFeature(
+                result.rows().get(1), "price_score_out")).doubleValue() - 0.25) < 0.000001
+                : result.rows();
+        assert Math.abs(((Number) scalarFeature(
+                result.rows().get(2), "price_score_out")).doubleValue()) < 0.000001
+                : result.rows();
+        assert result.rows().stream().noneMatch(row -> row.containsKey("normalized_price"))
+                : "Internal feature leaked through the batch public boundary";
+
+        OfflineBatchGenerateResult empty = engine.generateBatch(
+                new OfflineBatchGenerateRequest("empty-batch", List.of()));
+        assert empty.rows().isEmpty() : empty.rows();
+
+        String sequenceConfig = """
+                {
+                  "features": [
+                    {"name":"values","raw_name":"values","type":"INT",
+                     "definition_type":"BASE","entity_scopes":["USER"],
+                     "value_shape":"SEQUENCE"},
+                    {"name":"value_count","type":"INT","definition_type":"DERIVED",
+                     "expression":"get_seq_length(values)","output_policy":"OUTPUT",
+                     "entity_scopes":["USER"],"value_shape":"SCALAR"}
+                  ],
+                  "feature_set_name":"offline_batch_sequence","version":"1"
+                }
+                """;
+        FeatureDagEngine sequenceEngine = FeatureDagEngine.init(
+                sequenceConfig, InitOptions.offline("offline-batch-sequence"));
+        OfflineBatchGenerateResult sequenceResult = sequenceEngine.generateBatch(
+                new OfflineBatchGenerateRequest(
+                        "sequence-batch",
+                        List.of(
+                                Map.of("values", List.of(1, 2, 3)),
+                                Map.of("values", List.of()))));
+        assert scalarFeature(sequenceResult.rows().get(0), "value_count").equals(3)
+                : sequenceResult.rows();
+        assert scalarFeature(sequenceResult.rows().get(1), "value_count").equals(0)
+                : sequenceResult.rows();
+
+        List<Map<String, List<?>>> missingSequenceRows = List.of(
+                Map.of("values", List.of(1)),
+                Map.of());
+        FeatureGenerationException missing = expectThrows(
+                FeatureGenerationException.class,
+                () -> sequenceEngine.generateBatch(
+                        new OfflineBatchGenerateRequest(
+                                "missing-sequence-batch", missingSequenceRows)));
+        assert missing.getMessage().contains("values") : missing.getMessage();
+        assert missing.getMessage().contains("offline batch row 1") : missing.getMessage();
     }
 
     private static void testConfigPathInit() throws Exception {

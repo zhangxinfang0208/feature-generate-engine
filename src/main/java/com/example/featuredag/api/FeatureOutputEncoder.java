@@ -35,6 +35,10 @@ final class FeatureOutputEncoder {
     }
 
     List<?> encodeCandidateElement(String featureName, Object value) {
+        return encodeBatchElement(featureName, value);
+    }
+
+    List<?> encodeBatchElement(String featureName, Object value) {
         return encodeMaterialized(featureName, materializer.materializeRaw(value));
     }
 

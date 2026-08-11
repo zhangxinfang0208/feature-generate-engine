@@ -1,0 +1,53 @@
+{
+  "feature_set_name": "native_batch_performance_demo",
+  "version": "1",
+  "features": [
+    {"name":"codes","raw_name":"codes","type":"STRING","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+    {"name":"labels","raw_name":"labels","type":"STRING","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+    {"name":"all_indices","raw_name":"all_indices","type":"INT","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+    {"name":"index_tags","raw_name":"index_tags","type":"STRING","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+    {"name":"target_tag","raw_name":"target_tag","type":"STRING","definition_type":"BASE","entity_scopes":["ITEM"],"value_shape":"SCALAR"},
+    {"name":"number_sequence","raw_name":"number_sequence","type":"DOUBLE","definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+    {"name":"delta_base","raw_name":"delta_base","type":"DOUBLE","definition_type":"BASE","entity_scopes":["ITEM"],"value_shape":"SCALAR"},
+    {
+      "name": "complex_distinct",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "count_distinct(zip_concat(slice_by_indices(codes, slice_by_indices(all_indices, find_indices(index_tags, target_tag))), slice_by_indices(labels, slice_by_indices(all_indices, find_indices(index_tags, target_tag))), {\"delimiter\":\"|\"}))",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER", "ITEM"],
+      "value_shape": "SCALAR",
+      "order": 1
+    },
+    {
+      "name": "complex_distinct_alias",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "count_distinct(zip_concat(slice_by_indices(codes, slice_by_indices(all_indices, find_indices(index_tags, target_tag))), slice_by_indices(labels, slice_by_indices(all_indices, find_indices(index_tags, target_tag))), {\"delimiter\":\"|\"}))",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER", "ITEM"],
+      "value_shape": "SCALAR",
+      "order": 2
+    },
+    {
+      "name": "deep_numeric_bucket",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "discrete(log_base(get_seq_length(calc_delta_seq(number_sequence, delta_base)), 2, 1048576), [0, 4, 8, 12, 16])",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER", "ITEM"],
+      "value_shape": "SCALAR",
+      "order": 3
+    },
+    {
+      "name": "deep_numeric_bucket_alias",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "discrete(log_base(get_seq_length(calc_delta_seq(number_sequence, delta_base)), 2, 1048576), [0, 4, 8, 12, 16])",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER", "ITEM"],
+      "value_shape": "SCALAR",
+      "order": 4
+    }
+  ]
+}

@@ -59,6 +59,7 @@ public final class DagEngineSelfTest {
         testInitialOperatorValidation();
         testInitialOperatorExpressionsBuildAndInfer();
         testInitialOperatorPublicApiDemos();
+        testNativeBatchPerformanceDemo();
         System.out.println("All DAG engine self tests passed.");
     }
 
@@ -299,6 +300,23 @@ public final class DagEngineSelfTest {
         ScalarOperatorsDemo.run();
         SequenceOperatorsDemo.run();
         OfflineBatchOperatorsDemo.run();
+    }
+
+    private static void testNativeBatchPerformanceDemo() {
+        try {
+            Class<?> demo = Class.forName(
+                    "com.example.featuredag.demo.NativeBatchPerformanceDemo");
+            demo.getMethod("runSmokeTest").invoke(null);
+        } catch (ClassNotFoundException error) {
+            throw new AssertionError("Native Batch performance demo is missing", error);
+        } catch (ReflectiveOperationException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            if (cause instanceof Error) throw (Error) cause;
+            throw new AssertionError(
+                    "Native Batch performance demo failed",
+                    cause == null ? error : cause);
+        }
     }
 
     private static <T extends Throwable> T expectThrows(

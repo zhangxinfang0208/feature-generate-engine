@@ -66,6 +66,18 @@ new SequenceCardinalitySemantic(0)
 语义是正确性承诺。只有当算子对所有合法输入都满足该语义时才能注册；名称、参数数量或输出 shape
 相似并不足以注册相同语义。
 
+### 3.1 Single/Batch 执行能力
+
+`OperatorDefinition` 继承 `SingleOperatorKernel`，其单值结果是算子语义基准。需要原生批量优化的
+算子同时实现 `BatchOperatorKernel`；其他算子由 `SingleLoopBatchOperatorKernel` 自动适配。
+Batch 输入只依赖 operator 层的 `BatchColumn`、`BatchLayout` 等只读协议，不得引用 runtime 的
+`ExecutionContext` 或 `ValueHandle`（C1）。
+
+物理计划必须记录 `singleKernelId`、`batchKernelId`、`batchKernelKind` 和
+`OperatorInvocationPolicy` 枚举。运行时必须读取该枚举，可按
+输入载体选择计划已声明的 Single 或 Batch Kernel，但不得在请求阶段匹配融合规则或改写节点
+（C10）。详细契约见 `docs/architecture/operator-single-batch-execution.md`。
+
 ## 4. 注册物理改写规则
 
 所有融合规则实现 `PhysicalRewriteRule`，并注册到 `PhysicalRewriteRegistry`。规则必须：

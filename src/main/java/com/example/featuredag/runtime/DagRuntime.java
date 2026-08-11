@@ -1,9 +1,17 @@
 package com.example.featuredag.runtime;
 
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BatchColumn;
+import com.example.featuredag.operator.BatchDomain;
+import com.example.featuredag.operator.BatchKernelKind;
+import com.example.featuredag.operator.BatchLayout;
+import com.example.featuredag.operator.BatchOperatorCall;
+import com.example.featuredag.operator.BatchOperatorEvaluationException;
+import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.CachePolicy;
 import com.example.featuredag.physical.ExecutorType;
+import com.example.featuredag.physical.OperatorInvocationPolicy;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
 
@@ -214,17 +222,39 @@ public final class DagRuntime {
             ExecutionContext context,
             RuntimeNodeState state,
             ValueShape logicalValueShape) {
+        return switch (invocationPolicy(node)) {
+            case SINGLE_OR_BATCH_BY_INPUT_DOMAIN -> applySingleOrBatchByInputDomain(
+                    node,
+                    operatorName,
+                    inputHandles,
+                    context,
+                    state,
+                    logicalValueShape);
+        };
+    }
+
+    private ValueHandle applySingleOrBatchByInputDomain(
+            PhysicalNode node,
+            String operatorName,
+            List<ValueHandle> inputHandles,
+            ExecutionContext context,
+            RuntimeNodeState state,
+            ValueShape logicalValueShape) {
         EvaluationDomain domain = evaluationDomain(inputHandles);
         if (domain == EvaluationDomain.NONE) {
             List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
-            return wrap(operatorRegistry.evaluate(operatorName, args), logicalValueShape, context.executionId());
+            String singleKernelId = String.valueOf(node.executorConfig().getOrDefault(
+                    "singleKernelId", operatorName));
+            return wrap(
+                    operatorRegistry.evaluate(singleKernelId, args),
+                    logicalValueShape,
+                    context.executionId());
         }
         // C10：批维度来自执行上下文，标量/字面量在批内广播，不在运行时改变执行阶段。
         int size = evaluationSize(domain, context);
         for (ValueHandle handle : inputHandles) {
             validateBatchValueSize(handle, domain, size, context, operatorName);
         }
-        List<Object> result = new ArrayList<>(size);
         boolean memoize = node.cachePolicy() == CachePolicy.CANDIDATE_KEY;
         if (memoize) {
             var definition = operatorRegistry.require(operatorName);
@@ -234,41 +264,11 @@ public final class DagRuntime {
                                 + operatorName);
             }
         }
-        Set<OperatorInvocationCacheKey> uniqueInvocations = new LinkedHashSet<>();
-        for (int index = 0; index < size; index++) {
-            List<Object> args = new ArrayList<>(inputHandles.size());
-            for (ValueHandle handle : inputHandles) {
-                args.add(argumentAt(handle, domain, index, context));
-            }
-            try {
-                Object value;
-                if (!memoize) {
-                    value = operatorRegistry.evaluate(operatorName, args);
-                } else {
-                    int groupIndex = evaluationGroupIndex(domain, index, context);
-                    OperatorInvocationCacheKey cacheKey = new OperatorInvocationCacheKey(
-                            node.physicalNodeId(), groupIndex, args);
-                    uniqueInvocations.add(cacheKey);
-                    RuntimeCache.CacheLookup cached = context.runtimeCache().lookup(
-                            CacheKind.CANDIDATE_KEY, cacheKey, state);
-                    if (cached.hit()) {
-                        value = cached.value();
-                    } else {
-                        value = operatorRegistry.evaluate(operatorName, args);
-                        context.runtimeCache().put(
-                                CacheKind.CANDIDATE_KEY, cacheKey, value, state);
-                    }
-                }
-                result.add(value);
-            } catch (RuntimeException error) {
-                throw new IllegalArgumentException(
-                        "Operator " + operatorName + " failed for "
-                                + evaluationLocation(domain, index, context)
-                                + ": " + error.getMessage(),
-                        error);
-            }
-        }
-        if (memoize) state.setDedupCounts(size, uniqueInvocations.size());
+        List<Object> result = memoize
+                ? evaluateCachedBatch(
+                        node, operatorName, inputHandles, domain, size, context, state)
+                : evaluateBatch(
+                        node, operatorName, inputHandles, domain, context, null);
         return switch (domain) {
             case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
             case OFFLINE_ROW -> new OfflineBatchValue(result, logicalValueShape);
@@ -276,6 +276,144 @@ public final class DagRuntime {
             case ONLINE_CANDIDATE -> new CandidateBatchValue(result, logicalValueShape);
             case NONE -> throw new IllegalStateException("Missing evaluation domain");
         };
+    }
+
+    private static OperatorInvocationPolicy invocationPolicy(PhysicalNode node) {
+        Object value = node.executorConfig().getOrDefault(
+                "invocationPolicy",
+                OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN);
+        if (value instanceof OperatorInvocationPolicy policy) return policy;
+        throw new IllegalStateException(
+                "Invalid operator invocation policy for " + node.physicalNodeId() + ": " + value);
+    }
+
+    /**
+     * 通用 Batch 执行（C10）：Single/Batch Kernel ID 已固化在物理节点配置中；
+     * 运行时只依据输入值句柄形成批域和虚拟广播列，不做节点融合或算法改写。
+     */
+    private List<Object> evaluateBatch(
+            PhysicalNode node,
+            String operatorName,
+            List<ValueHandle> inputHandles,
+            EvaluationDomain domain,
+            ExecutionContext context,
+            int[] selectedRows) {
+        RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context, selectedRows);
+        List<BatchColumn> arguments = inputHandles.stream()
+                .map(handle -> (BatchColumn) new InputBatchColumn(handle, layout, context))
+                .toList();
+        BatchOperatorResult result;
+        try {
+            BatchKernelKind plannedKind = BatchKernelKind.valueOf(String.valueOf(
+                    node.executorConfig().getOrDefault(
+                            "batchKernelKind", BatchKernelKind.SCALAR_ADAPTER.name())));
+            String batchKernelId = String.valueOf(node.executorConfig().getOrDefault(
+                    "batchKernelId", operatorName));
+            result = operatorRegistry.evaluateBatch(
+                    batchKernelId, new BatchOperatorCall(layout, arguments), plannedKind);
+        } catch (BatchOperatorEvaluationException error) {
+            int originalRow = layout.originalRowIndex(error.rowIndex());
+            throw batchRowFailure(
+                    operatorName, domain, originalRow, context, error.getCause());
+        } catch (RuntimeException error) {
+            throw new IllegalArgumentException(
+                    "Operator " + operatorName + " failed for "
+                            + batchLocation(domain) + ": " + error.getMessage(),
+                    error);
+        }
+        List<Object> values = new ArrayList<>(result.values().size());
+        for (int rowIndex = 0; rowIndex < result.values().size(); rowIndex++) {
+            values.add(result.values().valueAt(rowIndex));
+        }
+        return values;
+    }
+
+    /** 对 CANDIDATE_KEY 先合并相同 miss，再以一个紧凑 Batch 调用 Kernel 并 scatter。 */
+    private List<Object> evaluateCachedBatch(
+            PhysicalNode node,
+            String operatorName,
+            List<ValueHandle> inputHandles,
+            EvaluationDomain domain,
+            int size,
+            ExecutionContext context,
+            RuntimeNodeState state) {
+        List<Object> result = new ArrayList<>(Collections.nCopies(size, null));
+        Set<OperatorInvocationCacheKey> uniqueInvocations = new LinkedHashSet<>();
+        Map<OperatorInvocationCacheKey, PendingInvocation> pending = new LinkedHashMap<>();
+
+        for (int rowIndex = 0; rowIndex < size; rowIndex++) {
+            List<Object> arguments = new ArrayList<>(inputHandles.size());
+            for (ValueHandle handle : inputHandles) {
+                arguments.add(argumentAt(handle, domain, rowIndex, context));
+            }
+            int groupIndex = evaluationGroupIndex(domain, rowIndex, context);
+            OperatorInvocationCacheKey cacheKey = new OperatorInvocationCacheKey(
+                    node.physicalNodeId(), groupIndex, arguments);
+            uniqueInvocations.add(cacheKey);
+
+            PendingInvocation existing = pending.get(cacheKey);
+            if (existing != null) {
+                existing.rowIndexes().add(rowIndex);
+                continue;
+            }
+
+            RuntimeCache.CacheLookup cached = context.runtimeCache().lookup(
+                    CacheKind.CANDIDATE_KEY, cacheKey, state);
+            if (cached.hit()) {
+                result.set(rowIndex, cached.value());
+                continue;
+            }
+            List<Integer> rows = new ArrayList<>();
+            rows.add(rowIndex);
+            pending.put(cacheKey, new PendingInvocation(rowIndex, rows));
+        }
+
+        if (!pending.isEmpty()) {
+            int[] selectedRows = pending.values().stream()
+                    .mapToInt(PendingInvocation::representativeRowIndex)
+                    .toArray();
+            List<Object> computed = evaluateBatch(
+                    node, operatorName, inputHandles, domain, context, selectedRows);
+            int computedIndex = 0;
+            for (Map.Entry<OperatorInvocationCacheKey, PendingInvocation> entry : pending.entrySet()) {
+                Object value = computed.get(computedIndex++);
+                context.runtimeCache().put(
+                        CacheKind.CANDIDATE_KEY, entry.getKey(), value, state);
+                for (int rowIndex : entry.getValue().rowIndexes()) {
+                    result.set(rowIndex, value);
+                }
+            }
+        }
+
+        state.setDedupCounts(size, uniqueInvocations.size());
+        return result;
+    }
+
+    private static IllegalArgumentException batchRowFailure(
+            String operatorName,
+            EvaluationDomain domain,
+            int rowIndex,
+            ExecutionContext context,
+            Throwable cause) {
+        return new IllegalArgumentException(
+                "Operator " + operatorName + " failed for "
+                        + evaluationLocation(domain, rowIndex, context)
+                        + ": " + cause.getMessage(),
+                cause);
+    }
+
+    private static String batchLocation(EvaluationDomain domain) {
+        return switch (domain) {
+            case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> "candidate batch";
+            case OFFLINE_ROW -> "offline batch";
+            case ONLINE_REQUEST -> "online request batch";
+            case NONE -> "scalar value";
+        };
+    }
+
+    private record PendingInvocation(
+            int representativeRowIndex,
+            List<Integer> rowIndexes) {
     }
 
     private static EvaluationDomain evaluationDomain(List<ValueHandle> handles) {
@@ -380,6 +518,97 @@ public final class DagRuntime {
             throw new IllegalStateException(
                     "Operator " + operatorName + " received vector size " + actual
                             + ", expected " + expected);
+        }
+    }
+
+    private static final class RuntimeBatchLayout implements BatchLayout {
+        private final EvaluationDomain evaluationDomain;
+        private final ExecutionContext context;
+        private final int[] selectedRows;
+        private final int rowCount;
+
+        private RuntimeBatchLayout(
+                EvaluationDomain evaluationDomain,
+                ExecutionContext context,
+                int[] selectedRows) {
+            if (evaluationDomain == EvaluationDomain.NONE) {
+                throw new IllegalArgumentException("Scalar evaluation does not have a Batch layout");
+            }
+            this.evaluationDomain = evaluationDomain;
+            this.context = context;
+            this.selectedRows = selectedRows == null ? null : selectedRows.clone();
+            this.rowCount = selectedRows == null
+                    ? evaluationSize(evaluationDomain, context)
+                    : selectedRows.length;
+        }
+
+        @Override
+        public BatchDomain domain() {
+            return switch (evaluationDomain) {
+                case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> BatchDomain.ONLINE_CANDIDATE;
+                case OFFLINE_ROW -> BatchDomain.OFFLINE_ROW;
+                case ONLINE_REQUEST -> BatchDomain.ONLINE_REQUEST;
+                case NONE -> throw new IllegalStateException("Scalar evaluation has no Batch domain");
+            };
+        }
+
+        @Override
+        public int rowCount() {
+            return rowCount;
+        }
+
+        @Override
+        public int groupIndexAt(int rowIndex) {
+            return evaluationGroupIndex(
+                    evaluationDomain, originalRowIndex(rowIndex), context);
+        }
+
+        @Override
+        public int indexInGroupAt(int rowIndex) {
+            int originalRow = originalRowIndex(rowIndex);
+            return switch (evaluationDomain) {
+                case SINGLE_CANDIDATE, OFFLINE_ROW -> originalRow;
+                case ONLINE_CANDIDATE -> context.candidateIndexInGroup(originalRow);
+                case ONLINE_REQUEST -> 0;
+                case NONE -> throw new IllegalStateException("Scalar evaluation has no Batch row");
+            };
+        }
+
+        private int originalRowIndex(int rowIndex) {
+            if (rowIndex < 0 || rowIndex >= rowCount) {
+                throw new IndexOutOfBoundsException(
+                        "Batch row " + rowIndex + " out of bounds for size " + rowCount);
+            }
+            return selectedRows == null ? rowIndex : selectedRows[rowIndex];
+        }
+    }
+
+    private static final class InputBatchColumn implements BatchColumn {
+        private final ValueHandle handle;
+        private final RuntimeBatchLayout layout;
+        private final ExecutionContext context;
+
+        private InputBatchColumn(
+                ValueHandle handle,
+                RuntimeBatchLayout layout,
+                ExecutionContext context) {
+            this.handle = handle;
+            this.layout = layout;
+            this.context = context;
+        }
+
+        @Override
+        public int size() {
+            return layout.rowCount();
+        }
+
+        @Override
+        public Object valueAt(int rowIndex) {
+            return argumentAt(
+                    handle,
+                    layout.evaluationDomain,
+                    layout.originalRowIndex(rowIndex),
+                    context);
         }
     }
 

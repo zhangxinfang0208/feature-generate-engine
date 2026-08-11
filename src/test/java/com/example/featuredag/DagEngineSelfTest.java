@@ -44,6 +44,15 @@ import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorRegistry;
+import com.example.featuredag.operator.BatchColumn;
+import com.example.featuredag.operator.BatchDomain;
+import com.example.featuredag.operator.BatchKernelKind;
+import com.example.featuredag.operator.BatchLayout;
+import com.example.featuredag.operator.BatchOperatorCall;
+import com.example.featuredag.operator.BatchOperatorEvaluationException;
+import com.example.featuredag.operator.BatchOperatorKernel;
+import com.example.featuredag.operator.BatchOperatorResult;
+import com.example.featuredag.operator.ListBatchColumn;
 import com.example.featuredag.operator.KeyedSequenceFilterSemantic;
 import com.example.featuredag.operator.SequenceCardinalitySemantic;
 import com.example.featuredag.operator.SequenceKeyDomains;
@@ -52,6 +61,7 @@ import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutionStage;
 import com.example.featuredag.physical.ExecutorType;
 import com.example.featuredag.physical.PhysicalExecutorIds;
+import com.example.featuredag.physical.OperatorInvocationPolicy;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.PhysicalPlanPrinter;
@@ -95,6 +105,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -115,6 +126,8 @@ public final class DagEngineSelfTest {
         testCompleteBusinessExpressionParsing();
         testArrayLiteralDagConstruction();
         testOperatorTypeRuntimeConsistency();
+        testSingleAndNativeBatchOperatorDispatch();
+        testStandardNativeBatchMatchesSingle();
         testNullArrayLiteralDagConstruction();
         testObjectListsRemainScalarAtRuntime();
         testAlignedPlainListSequenceRuntime();
@@ -604,6 +617,213 @@ public final class DagEngineSelfTest {
                         fatalPlan,
                         ExecutionContext.offlineRow("fatal-error-row", Map.of())));
         assert propagated == marker : propagated;
+    }
+
+    private static void testSingleAndNativeBatchOperatorDispatch() {
+        AtomicInteger singleCalls = new AtomicInteger();
+        AtomicInteger batchCalls = new AtomicInteger();
+        OperatorRegistry registry = new OperatorRegistry().register(
+                new NativeBatchProbeOperator(singleCalls, batchCalls));
+        List<FeatureDefinition> definitions = List.of(
+                FeatureDefinition.raw(
+                        "batch_user", DataType.STRING, EntityScope.USER, null),
+                FeatureDefinition.raw(
+                        "batch_item", DataType.STRING, EntityScope.ITEM, null),
+                FeatureDefinition.derived(
+                        "batch_output",
+                        DataType.STRING,
+                        "native_batch_probe(batch_user, batch_item)",
+                        OutputPolicy.OUTPUT));
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
+                definitions, Set.of("batch_output"));
+        PhysicalPlan onlinePlan = new PhysicalPlanner(registry).plan(
+                new LogicalDagOptimizer(registry).analyze(dag),
+                ExecutionEnvironment.ONLINE,
+                "native-batch-dispatch");
+        PhysicalNode operatorNode = onlinePlan.nodes().stream()
+                .filter(node -> "native_batch_probe".equals(
+                        node.executorConfig().get("operatorName")))
+                .findFirst()
+                .orElseThrow();
+        assert operatorNode.executorConfig().get("batchKernelKind")
+                .equals(BatchKernelKind.NATIVE.name())
+                : PhysicalPlanPrinter.print(onlinePlan);
+        assert operatorNode.executorConfig().get("invocationPolicy")
+                == OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN;
+
+        DagRuntime runtime = new DagRuntime(registry);
+        ExecutionResult grouped = runtime.execute(
+                onlinePlan,
+                ExecutionContext.onlineBatch(
+                        "native-batch-groups",
+                        List.of("group-a", "group-b"),
+                        List.of(
+                                Map.of("batch_user", "A"),
+                                Map.of("batch_user", "B")),
+                        List.of(
+                                List.of(
+                                        Map.of("batch_item", "x"),
+                                        Map.of("batch_item", "y")),
+                                List.of(Map.of("batch_item", "z")))));
+        CandidateBatchValue groupedValues =
+                (CandidateBatchValue) grouped.feature("batch_output");
+        assert groupedValues.values().equals(List.of("A:x", "A:y", "B:z"))
+                : groupedValues.values();
+        assert batchCalls.get() == 1 : batchCalls.get();
+        assert singleCalls.get() == 0 : singleCalls.get();
+
+        ExecutionResult empty = runtime.execute(
+                onlinePlan,
+                ExecutionContext.onlineBatch(
+                        "native-batch-empty", List.of(), List.of(), List.of()));
+        assert ((CandidateBatchValue) empty.feature("batch_output")).values().isEmpty();
+        assert batchCalls.get() == 2 : "Empty Batch must invoke the Batch contract";
+        assert singleCalls.get() == 0;
+
+        ExecutionResult singleRequest = runtime.execute(
+                onlinePlan,
+                ExecutionContext.onlineRequest(
+                        "native-batch-single-request",
+                        Map.of("batch_user", "S"),
+                        List.of(
+                                Map.of("batch_item", "p"),
+                                Map.of("batch_item", "q"))));
+        assert ((CandidateVectorValue) singleRequest.feature("batch_output"))
+                .values().equals(List.of("S:p", "S:q"));
+        assert batchCalls.get() == 3 : batchCalls.get();
+        assert singleCalls.get() == 0;
+
+        PhysicalPlan offlinePlan = new PhysicalPlanner(registry).plan(
+                new LogicalDagOptimizer(registry).analyze(dag),
+                ExecutionEnvironment.OFFLINE,
+                "single-dispatch");
+        ExecutionResult scalar = runtime.execute(
+                offlinePlan,
+                ExecutionContext.offlineRow(
+                        "single-dispatch-row",
+                        Map.of("batch_user", "U", "batch_item", "i")));
+        assert scalar.feature("batch_output").raw().equals("U:i");
+        assert singleCalls.get() == 1 : singleCalls.get();
+        assert batchCalls.get() == 3 : batchCalls.get();
+
+        IllegalArgumentException onlineBatchError = expectThrows(
+                IllegalArgumentException.class,
+                () -> runtime.execute(
+                        onlinePlan,
+                        ExecutionContext.onlineBatch(
+                                "native-batch-online-error",
+                                List.of("good-group", "bad-group"),
+                                List.of(
+                                        Map.of("batch_user", "G"),
+                                        Map.of("batch_user", "B")),
+                                List.of(
+                                        List.of(Map.of("batch_item", "ok")),
+                                        List.of(Map.of("batch_item", "bad"))))));
+        assert onlineBatchError.getMessage().contains("online batch group 1 (bad-group)")
+                : onlineBatchError.getMessage();
+        assert onlineBatchError.getMessage().contains("candidate 0")
+                : onlineBatchError.getMessage();
+        assert batchCalls.get() == 4 : batchCalls.get();
+
+        OperatorRegistry standard = OperatorRegistry.standard();
+        LogicalDag errorDag = new LogicalDagBuilder(new ExpressionParser(), standard).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "numerator", DataType.DOUBLE, EntityScope.ITEM, null),
+                        FeatureDefinition.raw(
+                                "denominator", DataType.DOUBLE, EntityScope.ITEM, null),
+                        FeatureDefinition.derived(
+                                "ratio", DataType.DOUBLE,
+                                "div(numerator, denominator)", OutputPolicy.OUTPUT)),
+                Set.of("ratio"));
+        PhysicalPlan errorPlan = new PhysicalPlanner(standard).plan(
+                new LogicalDagOptimizer(standard).analyze(errorDag),
+                ExecutionEnvironment.OFFLINE,
+                "native-batch-error-location");
+        IllegalArgumentException error = expectThrows(
+                IllegalArgumentException.class,
+                () -> new DagRuntime(standard).execute(
+                        errorPlan,
+                        ExecutionContext.offlineBatch(
+                                "native-batch-error",
+                                List.of(
+                                        Map.of("numerator", 8.0, "denominator", 2.0),
+                                        Map.of("numerator", 3.0, "denominator", 0.0)))));
+        assert error.getMessage().contains("offline batch row 1") : error.getMessage();
+        assert error.getMessage().contains("divisor must not be zero") : error.getMessage();
+    }
+
+    private static void testStandardNativeBatchMatchesSingle() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        List<NativeBatchCase> cases = List.of(
+                new NativeBatchCase(
+                        "count",
+                        List.of(
+                                List.of((Object) List.of(1, 2, 3)),
+                                List.of((Object) List.of()))),
+                new NativeBatchCase(
+                        "add",
+                        List.of(List.of(1, 2), List.of(2.5, 3), List.of(-4, 1))),
+                new NativeBatchCase(
+                        "log",
+                        List.of(List.of(1), List.of(Math.E), List.of(10))),
+                new NativeBatchCase(
+                        "multiply",
+                        List.of(List.of(2, 3), List.of(-4, 0.5), List.of(0, 9))),
+                new NativeBatchCase(
+                        "div_num",
+                        List.of(
+                                List.of(9, Map.of("divisor", 2)),
+                                List.of(5, Map.of("divisor", 4)))),
+                new NativeBatchCase(
+                        "round",
+                        List.of(List.of(4.4), List.of(4.6), List.of(-1.6))),
+                new NativeBatchCase(
+                        "div",
+                        List.of(List.of(9, 2), List.of(-3, 4), List.of(1, 8))),
+                new NativeBatchCase(
+                        "least",
+                        List.of(List.of(3, 5, 1), List.of(2.5, 3, 4), List.of(-1, 0, 8))));
+
+        for (NativeBatchCase batchCase : cases) {
+            assert registry.batchKernelKind(batchCase.operatorName()) == BatchKernelKind.NATIVE
+                    : batchCase.operatorName();
+            int arity = batchCase.rows().getFirst().size();
+            List<BatchColumn> columns = new ArrayList<>(arity);
+            for (int argumentIndex = 0; argumentIndex < arity; argumentIndex++) {
+                List<Object> values = new ArrayList<>(batchCase.rows().size());
+                for (List<Object> row : batchCase.rows()) {
+                    values.add(row.get(argumentIndex));
+                }
+                columns.add(new ListBatchColumn(values));
+            }
+            BatchOperatorResult batch = registry.evaluateBatch(
+                    batchCase.operatorName(),
+                    new BatchOperatorCall(
+                            new TestBatchLayout(batchCase.rows().size()), columns),
+                    BatchKernelKind.NATIVE);
+            for (int rowIndex = 0; rowIndex < batchCase.rows().size(); rowIndex++) {
+                Object single = registry.evaluate(
+                        batchCase.operatorName(), batchCase.rows().get(rowIndex));
+                Object batchValue = batch.values().valueAt(rowIndex);
+                assert Objects.equals(single, batchValue)
+                        : batchCase.operatorName() + " row=" + rowIndex
+                                + ", single=" + single + ", batch=" + batchValue;
+            }
+        }
+
+        for (String adapterOperator : List.of(
+                "discrete",
+                "log_base",
+                "slice_by_indices",
+                "find_indices",
+                "get_seq_length",
+                "count_distinct",
+                "calc_delta_seq",
+                "zip_concat")) {
+            assert registry.batchKernelKind(adapterOperator) == BatchKernelKind.SCALAR_ADAPTER
+                    : adapterOperator;
+        }
     }
 
     private static void testNullArrayLiteralDagConstruction() {
@@ -3549,6 +3769,12 @@ public final class DagEngineSelfTest {
                 : PhysicalPlanPrinter.print(plan);
         assert uncachedNode.cachePolicy() == CachePolicy.NONE
                 : PhysicalPlanPrinter.print(plan);
+        assert cachedNode.executorConfig().get("batchKernelKind")
+                .equals(BatchKernelKind.SCALAR_ADAPTER.name())
+                : PhysicalPlanPrinter.print(plan);
+        assert uncachedNode.executorConfig().get("batchKernelKind")
+                .equals(BatchKernelKind.SCALAR_ADAPTER.name())
+                : PhysicalPlanPrinter.print(plan);
 
         ExecutionResult result = new DagRuntime(registry).execute(
                 plan,
@@ -3562,17 +3788,20 @@ public final class DagEngineSelfTest {
                                 Map.of("candidate_key", "C"))));
         assert cachedCalls.get() == 3 : cachedCalls.get();
         assert uncachedCalls.get() == 4 : uncachedCalls.get();
+        assert ((CandidateVectorValue) result.feature("cached_value"))
+                .values().equals(List.of("A", "B", "A", "C"))
+                : result.feature("cached_value").raw();
         assert result.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert result.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 3;
         CacheStats requestCache = result.nodeStates()
                 .get(cachedNode.physicalNodeId())
                 .cacheStats()
                 .get(CacheKind.CANDIDATE_KEY);
-        assert requestCache.lookups() == 4 : requestCache;
-        assert requestCache.hits() == 1 : requestCache;
+        assert requestCache.lookups() == 3 : requestCache;
+        assert requestCache.hits() == 0 : requestCache;
         assert requestCache.misses() == 3 : requestCache;
         assert requestCache.puts() == 3 : requestCache;
-        assert Math.abs(requestCache.hitRate() - 0.25) < 0.000001 : requestCache;
+        assert requestCache.hitRate() == 0.0 : requestCache;
         assert result.cacheStats().get(CacheKind.CANDIDATE_KEY).equals(requestCache)
                 : result.cacheStats();
 
@@ -3595,14 +3824,17 @@ public final class DagEngineSelfTest {
                 : grouped.feature("cached_value").getClass();
         assert cachedCalls.get() == 2 : "Cache must be isolated by group: " + cachedCalls.get();
         assert uncachedCalls.get() == 4 : uncachedCalls.get();
+        assert ((CandidateBatchValue) grouped.feature("cached_value"))
+                .values().equals(List.of("A", "A", "A", "A"))
+                : grouped.feature("cached_value").raw();
         assert grouped.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert grouped.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 2;
         CacheStats groupedCache = grouped.nodeStates()
                 .get(cachedNode.physicalNodeId())
                 .cacheStats()
                 .get(CacheKind.CANDIDATE_KEY);
-        assert groupedCache.lookups() == 4 : groupedCache;
-        assert groupedCache.hits() == 2 : groupedCache;
+        assert groupedCache.lookups() == 2 : groupedCache;
+        assert groupedCache.hits() == 0 : groupedCache;
         assert groupedCache.misses() == 2 : groupedCache;
         assert groupedCache.puts() == 2 : groupedCache;
         assert grouped.cacheStats().get(CacheKind.CANDIDATE_KEY).equals(groupedCache)
@@ -3631,6 +3863,68 @@ public final class DagEngineSelfTest {
                 return arguments.getFirst();
             }
         };
+    }
+
+    private static final class NativeBatchProbeOperator
+            implements OperatorDefinition, BatchOperatorKernel {
+        private final AtomicInteger singleCalls;
+        private final AtomicInteger batchCalls;
+
+        private NativeBatchProbeOperator(
+                AtomicInteger singleCalls,
+                AtomicInteger batchCalls) {
+            this.singleCalls = singleCalls;
+            this.batchCalls = batchCalls;
+        }
+
+        @Override public String name() { return "native_batch_probe"; }
+        @Override public int minArguments() { return 2; }
+        @Override public int maxArguments() { return 2; }
+        @Override public boolean deterministic() { return true; }
+        @Override public boolean parameterized() { return false; }
+        @Override public boolean supportsSequenceView() { return false; }
+
+        @Override
+        public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+            Set<EntityScope> scopes = new LinkedHashSet<>();
+            for (OperatorInputMetadata input : inputs) scopes.addAll(input.entityScopes());
+            return new OperatorInference(DataType.STRING, scopes, ValueShape.SCALAR);
+        }
+
+        @Override
+        public Object evaluate(List<Object> arguments) {
+            singleCalls.incrementAndGet();
+            return arguments.getFirst() + ":" + arguments.getLast();
+        }
+
+        @Override
+        public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
+            batchCalls.incrementAndGet();
+            List<Object> values = new ArrayList<>(call.rowCount());
+            for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+                if (Objects.equals(
+                        call.arguments().getLast().valueAt(rowIndex), "bad")) {
+                    throw new BatchOperatorEvaluationException(
+                            rowIndex,
+                            new IllegalArgumentException(
+                                    "native batch probe rejected bad item"));
+                }
+                values.add(call.arguments().getFirst().valueAt(rowIndex)
+                        + ":" + call.arguments().getLast().valueAt(rowIndex));
+            }
+            return new BatchOperatorResult(new ListBatchColumn(values));
+        }
+    }
+
+    private record NativeBatchCase(
+            String operatorName,
+            List<List<Object>> rows) {
+    }
+
+    private record TestBatchLayout(int rowCount) implements BatchLayout {
+        @Override public BatchDomain domain() { return BatchDomain.OFFLINE_ROW; }
+        @Override public int groupIndexAt(int rowIndex) { return -1; }
+        @Override public int indexInGroupAt(int rowIndex) { return rowIndex; }
     }
 
     private static void testSequenceSelectionStrategies() {

@@ -1,0 +1,150 @@
+{
+  "feature_set_name": "initial_operator_demo",
+  "version": "1",
+  "features": [
+    {
+      "name": "number_value",
+      "raw_name": "number_value",
+      "type": "DOUBLE",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR"
+    },
+    {
+      "name": "logarithm_value",
+      "raw_name": "logarithm_value",
+      "type": "DOUBLE",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR"
+    },
+    {
+      "name": "codes",
+      "raw_name": "codes",
+      "type": "STRING",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE"
+    },
+    {
+      "name": "slice_indices",
+      "raw_name": "slice_indices",
+      "type": "INT",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE"
+    },
+    {
+      "name": "target_code",
+      "raw_name": "target_code",
+      "type": "STRING",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR"
+    },
+    {
+      "name": "labels",
+      "raw_name": "labels",
+      "type": "STRING",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE"
+    },
+    {
+      "name": "number_sequence",
+      "raw_name": "number_sequence",
+      "type": "DOUBLE",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE"
+    },
+    {
+      "name": "delta_base",
+      "raw_name": "delta_base",
+      "type": "DOUBLE",
+      "definition_type": "BASE",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR"
+    },
+    {
+      "name": "number_bucket",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "discrete(number_value, [0, 10, 100])",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR",
+      "order": 1
+    },
+    {
+      "name": "logarithm_base2",
+      "type": "DOUBLE",
+      "definition_type": "DERIVED",
+      "expression": "log_base(logarithm_value, 2, 1024)",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR",
+      "order": 2
+    },
+    {
+      "name": "codes_length",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "get_seq_length(codes)",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR",
+      "order": 3
+    },
+    {
+      "name": "distinct_codes",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "count_distinct(codes)",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SCALAR",
+      "order": 4
+    },
+    {
+      "name": "selected_codes",
+      "type": "STRING",
+      "definition_type": "DERIVED",
+      "expression": "slice_by_indices(codes, slice_indices)",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE",
+      "order": 5
+    },
+    {
+      "name": "matching_indices",
+      "type": "INT",
+      "definition_type": "DERIVED",
+      "expression": "find_indices(codes, target_code)",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE",
+      "order": 6
+    },
+    {
+      "name": "zipped_codes",
+      "type": "STRING",
+      "definition_type": "DERIVED",
+      "expression": "zip_concat(codes, labels, {\"delimiter\":\"|\"})",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE",
+      "order": 7
+    },
+    {
+      "name": "number_deltas",
+      "type": "DOUBLE",
+      "definition_type": "DERIVED",
+      "expression": "calc_delta_seq(number_sequence, delta_base)",
+      "output_policy": "OUTPUT",
+      "entity_scopes": ["USER"],
+      "value_shape": "SEQUENCE",
+      "order": 8
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 package com.example.featuredag.operator;
 
-import com.example.featuredag.operator.builtin.StandardOperators;
+import com.example.featuredag.operator.builtin.InitialBusinessOperators;
 
 import java.util.List;
 import java.util.Map;
@@ -110,7 +110,7 @@ public final class OperatorRegistry {
 
     public static OperatorRegistry standard() {
         OperatorRegistry registry = new OperatorRegistry();
-        for (OperatorDefinition definition : StandardOperators.definitions()) {
+        for (OperatorDefinition definition : InitialBusinessOperators.definitions()) {
             registry.register(definition);
         }
         return registry;

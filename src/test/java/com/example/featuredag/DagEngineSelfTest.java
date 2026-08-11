@@ -6,6 +6,9 @@ import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.OutputPolicy;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.demo.OfflineBatchOperatorsDemo;
+import com.example.featuredag.demo.ScalarOperatorsDemo;
+import com.example.featuredag.demo.SequenceOperatorsDemo;
 import com.example.featuredag.expression.AstCall;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
@@ -43,6 +46,7 @@ public final class DagEngineSelfTest {
         testInitialOperatorEvaluation();
         testInitialOperatorValidation();
         testInitialOperatorExpressionsBuildAndInfer();
+        testInitialOperatorPublicApiDemos();
         System.out.println("All DAG engine self tests passed.");
     }
 
@@ -184,6 +188,12 @@ public final class DagEngineSelfTest {
             assert dag.featureOutput(entry.getKey()).valueShape() == operatorCase.valueShape()
                     : entry.getKey() + " shape=" + dag.featureOutput(entry.getKey()).valueShape();
         }
+    }
+
+    private static void testInitialOperatorPublicApiDemos() {
+        ScalarOperatorsDemo.run();
+        SequenceOperatorsDemo.run();
+        OfflineBatchOperatorsDemo.run();
     }
 
     private static <T extends Throwable> T expectThrows(

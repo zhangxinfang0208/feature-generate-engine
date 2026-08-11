@@ -19,7 +19,7 @@
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
 
-每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是首期算子清单，`StandardOperators` 只负责把该清单暴露给标准注册表。
+每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的首期算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
 这 8 个算子当前都使用框架提供的 `SCALAR_ADAPTER` 批执行适配器，没有额外的 Native Batch 实现。
 
@@ -31,6 +31,7 @@ src/main/java/com/example/featuredag/
 ├── config       # JSON 配置加载与映射
 ├── definition   # 特征定义和值类型
 ├── expression   # 表达式 AST 与解析
+├── demo         # 首期 8 个算子的公共 API 调测入口
 ├── logical      # 逻辑 DAG 构建
 ├── planning     # 只读规划分析
 ├── physical     # 物理计划与改写规则
@@ -39,7 +40,7 @@ src/main/java/com/example/featuredag/
     └── builtin  # 首期 8 个独立算子实现与显式注册清单
 ```
 
-仓库不再包含依赖非首期算子的 Demo、Demo 配置或 JMH 基准代码。
+仓库不包含依赖非首期算子的 Demo 或 JMH 基准代码。
 
 ## 构建与验证
 
@@ -53,6 +54,34 @@ mvn clean package
 `mvn clean package` 会生成 thin JAR，以及包含并重定位 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`。这两个产物都是库文件，不包含 Demo `Main-Class`。
 
 自测试使用 Java `assert`，覆盖 8 个首期算子的注册清单、独立实现类、参数数量、求值、异常校验、Batch 路由和 DAG 类型/shape 推断。
+
+## 调测 Demo
+
+三个 Demo 都通过公共 `FeatureDagEngine.init/generate` API 执行，并共用
+[`src/main/resources/demo/initial-operators.json`](src/main/resources/demo/initial-operators.json)：
+
+- `ScalarOperatorsDemo`：调测 `discrete`、`log_base`、`get_seq_length`、`count_distinct`；
+- `SequenceOperatorsDemo`：调测 `slice_by_indices`、`find_indices`、`zip_concat`、`calc_delta_seq`；
+- `OfflineBatchOperatorsDemo`：用两行输入一次调测全部 8 个算子的 Batch 适配路径。
+
+Windows PowerShell 一键运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-initial-operator-demos.ps1 all
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-initial-operator-demos.ps1 scalar
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-initial-operator-demos.ps1 sequence
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-initial-operator-demos.ps1 batch
+```
+
+Bash 一键运行：
+
+```bash
+./scripts/run-initial-operator-demos.sh all
+```
+
+也可以在 IDE 中直接运行三个 Demo 的 `main` 方法。每个 Demo 都会先校验预期结果，再打印输出；
+修改调测数据时可直接编辑对应 Demo 中的 `row.put(...)`，修改表达式或元数据时编辑共享 JSON 配置。
+Demo 源码本身只使用 JDK 1.8 语法/API，但运行完整项目仍需要 JDK 21。
 
 ## 架构约束
 

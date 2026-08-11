@@ -4,9 +4,9 @@
 
 本项目是一个基于 Java 21 的三层特征表达式 DAG 引擎参考实现。生产代码位于 `src/main/java/com/example/featuredag/`：`definition`、`expression` 和 `config` 定义输入；`logical` 构建逻辑 DAG；`planning` 和 `physical` 生成物理计划；`runtime` 执行计划；`operator` 提供算子协议与实现。
 
-首期标准注册表严格只提供以下 8 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护显式清单，`StandardOperators` 不得额外注册其他算子。
+首期标准注册表严格只提供以下 8 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护唯一的显式清单，`OperatorRegistry.standard()` 直接注册该清单，不再增加纯转发聚合层。
 
-仓库不提供依赖其他算子的 Demo、Demo 配置、Demo 脚本或对应 UT。自测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`，辅助脚本位于 `scripts/`，编译产物写入 `target/`。
+仓库只提供基于这 8 个算子的公共 API Demo、共享配置和调测脚本，不得在 Demo 或对应 UT 中重新引入其他标准算子。自测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`，辅助脚本位于 `scripts/`，编译产物写入 `target/`。
 
 ## 三层 DAG 构建约束
 
@@ -33,7 +33,7 @@
 
 ## Java 版本约束
 
-项目整体构建基线仍为 Java 21。首期 8 个算子及其直接共用的 `operator.builtin` 支撑代码必须只使用 JDK 1.8 可用的语言特性和标准库 API，不得使用 `record`、文本块、模式匹配 `instanceof`、`List.of/copyOf`、`Stream.toList`、`List.getFirst/getLast` 等更高版本能力。
+项目整体构建基线仍为 Java 21。首期 8 个算子、直接共用的 `operator.builtin` 支撑代码以及首期 Demo 必须只使用 JDK 1.8 可用的语言特性和标准库 API，不得使用 `record`、文本块、模式匹配 `instanceof`、`List.of/copyOf`、`Stream.toList`、`List.getFirst/getLast` 等更高版本能力。
 
 该约束保证首期算子源码便于独立抽取或代码生成，不表示整个仓库可以在 JDK 1.8 下编译。
 
@@ -41,6 +41,8 @@
 
 - `mvn clean package`：使用 Java 21 编译，生成 thin JAR 和包含 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`；产物不包含 Demo `Main-Class`。
 - `./scripts/run-self-test.sh`：编译主代码和测试代码，并通过 `java -ea` 执行自测试。
+- `./scripts/run-initial-operator-demos.sh [all|scalar|sequence|batch]`：在 Bash 中运行首期算子调测入口。
+- `./scripts/run-initial-operator-demos.ps1 [all|scalar|sequence|batch]`：在 PowerShell 中运行首期算子调测入口。
 
 提交前必须显式运行自测试；`mvn package` 只编译测试源码，不会自动执行 `DagEngineSelfTest`。
 

@@ -15,6 +15,9 @@
 
 此外，`FeatureValueCodecSelfTest` 继续覆盖公共输入/输出值编解码。性能、业务平台接入、模型发布、容量和 SLA 不以本地 UT 冒充通过。
 
+三个首期 Demo 的 `run()` 会纳入 `DagEngineSelfTest`，用于覆盖单行公共 API、序列输出编码和离线多行
+Batch 公共 API。Demo 和测试只允许使用首期 8 个算子。
+
 ## 执行方式
 
 使用 JDK 21 编译项目，然后显式启用 Java 断言：

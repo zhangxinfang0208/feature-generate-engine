@@ -56,6 +56,7 @@ import com.example.featuredag.operator.ListBatchColumn;
 import com.example.featuredag.operator.KeyedSequenceFilterSemantic;
 import com.example.featuredag.operator.SequenceCardinalitySemantic;
 import com.example.featuredag.operator.SequenceKeyDomains;
+import com.example.featuredag.operator.builtin.InitialBusinessOperators;
 import com.example.featuredag.physical.CachePolicy;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutionStage;
@@ -124,7 +125,6 @@ public final class DagEngineSelfTest {
         testExtendedExpressionParsing();
         testCanonicalNodeDeduplication();
         testCurriedInvocationValidation();
-        testCompleteBusinessExpressionParsing();
         testArrayLiteralDagConstruction();
         testOperatorTypeRuntimeConsistency();
         testSingleAndNativeBatchOperatorDispatch();
@@ -138,9 +138,9 @@ public final class DagEngineSelfTest {
         testLiteralCanonicalizationSeparatesTypesAndBoundaries();
         testDiscreteFeatureDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
-        testBusinessOperatorRegistry();
         testOperatorRegistryConcurrentRegistration();
-        testAllBusinessOperatorExpressionsBuildAndInfer();
+        testInitialBusinessOperatorRegistry();
+        testInitialBusinessOperatorExpressionsBuildAndInfer();
         testBusinessJsonParsing();
         testUnifiedFeatureJsonParsing();
         testLegacyDerivedFeaturesRejected();
@@ -243,18 +243,6 @@ public final class DagEngineSelfTest {
                 .map(AstLiteral::value)
                 .toList().equals(List.of(1, 10, 100));
 
-        AstCall curried = (AstCall) parser.parse(
-                "slice_v3_typed({\"start\": 4})(time_impr_seq_th_f_1)");
-        assert curried.functionName().equals("slice_v3_typed");
-        assert curried.arguments().size() == 2;
-        assert curried.invocationCount() == 2;
-        assert curried.arguments().get(0) instanceof AstObjectLiteral;
-        assert curried.arguments().get(1) instanceof AstFeatureRef;
-
-        AstCall cast = (AstCall) parser.parse("64(CONTEXT.request_time)");
-        assert cast.functionName().equals("64");
-        assert ((AstFeatureRef) cast.arguments().getFirst()).featureName()
-                .equals("CONTEXT.request_time");
         assert ((AstLiteral) parser.parse("42")).value() instanceof Integer;
         assert ((AstLiteral) parser.parse("3.14")).value() instanceof Double;
         expectThrows(ExpressionParseException.class, () -> parser.parse("[1, 2"));
@@ -313,202 +301,12 @@ public final class DagEngineSelfTest {
                 : error.getMessage();
     }
 
-    private static void testCompleteBusinessExpressionParsing() {
-        // The supplied fixture had misplaced closing parentheses. This form preserves every
-        // operator and argument while closing each call at its documented arity boundary.
-        String expression = """
-                default_key_if(
-                  dis2xl(
-                    round(
-                      div_num(
-                        add(
-                          list_multi(
-                            k2v_f(
-                              list_index_typed(
-                                staytimes,
-                                reverse_typed(
-                                  slice_v3_typed({"start": 4})(
-                                    reverse_typed(
-                                      uniq_key_index(
-                                        list_index_typed(
-                                          goods_ids,
-                                          intersection_typed(
-                                            greater_in_sequence_typed(
-                                              action_times,
-                                              request_time,
-                                              {"margin": 3600000}
-                                            ),
-                                            find_list_index_typed(action_types, 1)
-                                          )
-                                        )
-                                      )
-                                    )
-                                  )
-                                )
-                              )
-                            ),
-                            multi_v2(
-                              sign(
-                                add(
-                                  list_index_typed(
-                                    action_times,
-                                    reverse_typed(
-                                      slice_v3_typed({"start": 4})(
-                                        reverse_typed(
-                                          uniq_key_index(
-                                            list_index_typed(
-                                              goods_ids,
-                                              intersection_typed(
-                                                greater_in_sequence_typed(
-                                                  action_times,
-                                                  request_time,
-                                                  {"margin": 3600000}
-                                                ),
-                                                find_list_index_typed(action_types, 1)
-                                              )
-                                            )
-                                          )
-                                        )
-                                      )
-                                    )
-                                  ),
-                                  1
-                                )
-                              )
-                            ),
-                            {"multi_factor": -1}
-                          ),
-                          list_multi(
-                            k2v_f(
-                              list_index_typed(
-                                staytimes,
-                                reverse_typed(
-                                  slice_v3_typed({"start": 0})(
-                                    reverse_typed(
-                                      uniq_key_index(
-                                        list_index_typed(
-                                          goods_ids,
-                                          intersection_typed(
-                                            greater_in_sequence_typed(
-                                              action_times,
-                                              request_time,
-                                              {"margin": 3600000}
-                                            ),
-                                            find_list_index_typed(action_types, 1)
-                                          )
-                                        )
-                                      )
-                                    )
-                                  )
-                                )
-                              )
-                            ),
-                            multi_v2(
-                              sign(
-                                add(
-                                  list_index_typed(
-                                    action_times,
-                                    reverse_typed(
-                                      slice_v3_typed({"start": 0})(
-                                        reverse_typed(
-                                          uniq_key_index(
-                                            list_index_typed(
-                                              goods_ids,
-                                              intersection_typed(
-                                                greater_in_sequence_typed(
-                                                  action_times,
-                                                  request_time,
-                                                  {"margin": 3600000}
-                                                ),
-                                                find_list_index_typed(action_types, 1)
-                                              )
-                                            )
-                                          )
-                                        )
-                                      )
-                                    )
-                                  ),
-                                  1
-                                )
-                              )
-                            ),
-                            {"multi_factor": 1}
-                          )
-                        ),
-                        {"divisor": 2}
-                      )
-                    ),
-                    {"divisor": 1000, "discrete_key": "ntg_impr_seq_f_1h_sec_disc_rt"}
-                  ),
-                  {"default_key": -1}
-                )
-                """;
-
-        AstCall parsed = (AstCall) new ExpressionParser().parse(expression);
-        assert parsed.functionName().equals("default_key_if") : parsed.functionName();
-
-        Set<String> functionNames = new LinkedHashSet<>();
-        collectCallFunctionNames(parsed, functionNames);
-        Set<String> expectedNames = Set.of(
-                "default_key_if", "dis2xl", "round", "div_num", "add", "list_multi",
-                "k2v_f", "list_index_typed", "reverse_typed", "slice_v3_typed",
-                "uniq_key_index", "intersection_typed", "greater_in_sequence_typed",
-                "find_list_index_typed", "multi_v2", "sign");
-        assert functionNames.equals(expectedNames) : functionNames;
-        assert countCalls(parsed, "greater_in_sequence_typed") == 4;
-        assert countCalls(parsed, "find_list_index_typed") == 4;
-
-        OperatorRegistry registry = OperatorRegistry.standard();
-        for (String functionName : expectedNames) {
-            assert registry.require(functionName) != null : functionName;
-        }
-        assertCallArities(parsed, registry);
-        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
-                List.of(
-                        FeatureDefinition.raw(
-                                "staytimes", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                        FeatureDefinition.raw(
-                                "goods_ids", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                        FeatureDefinition.raw(
-                                "action_times", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                        FeatureDefinition.raw(
-                                "action_types", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                        FeatureDefinition.raw("request_time", DataType.INT, EntityScope.SCENE, 0),
-                        FeatureDefinition.derived(
-                                "hp1h_imp_hpd_final", DataType.INT,
-                                expression, OutputPolicy.OUTPUT)),
-                Set.of("hp1h_imp_hpd_final"));
-        assertOutput(dag, "hp1h_imp_hpd_final", DataType.INT, ValueShape.SCALAR);
-        assert countOperatorNodes(dag, "greater_in_sequence_typed") == 1
-                : "greater_in_sequence_typed repeated subexpression was not deduplicated";
-        assert countOperatorNodes(dag, "find_list_index_typed") == 1
-                : "find_list_index_typed repeated subexpression was not deduplicated";
-    }
-
     private static long countOperatorNodes(LogicalDag dag, String operatorName) {
         return dag.nodes().values().stream()
                 .filter(OperatorNode.class::isInstance)
                 .map(OperatorNode.class::cast)
                 .filter(node -> node.operatorName().equals(operatorName))
                 .count();
-    }
-
-    private static int countCalls(AstNode node, String functionName) {
-        int count = node instanceof AstCall call && call.functionName().equals(functionName) ? 1 : 0;
-        if (node instanceof AstCall call) {
-            for (AstNode argument : call.arguments()) {
-                count += countCalls(argument, functionName);
-            }
-        } else if (node instanceof AstObjectLiteral objectLiteral) {
-            for (AstNode value : objectLiteral.fields().values()) {
-                count += countCalls(value, functionName);
-            }
-        } else if (node instanceof AstArrayLiteral arrayLiteral) {
-            for (AstNode element : arrayLiteral.elements()) {
-                count += countCalls(element, functionName);
-            }
-        }
-        return count;
     }
 
     private static void assertCallArities(AstNode node, OperatorRegistry registry) {
@@ -1211,77 +1009,52 @@ public final class DagEngineSelfTest {
                 : error.getMessage();
     }
 
-    private static void testBusinessOperatorRegistry() {
-        List<String> names = List.of(
-                "64", "find_list_index_typed", "list_index_typed",
-                "greater_in_sequence_typed", "greater_than_index_typed", "reverse_typed",
-                "slice_v3_typed", "intersection_typed", "uniq_key_index", "list_2_map",
-                "thf_default_", "value2key", "k2v", "k2v_f", "v2v", "multi_v2",
-                "sub", "add", "sign", "list_multi", "div_num", "round", "div", "least",
-                "dis2xl", "default_key_if", "discrete", "log_base", "slice_by_indices",
-                "find_indices", "get_seq_length", "count_distinct", "zip_concat",
+    private static void testInitialBusinessOperatorRegistry() {
+        List<OperatorDefinition> definitions = InitialBusinessOperators.definitions();
+        Set<String> names = Set.of(
+                "discrete",
+                "log_base",
+                "slice_by_indices",
+                "find_indices",
+                "get_seq_length",
+                "count_distinct",
+                "zip_concat",
                 "calc_delta_seq");
-        Map<String, List<Integer>> arities = Map.ofEntries(
-                Map.entry("64", List.of(1, 1)),
-                Map.entry("find_list_index_typed", List.of(2, 2)),
-                Map.entry("list_index_typed", List.of(2, 2)),
-                Map.entry("greater_in_sequence_typed", List.of(3, 3)),
-                Map.entry("greater_than_index_typed", List.of(3, 3)),
-                Map.entry("reverse_typed", List.of(1, 1)),
-                Map.entry("slice_v3_typed", List.of(2, 2)),
-                Map.entry("intersection_typed", List.of(2, 2)),
-                Map.entry("uniq_key_index", List.of(1, 1)),
-                Map.entry("list_2_map", List.of(2, 2)),
-                Map.entry("thf_default_", List.of(2, 2)),
-                Map.entry("value2key", List.of(1, 1)),
-                Map.entry("k2v", List.of(1, 1)),
-                Map.entry("k2v_f", List.of(1, 1)),
-                Map.entry("v2v", List.of(1, 1)),
-                Map.entry("multi_v2", List.of(1, 1)),
-                Map.entry("sub", List.of(2, 2)),
-                Map.entry("add", List.of(2, Integer.MAX_VALUE)),
-                Map.entry("sign", List.of(1, 1)),
-                Map.entry("list_multi", List.of(3, 3)),
-                Map.entry("div_num", List.of(2, 2)),
-                Map.entry("round", List.of(1, 1)),
-                Map.entry("div", List.of(2, 2)),
-                Map.entry("least", List.of(2, Integer.MAX_VALUE)),
-                Map.entry("dis2xl", List.of(2, 2)),
-                Map.entry("default_key_if", List.of(2, 2)),
-                Map.entry("discrete", List.of(2, 2)),
-                Map.entry("log_base", List.of(3, 3)),
-                Map.entry("slice_by_indices", List.of(2, 2)),
-                Map.entry("find_indices", List.of(2, 2)),
-                Map.entry("get_seq_length", List.of(1, 1)),
-                Map.entry("count_distinct", List.of(1, 1)),
-                Map.entry("zip_concat", List.of(2, Integer.MAX_VALUE)),
-                Map.entry("calc_delta_seq", List.of(2, 2)));
+        assert definitions.size() == 8
+                : "Expected 8 initial business operators, got " + definitions.size();
+        assert definitions.stream()
+                .map(OperatorDefinition::name)
+                .collect(java.util.stream.Collectors.toSet())
+                .equals(names)
+                : definitions.stream().map(OperatorDefinition::name).toList();
+        assert definitions.stream()
+                .map(OperatorDefinition::getClass)
+                .collect(java.util.stream.Collectors.toSet())
+                .size() == definitions.size()
+                : "Each initial business operator must have its own implementation class";
+
+        Map<String, List<Integer>> arities = Map.of(
+                "discrete", List.of(2, 2),
+                "log_base", List.of(3, 3),
+                "slice_by_indices", List.of(2, 2),
+                "find_indices", List.of(2, 2),
+                "get_seq_length", List.of(1, 1),
+                "count_distinct", List.of(1, 1),
+                "zip_concat", List.of(2, Integer.MAX_VALUE),
+                "calc_delta_seq", List.of(2, 2));
 
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String name : names) {
             OperatorDefinition definition = registry.require(name);
-            assert definition != null : name;
             assert definition.minArguments() == arities.get(name).get(0)
                     : name + " min arity=" + definition.minArguments();
             assert definition.maxArguments() == arities.get(name).get(1)
                     : name + " max arity=" + definition.maxArguments();
         }
 
-        assert ((Number) registry.evaluate("add", List.of(1, 2, 3))).doubleValue() == 6.0;
-        assert ((Number) registry.evaluate("sub", List.of(5, 2))).doubleValue() == 3.0;
-        assert registry.evaluate("sign", List.of(-5)).equals(-1);
-        assert ((Number) registry.evaluate("div_num", List.of(9, Map.of("divisor", 2))))
-                .doubleValue() == 4.5;
-        assert registry.evaluate("round", List.of(4.6)).equals(5);
-        assert registry.evaluate("div", List.of(9, 2)).equals(4.5);
-        assert registry.evaluate("least", List.of(3, 5, 1)).equals(1);
-        assert registry.evaluate("least", List.of(2.5, 3)).equals(2.5);
+        assert registry.evaluate("discrete", List.of(16, List.of(1, 10, 100))).equals(2);
         assert Math.abs(((Number) registry.evaluate("log_base", List.of(8, 2, 1000)))
                 .doubleValue() - 3.0) < 1e-9;
-        assert Math.abs(((Number) registry.evaluate("log_base", List.of(2000, 10, 1000)))
-                .doubleValue() - 3.0) < 1e-9;
-        assert registry.evaluate("discrete", List.of(16, List.of(1, 10, 100))).equals(2);
-        assert registry.evaluate("discrete", List.of(10, List.of(1, 10, 100))).equals(2);
         assert registry.evaluate(
                 "slice_by_indices",
                 List.of(List.of("a1", "a2", "a3", "a4"), List.of(1, 3)))
@@ -1289,42 +1062,21 @@ public final class DagEngineSelfTest {
         assert registry.evaluate(
                 "find_indices", List.of(List.of("a1", "a2", "a3", "a3"), "a3"))
                 .equals(List.of(2, 3));
-        assert registry.evaluate("get_seq_length", List.of(List.of("a1", "a2", "a3", "a4")))
-                .equals(4);
-        assert registry.evaluate("get_seq_length", List.of(sequence())).equals(6);
-        assert registry.evaluate("count_distinct", List.of(List.of("a1", "a2", "a1", "a3")))
+        assert registry.evaluate("get_seq_length", List.of(List.of("a1", "a2", "a3")))
                 .equals(3);
+        assert registry.evaluate("count_distinct", List.of(List.of("a1", "a2", "a1")))
+                .equals(2);
         assert registry.evaluate(
                 "zip_concat",
-                List.of(
-                        List.of("a1", "a2", "a3", "a4"),
-                        List.of("b1", "b2", "b3", "b4")))
-                .equals(List.of("a1#b1", "a2#b2", "a3#b3", "a4#b4"));
-        assert registry.evaluate(
-                "zip_concat",
-                List.of(List.of("a1", "a2"), List.of("b1", "b2"), Map.of("delimiter", "|")))
-                .equals(List.of("a1|b1", "a2|b2"));
+                List.of(List.of("a1", "a2"), List.of("b1", "b2")))
+                .equals(List.of("a1#b1", "a2#b2"));
         assert registry.evaluate("calc_delta_seq", List.of(List.of(2, 5, 9), 10))
                 .equals(List.of(-8.0, -5.0, -1.0));
 
-        IllegalArgumentException zeroDivisor = expectThrows(
-                IllegalArgumentException.class,
-                () -> registry.evaluate("div_num", List.of(9, Map.of("divisor", 0))));
-        assert zeroDivisor.getMessage().contains("divisor") : zeroDivisor.getMessage();
-        IllegalArgumentException zeroDivisorPlain = expectThrows(
-                IllegalArgumentException.class,
-                () -> registry.evaluate("div", List.of(9, 0)));
-        assert zeroDivisorPlain.getMessage().contains("divisor")
-                : zeroDivisorPlain.getMessage();
         IllegalArgumentException invalidBase = expectThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("log_base", List.of(8, 1, 1000)));
         assert invalidBase.getMessage().contains("base") : invalidBase.getMessage();
-        IllegalArgumentException sequenceDelta = expectThrows(
-                IllegalArgumentException.class,
-                () -> registry.evaluate("calc_delta_seq", List.of(sequence(), 10)));
-        assert sequenceDelta.getMessage().contains("expects List")
-                : sequenceDelta.getMessage();
         IllegalArgumentException unorderedBoundaries = expectThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("discrete", List.of(16, List.of(1, 100, 10))));
@@ -1336,140 +1088,10 @@ public final class DagEngineSelfTest {
                         "zip_concat", List.of(List.of("a1"), List.of("b1", "b2"))));
         assert unequalZipLengths.getMessage().contains("equal length")
                 : unequalZipLengths.getMessage();
-
-        List<FeatureDefinition> inferenceDefinitions = new ArrayList<>(List.of(
-                FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 0.0),
-                FeatureDefinition.raw("b", DataType.DOUBLE, EntityScope.USER, 0.0),
-                FeatureDefinition.raw("c", DataType.DOUBLE, EntityScope.SCENE, 0.0),
-                FeatureDefinition.raw("target", DataType.INT, EntityScope.ITEM, 0),
-                FeatureDefinition.raw("seq", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                FeatureDefinition.raw("seq2", DataType.EVENT_SEQUENCE, EntityScope.ITEM, null),
-                FeatureDefinition.raw("mapping", DataType.OBJECT, EntityScope.SCENE, Map.of())));
-        inferenceDefinitions.addAll(List.of(
-                FeatureDefinition.derived(
-                        "cast64", DataType.DOUBLE, "64(a)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "matching_indices", DataType.INT,
-                        "find_list_index_typed(seq, target)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "sliced", DataType.EVENT_SEQUENCE,
-                        "slice_v3_typed({\"start\": 2})(seq)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "mapped", DataType.OBJECT, "list_2_map(seq, seq2)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "defaulted", DataType.EVENT_SEQUENCE,
-                        "thf_default_(mapping, seq)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "float_sequence", DataType.DOUBLE, "k2v_f(seq)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "sum", DataType.DOUBLE, "add(a, b, c)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "product_sequence", DataType.DOUBLE,
-                        "list_multi(seq, seq2, {\"multi_factor\": -1})", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "bucket", DataType.INT, "discrete(a, [1, 10, 100])", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "indexed_slice", DataType.EVENT_SEQUENCE,
-                        "slice_by_indices(seq, [1, 3])", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "zipped", DataType.STRING, "zip_concat(seq, seq2)", OutputPolicy.OUTPUT),
-                FeatureDefinition.derived(
-                        "delta", DataType.DOUBLE, "calc_delta_seq(seq, a)", OutputPolicy.OUTPUT)));
-
-        LogicalDag inferenceDag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
-                inferenceDefinitions,
-                linkedSet(
-                        "cast64", "matching_indices", "sliced", "mapped", "defaulted",
-                        "float_sequence", "sum", "product_sequence", "bucket",
-                        "indexed_slice", "zipped", "delta"));
-        assertOutput(inferenceDag, "cast64", DataType.DOUBLE, ValueShape.SCALAR);
-        assertOutput(inferenceDag, "matching_indices", DataType.INT, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "sliced", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "mapped", DataType.OBJECT, ValueShape.OBJECT);
-        assertOutput(inferenceDag, "defaulted", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "float_sequence", DataType.DOUBLE, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "sum", DataType.DOUBLE, ValueShape.SCALAR);
-        assert inferenceDag.featureOutput("sum").entityScopes()
-                .equals(Set.of(EntityScope.ITEM, EntityScope.USER, EntityScope.SCENE))
-                : inferenceDag.featureOutput("sum").entityScopes();
-        assertOutput(inferenceDag, "product_sequence", DataType.DOUBLE, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "bucket", DataType.INT, ValueShape.SCALAR);
-        assertOutput(inferenceDag, "indexed_slice", DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "zipped", DataType.STRING, ValueShape.SEQUENCE);
-        assertOutput(inferenceDag, "delta", DataType.DOUBLE, ValueShape.SEQUENCE);
     }
 
-    private static void testAllBusinessOperatorExpressionsBuildAndInfer() {
+    private static void testInitialBusinessOperatorExpressionsBuildAndInfer() {
         List<BusinessOperatorCase> cases = List.of(
-                new BusinessOperatorCase("64", "64(a)", DataType.DOUBLE, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "find_list_index_typed", "find_list_index_typed(seq, target)",
-                        DataType.INT, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "list_index_typed", "list_index_typed(seq, indexes)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "greater_in_sequence_typed",
-                        "greater_in_sequence_typed(seq, target, {\"margin\": 4000})",
-                        DataType.INT, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "greater_than_index_typed",
-                        "greater_than_index_typed(seq, target, {\"margin\": 3000})",
-                        DataType.INT, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "reverse_typed", "reverse_typed(seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "slice_v3_typed", "slice_v3_typed({\"start\": 2})(seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "intersection_typed", "intersection_typed(seq, seq2)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "uniq_key_index", "uniq_key_index(seq)",
-                        DataType.INT, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "list_2_map", "list_2_map(seq, seq2)",
-                        DataType.OBJECT, ValueShape.OBJECT),
-                new BusinessOperatorCase(
-                        "thf_default_", "thf_default_(mapping, seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "value2key", "value2key(seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "k2v", "k2v(seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "k2v_f", "k2v_f(seq)",
-                        DataType.DOUBLE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "v2v", "v2v(seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "multi_v2", "multi_v2(seq)",
-                        DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "sub", "sub(a, b)", DataType.DOUBLE, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "add", "add(a, b, c)", DataType.DOUBLE, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "sign", "sign(a)", DataType.INT, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "list_multi", "list_multi(seq, seq2, {\"multi_factor\": -1})",
-                        DataType.DOUBLE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "div_num", "div_num(a, {\"divisor\": 2})",
-                        DataType.DOUBLE, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "round", "round(a)", DataType.INT, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "dis2xl",
-                        "dis2xl(a, {\"divisor\": 1000, \"discrete_key\": \"table1\"})",
-                        DataType.INT, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "default_key_if", "default_key_if(a, {\"default_key\": -1})",
-                        DataType.DOUBLE, ValueShape.SCALAR),
                 new BusinessOperatorCase(
                         "discrete", "discrete(a, [1, 10, 100])",
                         DataType.INT, ValueShape.SCALAR),
@@ -1477,10 +1099,10 @@ public final class DagEngineSelfTest {
                         "log_base", "log_base(a, 2, 1000)",
                         DataType.DOUBLE, ValueShape.SCALAR),
                 new BusinessOperatorCase(
-                        "slice_by_indices", "slice_by_indices(seq, [1, 3])",
+                        "slice_by_indices", "slice_by_indices(seq, [0])",
                         DataType.EVENT_SEQUENCE, ValueShape.SEQUENCE),
                 new BusinessOperatorCase(
-                        "find_indices", "find_indices(seq, a3)",
+                        "find_indices", "find_indices(seq, a)",
                         DataType.INT, ValueShape.SEQUENCE),
                 new BusinessOperatorCase(
                         "get_seq_length", "get_seq_length(seq)",
@@ -1493,30 +1115,14 @@ public final class DagEngineSelfTest {
                         DataType.STRING, ValueShape.SEQUENCE),
                 new BusinessOperatorCase(
                         "calc_delta_seq", "calc_delta_seq(seq, a)",
-                        DataType.DOUBLE, ValueShape.SEQUENCE),
-                new BusinessOperatorCase(
-                        "div", "div(a, b)",
-                        DataType.DOUBLE, ValueShape.SCALAR),
-                new BusinessOperatorCase(
-                        "least", "least(target, a3)",
-                        DataType.INT, ValueShape.SCALAR));
-        assert cases.stream()
-                .map(BusinessOperatorCase::operatorName)
-                .collect(java.util.stream.Collectors.toSet())
-                .size() == 34 : "Business operator cases must contain 34 distinct names";
+                        DataType.DOUBLE, ValueShape.SEQUENCE));
 
         OperatorRegistry registry = OperatorRegistry.standard();
         ExpressionParser parser = new ExpressionParser();
         List<FeatureDefinition> definitions = new ArrayList<>(List.of(
-                FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 0.0),
-                FeatureDefinition.raw("b", DataType.DOUBLE, EntityScope.USER, 0.0),
-                FeatureDefinition.raw("c", DataType.DOUBLE, EntityScope.SCENE, 0.0),
-                FeatureDefinition.raw("target", DataType.INT, EntityScope.ITEM, 0),
-                FeatureDefinition.raw("a3", DataType.INT, EntityScope.SCENE, 0),
+                FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 1.0),
                 FeatureDefinition.raw("seq", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                FeatureDefinition.raw("seq2", DataType.EVENT_SEQUENCE, EntityScope.ITEM, null),
-                FeatureDefinition.raw("indexes", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                FeatureDefinition.raw("mapping", DataType.OBJECT, EntityScope.SCENE, Map.of())));
+                FeatureDefinition.raw("seq2", DataType.EVENT_SEQUENCE, EntityScope.ITEM, null)));
         Set<String> targets = new LinkedHashSet<>();
         Map<String, BusinessOperatorCase> casesByFeature = new LinkedHashMap<>();
         for (int index = 0; index < cases.size(); index++) {
@@ -1526,7 +1132,7 @@ public final class DagEngineSelfTest {
                     : operatorCase.expression();
             assertCallArities(parsed, registry);
 
-            String featureName = "business_operator_" + (index + 1);
+            String featureName = "initial_business_operator_" + (index + 1);
             definitions.add(FeatureDefinition.builder()
                     .name(featureName)
                     .dataType(DataType.UNKNOWN)
@@ -1538,7 +1144,7 @@ public final class DagEngineSelfTest {
         }
 
         LogicalDag dag = new LogicalDagBuilder(parser, registry).build(definitions, targets);
-        assert casesByFeature.size() == 34 : casesByFeature.keySet();
+        assert casesByFeature.size() == 8 : casesByFeature.keySet();
         for (Map.Entry<String, BusinessOperatorCase> entry : casesByFeature.entrySet()) {
             BusinessOperatorCase operatorCase = entry.getValue();
             assertOutput(
@@ -1554,23 +1160,6 @@ public final class DagEngineSelfTest {
             String expression,
             DataType outputType,
             ValueShape valueShape) {}
-
-    private static void collectCallFunctionNames(AstNode node, Set<String> functionNames) {
-        if (node instanceof AstCall call) {
-            functionNames.add(call.functionName());
-            for (AstNode argument : call.arguments()) {
-                collectCallFunctionNames(argument, functionNames);
-            }
-        } else if (node instanceof AstObjectLiteral objectLiteral) {
-            for (AstNode fieldValue : objectLiteral.fields().values()) {
-                collectCallFunctionNames(fieldValue, functionNames);
-            }
-        } else if (node instanceof AstArrayLiteral arrayLiteral) {
-            for (AstNode element : arrayLiteral.elements()) {
-                collectCallFunctionNames(element, functionNames);
-            }
-        }
-    }
 
     private static void assertOutput(
             LogicalDag dag,

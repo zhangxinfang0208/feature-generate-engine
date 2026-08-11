@@ -1,5 +1,7 @@
 package com.example.featuredag.runtime;
 
+import com.example.featuredag.operator.BatchDomain;
+
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
@@ -20,6 +22,9 @@ public final class RuntimeNodeState {
     private int uniqueInputCount;
     private Throwable error;
     private boolean fallbackUsed;
+    private OperatorInvocationKind operatorInvocationKind;
+    private BatchDomain batchDomain;
+    private int batchRowCount;
     private final EnumMap<CacheKind, MutableCacheStats> cacheStats =
             new EnumMap<>(CacheKind.class);
 
@@ -38,6 +43,9 @@ public final class RuntimeNodeState {
     public int uniqueInputCount() { return uniqueInputCount; }
     public Throwable error() { return error; }
     public boolean fallbackUsed() { return fallbackUsed; }
+    public OperatorInvocationKind operatorInvocationKind() { return operatorInvocationKind; }
+    public BatchDomain batchDomain() { return batchDomain; }
+    public int batchRowCount() { return batchRowCount; }
     public Map<CacheKind, CacheStats> cacheStats() {
         if (cacheStats.isEmpty()) return Map.of();
         EnumMap<CacheKind, CacheStats> result = new EnumMap<>(CacheKind.class);
@@ -77,6 +85,28 @@ public final class RuntimeNodeState {
         this.uniqueInputCount = uniqueCount;
     }
     void setFallbackUsed(boolean value) { this.fallbackUsed = value; }
+    void recordOperatorInvocation(
+            OperatorInvocationKind invocationKind,
+            BatchDomain domain,
+            int rowCount) {
+        if (rowCount < 0) throw new IllegalArgumentException("Batch row count must not be negative");
+        if (invocationKind.isBatch()) {
+            if (domain == null) throw new IllegalArgumentException("Batch invocation requires a domain");
+        } else if (domain != null || rowCount != 0) {
+            throw new IllegalArgumentException(
+                    "Non-Batch invocation must not contain Batch diagnostics");
+        }
+        this.operatorInvocationKind = invocationKind;
+        this.batchDomain = domain;
+        this.batchRowCount = rowCount;
+    }
+    void setBatchRowCount(int rowCount) {
+        if (operatorInvocationKind == null || !operatorInvocationKind.isBatch()) {
+            throw new IllegalStateException("Cannot record Batch rows for a non-Batch invocation");
+        }
+        if (rowCount < 0) throw new IllegalArgumentException("Batch row count must not be negative");
+        this.batchRowCount = rowCount;
+    }
 
     RuntimeNodeState snapshot() {
         RuntimeNodeState copy = new RuntimeNodeState(physicalNodeId);
@@ -90,6 +120,9 @@ public final class RuntimeNodeState {
         copy.uniqueInputCount = uniqueInputCount;
         copy.error = error;
         copy.fallbackUsed = fallbackUsed;
+        copy.operatorInvocationKind = operatorInvocationKind;
+        copy.batchDomain = batchDomain;
+        copy.batchRowCount = batchRowCount;
         for (Map.Entry<CacheKind, MutableCacheStats> entry : cacheStats.entrySet()) {
             copy.cacheStats.put(entry.getKey(), entry.getValue().copy());
         }

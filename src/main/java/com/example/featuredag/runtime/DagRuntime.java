@@ -90,7 +90,11 @@ public final class DagRuntime {
                         context.executionId());
                 case FEATURE_OUTPUT -> requireSingleInput(node, context);
                 case GENERIC_OPERATOR -> executeGenericOperator(node, context, state);
-                case SPECIALIZED -> executorRegistry.require(node.executorId()).execute(node, context, state);
+                case SPECIALIZED -> {
+                    state.recordOperatorInvocation(
+                            OperatorInvocationKind.SPECIALIZED, null, 0);
+                    yield executorRegistry.require(node.executorId()).execute(node, context, state);
+                }
             };
             context.resultSlots().put(node.outputSlot(), result);
             state.markSuccess(result, System.nanoTime() - start);
@@ -242,6 +246,7 @@ public final class DagRuntime {
             ValueShape logicalValueShape) {
         EvaluationDomain domain = evaluationDomain(inputHandles);
         if (domain == EvaluationDomain.NONE) {
+            state.recordOperatorInvocation(OperatorInvocationKind.SINGLE, null, 0);
             List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
             String singleKernelId = String.valueOf(node.executorConfig().getOrDefault(
                     "singleKernelId", operatorName));
@@ -255,6 +260,13 @@ public final class DagRuntime {
         for (ValueHandle handle : inputHandles) {
             validateBatchValueSize(handle, domain, size, context, operatorName);
         }
+        BatchKernelKind plannedKind = plannedBatchKernelKind(node);
+        state.recordOperatorInvocation(
+                plannedKind == BatchKernelKind.NATIVE
+                        ? OperatorInvocationKind.BATCH_NATIVE
+                        : OperatorInvocationKind.BATCH_SCALAR_ADAPTER,
+                batchDomain(domain),
+                0);
         boolean memoize = node.cachePolicy() == CachePolicy.CANDIDATE_KEY;
         if (memoize) {
             var definition = operatorRegistry.require(operatorName);
@@ -268,7 +280,7 @@ public final class DagRuntime {
                 ? evaluateCachedBatch(
                         node, operatorName, inputHandles, domain, size, context, state)
                 : evaluateBatch(
-                        node, operatorName, inputHandles, domain, context, null);
+                        node, operatorName, inputHandles, domain, context, null, state);
         return switch (domain) {
             case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
             case OFFLINE_ROW -> new OfflineBatchValue(result, logicalValueShape);
@@ -287,6 +299,21 @@ public final class DagRuntime {
                 "Invalid operator invocation policy for " + node.physicalNodeId() + ": " + value);
     }
 
+    private static BatchKernelKind plannedBatchKernelKind(PhysicalNode node) {
+        return BatchKernelKind.valueOf(String.valueOf(
+                node.executorConfig().getOrDefault(
+                        "batchKernelKind", BatchKernelKind.SCALAR_ADAPTER.name())));
+    }
+
+    private static BatchDomain batchDomain(EvaluationDomain domain) {
+        return switch (domain) {
+            case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> BatchDomain.ONLINE_CANDIDATE;
+            case OFFLINE_ROW -> BatchDomain.OFFLINE_ROW;
+            case ONLINE_REQUEST -> BatchDomain.ONLINE_REQUEST;
+            case NONE -> throw new IllegalArgumentException("Scalar evaluation has no Batch domain");
+        };
+    }
+
     /**
      * 通用 Batch 执行（C10）：Single/Batch Kernel ID 已固化在物理节点配置中；
      * 运行时只依据输入值句柄形成批域和虚拟广播列，不做节点融合或算法改写。
@@ -297,16 +324,16 @@ public final class DagRuntime {
             List<ValueHandle> inputHandles,
             EvaluationDomain domain,
             ExecutionContext context,
-            int[] selectedRows) {
+            int[] selectedRows,
+            RuntimeNodeState state) {
         RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context, selectedRows);
+        state.setBatchRowCount(layout.rowCount());
         List<BatchColumn> arguments = inputHandles.stream()
                 .map(handle -> (BatchColumn) new InputBatchColumn(handle, layout, context))
                 .toList();
         BatchOperatorResult result;
         try {
-            BatchKernelKind plannedKind = BatchKernelKind.valueOf(String.valueOf(
-                    node.executorConfig().getOrDefault(
-                            "batchKernelKind", BatchKernelKind.SCALAR_ADAPTER.name())));
+            BatchKernelKind plannedKind = plannedBatchKernelKind(node);
             String batchKernelId = String.valueOf(node.executorConfig().getOrDefault(
                     "batchKernelId", operatorName));
             result = operatorRegistry.evaluateBatch(
@@ -373,7 +400,7 @@ public final class DagRuntime {
                     .mapToInt(PendingInvocation::representativeRowIndex)
                     .toArray();
             List<Object> computed = evaluateBatch(
-                    node, operatorName, inputHandles, domain, context, selectedRows);
+                    node, operatorName, inputHandles, domain, context, selectedRows, state);
             int computedIndex = 0;
             for (Map.Entry<OperatorInvocationCacheKey, PendingInvocation> entry : pending.entrySet()) {
                 Object value = computed.get(computedIndex++);
@@ -544,12 +571,7 @@ public final class DagRuntime {
 
         @Override
         public BatchDomain domain() {
-            return switch (evaluationDomain) {
-                case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> BatchDomain.ONLINE_CANDIDATE;
-                case OFFLINE_ROW -> BatchDomain.OFFLINE_ROW;
-                case ONLINE_REQUEST -> BatchDomain.ONLINE_REQUEST;
-                case NONE -> throw new IllegalStateException("Scalar evaluation has no Batch domain");
-            };
+            return batchDomain(evaluationDomain);
         }
 
         @Override

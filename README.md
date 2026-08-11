@@ -54,6 +54,11 @@ Native 路径主要减少逐行参数对象与调用开销，并不改变逐行�
 Native 与 Adapter 的固定开销可通过 `OperatorBatchKernelBenchmark` 做同输入 A/B；正式结论必须使用
 完整 JMH 预热、fork 和 GC profiler，不能使用非 fork 冒烟结果作为性能基线。
 
+启用 `ObservationDetailLevel.NODE` 后，`NodeExecutionSnapshot` 会记录每个算子节点实际选择的
+`SINGLE`、`BATCH_NATIVE`、`BATCH_SCALAR_ADAPTER` 或 `SPECIALIZED` 路径。Batch 节点同时记录
+`batchDomain` 和真正提交给 Kernel 的 `batchRowCount`；使用 `CANDIDATE_KEY` 时，该行数是缓存命中和
+批内重复剔除后的唯一 miss 数量，可与 `inputCount/uniqueInputCount` 对照。
+
 ## 算子支持情况
 
 `OperatorRegistry.standard()` 当前注册 40 个算子。注册成功表示表达式可以完成解析、参数数量校验、类型/shape 推导和逻辑 DAG 构建；只有下表标记为“可执行”的算子支持 Runtime 计算。

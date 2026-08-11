@@ -77,7 +77,24 @@ invocationPolicy = OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN
 `BatchOperatorEvaluationException`。如果 Kernel 直接抛出无法关联行号的异常，运行时只能保留
 Batch 域和原始 cause，不能推断具体 row/group/candidate。
 
-## 6. 测试要求
+## 6. 运行时观测
+
+`RuntimeNodeState` 与 `ObservationDetailLevel.NODE` 下的 `NodeExecutionSnapshot` 记录
+`OperatorInvocationKind`：
+
+```text
+SINGLE
+BATCH_NATIVE
+BATCH_SCALAR_ADAPTER
+SPECIALIZED
+```
+
+Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表示真正提交给 Batch Kernel 的
+行数：普通 Batch 等于运行域行数，`CANDIDATE_KEY` 紧凑 miss Batch 等于唯一 miss 数量，全部命中时为
+零。Single、SPECIALIZED 和非算子节点不携带 Batch 域，行数为零。失败节点保留失败前已经确定的调用
+路径，便于判断问题发生在 Single、Native Batch、Adapter 还是融合执行器。
+
+## 7. 测试要求
 
 - 每个标准 Native Batch 使用相同输入逐行对比 Single 结果；
 - `SCALAR_ADAPTER` 保持调用次数、顺序和异常语义；
@@ -85,7 +102,8 @@ Batch 域和原始 cause，不能推断具体 row/group/candidate。
 - request-to-candidate 广播及多 group 隔离；
 - Batch 错误映射到 offline row 或 online group/candidate；
 - `CANDIDATE_KEY` 唯一 miss 批量执行、结果 scatter 顺序以及真实 cache/dedup 指标分离；
-- 命中 Rewrite 时仍执行 SPECIALIZED 物理节点，未命中时才走普通 Batch Kernel。
+- 命中 Rewrite 时仍执行 SPECIALIZED 物理节点，未命中时才走普通 Batch Kernel；
+- 节点诊断准确区分 Single、Native Batch、Adapter Batch 和 SPECIALIZED，并记录紧凑批实际行数。
 
 仓库中的 `OperatorBatchKernelBenchmark` 使用相同 `add` 输入直接比较 Native 与
 `SCALAR_ADAPTER`，用于判断逐行参数对象优化是否值得保留。正式基准必须启用 fork、充分预热并记录

@@ -70,7 +70,7 @@ export failure。应把 `AsyncObserverStats.dropped`、`pending` 和 `exportFail
 
 - `BASIC`：状态、阶段耗时、请求规模、序列规模和计划规模；
 - `CACHE`：在 BASIC 基础上增加按 `CacheKind` 汇总的 lookup/hit/miss/put；
-- `NODE`：在 CACHE 基础上增加逐物理节点的执行状态、耗时、去重和缓存快照。
+- `NODE`：在 CACHE 基础上增加逐物理节点的执行状态、耗时、去重、缓存和算子调用路径快照。
 
 为兼容原有调用，配置自定义 Observer 但未显式传入策略时，默认是 `enabled=true`、100% 采样、失败全量、
 慢请求强制采集关闭、`NODE` 明细。现网必须显式设置生产策略。Observer 回调抛出的 `RuntimeException`
@@ -87,6 +87,11 @@ export failure。应把 `AsyncObserverStats.dropped`、`pending` 和 `exportFail
 - 物理节点、逻辑节点和融合物理节点数量；
 - 按缓存类别汇总的 lookup/hit/miss/put；
 - 按物理拓扑顺序排列的 `NodeExecutionSnapshot`。
+
+算子节点快照使用 `OperatorInvocationKind` 区分 `SINGLE`、`BATCH_NATIVE`、
+`BATCH_SCALAR_ADAPTER` 和 `SPECIALIZED`。Batch 调用还记录 `batchDomain` 与 `batchRowCount`；后者是
+真正提交给 Kernel 的行数，因此候选缓存场景记录的是缓存命中和批内重复剔除后的唯一 miss 数量。
+非算子节点的调用方式和 Batch 域为空，Single 与 SPECIALIZED 的 Batch 行数为零。
 
 快照不包含特征值、缓存 key、`ValueHandle`、异常消息或 `Throwable`。`executionId` 只用于采样诊断和链路关联，
 不得作为长期指标标签。

@@ -12,6 +12,7 @@ import java.util.Map;
  *   normalize(coalesce(user_click_count, 0), {"method":"min_max","min":0,"max":100})
  */
 public final class ExpressionParser {
+    private static final int ERROR_EXCERPT_RADIUS = 80;
 
     /**
      * L0 解析入口：表达式字符串 → AST，是逻辑层构建（C3）的第一步；
@@ -158,7 +159,8 @@ public final class ExpressionParser {
         }
 
         private ExpressionParseException error(String message, int position) {
-            return new ExpressionParseException(message + " at offset " + position + " in: " + source);
+            return new ExpressionParseException(
+                    message + " at offset " + position + " near: " + sourceExcerpt(source, position));
         }
     }
 
@@ -189,8 +191,10 @@ public final class ExpressionParser {
             List<AstNode> arguments = new ArrayList<>();
             Token end = identifier;
             boolean hasCall = false;
+            int invocationCount = 0;
             while (current.type() == TokenType.LPAREN) {
                 hasCall = true;
+                invocationCount++;
                 consume(TokenType.LPAREN);
                 if (current.type() != TokenType.RPAREN) {
                     do {
@@ -202,7 +206,11 @@ public final class ExpressionParser {
                 end = consume(TokenType.RPAREN);
             }
             if (hasCall) {
-                return new AstCall(identifier.text(), arguments, new SourceSpan(identifier.start(), end.end()));
+                return new AstCall(
+                        identifier.text(),
+                        arguments,
+                        invocationCount,
+                        new SourceSpan(identifier.start(), end.end()));
             }
             return switch (identifier.text()) {
                 case "true" -> new AstLiteral(Boolean.TRUE, new SourceSpan(identifier.start(), identifier.end()));
@@ -222,7 +230,7 @@ public final class ExpressionParser {
                     value = Integer.parseInt(token.text());
                 }
             } catch (NumberFormatException ex) {
-                throw error("Invalid numeric literal: " + token.text());
+                throw error("Invalid numeric literal");
             }
             return new AstLiteral(value, new SourceSpan(token.start(), token.end()));
         }
@@ -285,7 +293,17 @@ public final class ExpressionParser {
         }
 
         private ExpressionParseException error(String message) {
-            return new ExpressionParseException(message + " at offset " + current.start() + " in: " + source);
+            return new ExpressionParseException(
+                    message + " at offset " + current.start()
+                            + " near: " + sourceExcerpt(source, current.start()));
         }
+    }
+
+    private static String sourceExcerpt(String source, int position) {
+        int start = Math.max(0, position - ERROR_EXCERPT_RADIUS);
+        int end = Math.min(source.length(), position + ERROR_EXCERPT_RADIUS);
+        String prefix = start == 0 ? "" : "...";
+        String suffix = end == source.length() ? "" : "...";
+        return prefix + source.substring(start, end) + suffix;
     }
 }

@@ -1,6 +1,6 @@
 package com.example.featuredag.runtime;
 
-import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.definition.ValueShape;
 
 /**
  * 运行态值句柄：sealed 分支与逻辑层 ValueShape 对应。

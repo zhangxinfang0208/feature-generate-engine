@@ -13,10 +13,13 @@ import java.util.Set;
 
 public final class DagDemo {
     private static final int THREE_DAYS_IN_SECONDS = 3 * 24 * 60 * 60;
+    private static final String COUNT_FEATURE = "auid_omnichannel_paid_cnt_3d";
+    private static final String DIV10_FEATURE = "auid_appc3_omnichannel_paid_cnt_div10_365d";
+    private static final String LOG_FEATURE = "auid_appc3_omnichannel_paid_cnt_log_365d";
     private static final Set<String> TARGET_FEATURES = Set.of(
-            "auid_omnichannel_paid_cnt_3d",
-            "auid_appc3_omnichannel_paid_cnt_div10_365d",
-            "auid_appc3_omnichannel_paid_cnt_log_365d");
+            COUNT_FEATURE,
+            DIV10_FEATURE,
+            LOG_FEATURE);
 
     private DagDemo() {}
 
@@ -52,6 +55,9 @@ public final class DagDemo {
                             + offlineResult.featureValues()
                             + ", online=" + onlineResult.featureValues());
         }
+        assertScalarFeature(offlineResult, COUNT_FEATURE, 1);
+        assertScalarFeature(offlineResult, DIV10_FEATURE, 0);
+        assertScalarFeature(offlineResult, LOG_FEATURE, 0);
 
         long time3d = ((Number) row.get("request_time").getFirst()).longValue()
                 - THREE_DAYS_IN_SECONDS;
@@ -62,7 +68,22 @@ public final class DagDemo {
         System.out.println("TIMESTAMP_SEQUENCE_SIZE: "
                 + ((List<?>) row.get("timestamp")).size());
         System.out.println("TARGET_APP: " + row.get("target_app").getFirst());
+        System.out.println(COUNT_FEATURE + ": " + offlineResult.featureValues().get(COUNT_FEATURE));
+        System.out.println(DIV10_FEATURE + ": " + offlineResult.featureValues().get(DIV10_FEATURE));
+        System.out.println(LOG_FEATURE + ": " + offlineResult.featureValues().get(LOG_FEATURE));
         System.out.println("FEATURES: " + offlineResult.featureValues());
         System.out.println("ONLINE_FEATURES: " + onlineResult.featureValues());
+    }
+
+    private static void assertScalarFeature(
+            GenerateResult result,
+            String featureName,
+            Object expectedValue) {
+        List<?> values = result.featureValues().get(featureName);
+        if (!List.of(expectedValue).equals(values)) {
+            throw new IllegalStateException(
+                    "Unexpected demo output for " + featureName
+                            + ": expected=[" + expectedValue + "], actual=" + values);
+        }
     }
 }

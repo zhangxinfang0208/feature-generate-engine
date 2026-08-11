@@ -26,6 +26,11 @@ import java.util.Set;
  * 绝不回写逻辑节点，保证逻辑模型保持小且语义化。
  */
 public final class LogicalDagOptimizer {
+    private static final long DEFAULT_NODE_COST = 1L;
+    private static final long ESTIMATED_SEQUENCE_BYTES = 4_096L;
+    private static final long ESTIMATED_INDEX_BYTES = 2_048L;
+    private static final long ESTIMATED_SCALAR_BYTES = 8L;
+
     private final OperatorRegistry operatorRegistry;
 
     public LogicalDagOptimizer() {
@@ -43,12 +48,12 @@ public final class LogicalDagOptimizer {
 
         for (String nodeId : dag.topologicalOrder()) {
             LogicalNode node = dag.node(nodeId);
-            long estimatedCost = 1L;
+            long estimatedCost = DEFAULT_NODE_COST;
             boolean cacheEligible = true;
             long estimatedSize = switch (node.valueShape()) {
-                case SEQUENCE -> 4_096L;
-                case INDEX -> 2_048L;
-                default -> 8L;
+                case SEQUENCE -> ESTIMATED_SEQUENCE_BYTES;
+                case INDEX -> ESTIMATED_INDEX_BYTES;
+                default -> ESTIMATED_SCALAR_BYTES;
             };
 
             if (node instanceof OperatorNode operator) {

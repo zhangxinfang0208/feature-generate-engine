@@ -2,6 +2,9 @@ package com.example.featuredag.api;
 
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.physical.ExecutionEnvironment;
+import com.example.featuredag.runtime.ObservabilityOptions;
+import com.example.featuredag.runtime.RuntimeObservabilityController;
+import com.example.featuredag.runtime.RuntimeObserver;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -16,6 +19,8 @@ public final class InitOptions {
     private final Set<String> targetFeatures;
     private final Map<String, Set<EntityScope>> rawFeatureScopes;
     private final Set<EntityScope> defaultRawFeatureScopes;
+    private final RuntimeObservabilityController observabilityController;
+    private final RuntimeObserver runtimeObserver;
 
     private InitOptions(Builder builder) {
         this.environment = Objects.requireNonNull(builder.environment, "environment");
@@ -31,6 +36,9 @@ public final class InitOptions {
         this.rawFeatureScopes = Collections.unmodifiableMap(scopes);
         this.defaultRawFeatureScopes = immutableNonEmptyScopes(
                 builder.defaultRawFeatureScopes, "default raw feature scopes");
+        this.observabilityController = Objects.requireNonNull(
+                builder.observabilityController, "observabilityController");
+        this.runtimeObserver = Objects.requireNonNull(builder.runtimeObserver, "runtimeObserver");
     }
 
     public static Builder builder() { return new Builder(); }
@@ -48,6 +56,10 @@ public final class InitOptions {
     public Set<String> targetFeatures() { return targetFeatures; }
     public Map<String, Set<EntityScope>> rawFeatureScopes() { return rawFeatureScopes; }
     public Set<EntityScope> defaultRawFeatureScopes() { return defaultRawFeatureScopes; }
+    public RuntimeObservabilityController observabilityController() {
+        return observabilityController;
+    }
+    public RuntimeObserver runtimeObserver() { return runtimeObserver; }
 
     private static String blankToNull(String value) {
         if (value == null) return null;
@@ -79,6 +91,9 @@ public final class InitOptions {
         private final Map<String, Set<EntityScope>> rawFeatureScopes = new LinkedHashMap<>();
         private final Set<EntityScope> defaultRawFeatureScopes = new LinkedHashSet<>(
                 Set.of(EntityScope.USER));
+        private RuntimeObservabilityController observabilityController =
+                new RuntimeObservabilityController(ObservabilityOptions.builder().build());
+        private RuntimeObserver runtimeObserver = RuntimeObserver.noop();
 
         public Builder environment(ExecutionEnvironment value) {
             this.environment = value;
@@ -105,6 +120,24 @@ public final class InitOptions {
         public Builder defaultRawFeatureScopes(Set<EntityScope> values) {
             this.defaultRawFeatureScopes.clear();
             if (values != null) this.defaultRawFeatureScopes.addAll(values);
+            return this;
+        }
+
+        public Builder runtimeObserver(RuntimeObserver value) {
+            this.runtimeObserver = Objects.requireNonNull(value, "runtimeObserver");
+            return this;
+        }
+
+        /** 为当前引擎创建固定初始策略；运行中热更新请传入 observabilityController。 */
+        public Builder observabilityOptions(ObservabilityOptions value) {
+            this.observabilityController = new RuntimeObservabilityController(
+                    Objects.requireNonNull(value, "observabilityOptions"));
+            return this;
+        }
+
+        public Builder observabilityController(RuntimeObservabilityController value) {
+            this.observabilityController = Objects.requireNonNull(
+                    value, "observabilityController");
             return this;
         }
 

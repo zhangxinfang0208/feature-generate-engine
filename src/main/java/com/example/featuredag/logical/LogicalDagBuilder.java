@@ -4,6 +4,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.FeatureRole;
 import com.example.featuredag.definition.OutputPolicy;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.expression.AstCall;
 import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstFeatureRef;
@@ -191,6 +192,7 @@ public final class LogicalDagBuilder {
             return createLiteralNode(value, owner, context);
         }
         if (ast instanceof AstCall call) {
+            validateInvocationStyle(call, owner);
             List<String> inputIds = new ArrayList<>();
             for (AstNode argument : call.arguments()) {
                 inputIds.add(buildAst(argument, owner, context));
@@ -198,6 +200,24 @@ public final class LogicalDagBuilder {
             return createOperatorNode(call.functionName(), inputIds, owner, context);
         }
         throw new DagBuildException("Unsupported AST node: " + ast.getClass().getName());
+    }
+
+    private void validateInvocationStyle(AstCall call, FeatureDefinition owner) {
+        if (call.invocationCount() == 1) return;
+        OperatorDefinition definition;
+        try {
+            definition = operatorRegistry.require(call.functionName());
+        } catch (RuntimeException error) {
+            throw new DagBuildException(
+                    "Invalid operator " + call.functionName() + " in feature "
+                            + owner.name() + ": " + error.getMessage(),
+                    error);
+        }
+        if (!definition.supportsCurriedInvocation()) {
+            throw new DagBuildException(
+                    "Operator " + call.functionName()
+                            + " does not support chained invocation in feature " + owner.name());
+        }
     }
 
     private Object toLiteralValue(AstNode node) {
@@ -343,7 +363,13 @@ public final class LogicalDagBuilder {
         for (LogicalNode node : nodes.values()) {
             inDegree.put(node.nodeId(), node.inputs().size());
             for (NodeInput input : node.inputs()) {
-                consumers.get(input.nodeId()).add(node.nodeId());
+                List<String> inputConsumers = consumers.get(input.nodeId());
+                if (inputConsumers == null) {
+                    throw new DagBuildException(
+                            "Logical node " + node.nodeId()
+                                    + " references missing input node: " + input.nodeId());
+                }
+                inputConsumers.add(node.nodeId());
             }
         }
         Deque<String> ready = new ArrayDeque<>();

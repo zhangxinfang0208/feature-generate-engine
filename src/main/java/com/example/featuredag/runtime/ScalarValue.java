@@ -1,6 +1,6 @@
 package com.example.featuredag.runtime;
 
-import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.definition.ValueShape;
 
 /** 标量值句柄：包装单个普通对象（Number/String/Boolean/Map 等）。 */
 public record ScalarValue(Object value) implements ValueHandle {

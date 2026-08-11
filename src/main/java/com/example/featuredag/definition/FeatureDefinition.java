@@ -1,7 +1,5 @@
 package com.example.featuredag.definition;
 
-import com.example.featuredag.logical.ValueShape;
-
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;

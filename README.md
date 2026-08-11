@@ -26,7 +26,7 @@
 
 ## 算子支持情况
 
-`OperatorRegistry.standard()` 当前注册 38 个算子。注册成功表示表达式可以完成解析、参数数量校验、类型/shape 推导和逻辑 DAG 构建；只有下表标记为“可执行”的算子支持 Runtime 计算。
+`OperatorRegistry.standard()` 当前注册 40 个算子。注册成功表示表达式可以完成解析、参数数量校验、类型/shape 推导和逻辑 DAG 构建；只有下表标记为“可执行”的算子支持 Runtime 计算。
 
 ### 已支持 Runtime 计算
 
@@ -46,6 +46,8 @@
 | `sign` | `sign(a)` | 返回 `-1`、`0` 或 `1` |
 | `div_num` | `div_num(a, {"divisor": d})` | 数值除法 |
 | `round` | `round(a)` | 四舍五入为整数 |
+| `div` | `div(a, b)` | 两个数值相除，除数为零时拒绝执行 |
+| `least` | `least(a, b, ...)` | 返回数值参数中的最小值 |
 | `discrete` | `discrete(a, boundaries)` | 按严格递增边界分桶；命中边界进入右侧桶 |
 | `log_base` | `log_base(a, base, upbound)` | 指定底数并带上限的对数计算 |
 | `slice_by_indices` | `slice_by_indices(seq, indices)` | 按下标数组抽取序列元素 |
@@ -205,17 +207,24 @@ target_app = ["app0"]
 - `entity_scopes` 可声明 `USER`、`SCENE`、`ITEM`。BASE 的范围用于源特征；DERIVED 的非空声明会与表达式推导结果校验一致。
 - `value_shape` 可声明 `SCALAR`、`SEQUENCE`、`VECTOR`。`VECTOR` 是配置边界的名称，内部映射为候选维度向量；DERIVED 的声明同样会与推导形状校验一致。
 - 所有公共输入值都是普通 Java `List`。`SCALAR` 在外部表示为 `[value]`，并由配置的
-  `value_shape` 在内部解包；`SEQUENCE` 保持为 `[v1, v2, ...]`。`EVENT_SEQUENCE` 仅用于低层
-  `SequenceBlock`/`SequenceView` 场景，普通序列使用元素 data type（如 `STRING` 或 `INT`）加
-  `SEQUENCE`。
+  `value_shape` 在内部解包；`SEQUENCE` 保持为 `[v1, v2, ...]`。空 `SCALAR` 输入会携带特征名
+  fail-fast。
+- `EVENT_SEQUENCE + SEQUENCE` 的每个元素可使用 `SequenceEvent`，也可使用普通 Java `Map`；
+  Map 字段为 `itemId`、`industryId`、`timestamp`、`eventType`、`value`（同时接受
+  `item_id`、`industry_id`、`event_type`）。公共 API 会在解码层转换为 `SequenceBlock`，因此
+  `extractIndustry` 通用路径和 sequence-key-count 融合路径均可直接使用。
+- 普通序列继续使用元素 data type（如 `STRING` 或 `INT`）加 `SEQUENCE`。
 - 候选 ITEM 标量是每个 candidate Map 内的单元素 `List`；在线 ITEM 候选轴仍使用
   `CandidateVectorValue`，不会与用户序列混淆。
 - 调用方必须在调用引擎前把旧的 `ratings=["1|0|1|v2"]` 协议转换为干净数组
   `ratings=[1,0,1]`。
-- v1 不验证输入形状、元素类型或跨序列 alignment，也不要求所有原始序列具有相同长度。
+- 除空标量和 `EVENT_SEQUENCE` 事件结构外，v1 不验证输入形状、元素类型或跨序列 alignment，
+  也不要求所有原始序列具有相同长度。
 - `expression` 是 DERIVED 特征的表达式文本；`output_policy` 使用 `OUTPUT` 或 `INTERNAL_ONLY` 控制最终输出边界。DERIVED 的 `output_policy` 缺失或为空白时，默认是 `OUTPUT`。
 - `INTERNAL_ONLY` 特征会进入依赖闭包，但不会出现在结果中。
 - 在线依赖到的原始特征必须通过 JSON 或 `InitOptions.rawFeatureScopes` 声明 `USER`、`SCENE` 或 `ITEM`。
+- 未知业务扩展字段仍保留在 `additionalProperties`；若未知字段与核心配置名高度相似（例如
+  `entity_scop`），加载阶段会给出建议字段名并拒绝继续初始化。
 
 离线 Java 调用：
 

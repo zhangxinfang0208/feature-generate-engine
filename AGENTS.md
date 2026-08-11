@@ -41,6 +41,7 @@
 - Kernel 实例必须无请求状态且可并发复用；只有 deterministic 且 sideEffectFree 的算子允许缓存去重调用，在线缓存、索引和候选去重必须按 group 隔离。
 - 物理计划必须记录 `singleKernelId`、`batchKernelId`、`batchKernelKind` 和 `OperatorInvocationPolicy` 枚举；运行时必须读取并执行该策略。Rewrite 仍在初始化阶段生成 SPECIALIZED 节点，真实请求不得临时融合（C9/C10）。
 - 批内 pending 重复属于 dedup reuse，不得计入真实缓存 lookup/hit；由 `dedupInputCount/uniqueInputCount` 表达，缓存指标只统计实际缓存 Map 操作。
+- 节点级观测必须用 `OperatorInvocationKind` 区分 Single、Native Batch、Adapter Batch 与 SPECIALIZED；Batch 同时记录域和真正提交给 Kernel 的行数，紧凑 miss Batch 不得记录外层原始行数。
 - 新增 Native Batch 必须验证与逐行 Single 的结果一致性，并覆盖零行、单行、多行、广播、scatter 顺序、分组隔离、错误定位及现有融合回归。
 
 ## 构建、测试与开发命令

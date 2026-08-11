@@ -86,6 +86,7 @@ import com.example.featuredag.runtime.IndexSelection;
 import com.example.featuredag.runtime.ListSequenceValue;
 import com.example.featuredag.runtime.ObservabilityOptions;
 import com.example.featuredag.runtime.ObservationDetailLevel;
+import com.example.featuredag.runtime.OperatorInvocationKind;
 import com.example.featuredag.runtime.RangeSelection;
 import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.ScalarValue;
@@ -671,6 +672,12 @@ public final class DagEngineSelfTest {
                 : groupedValues.values();
         assert batchCalls.get() == 1 : batchCalls.get();
         assert singleCalls.get() == 0 : singleCalls.get();
+        var groupedState = grouped.nodeStates().get(operatorNode.physicalNodeId());
+        assert groupedState.operatorInvocationKind()
+                == OperatorInvocationKind.BATCH_NATIVE : groupedState.operatorInvocationKind();
+        assert groupedState.batchDomain() == BatchDomain.ONLINE_CANDIDATE
+                : groupedState.batchDomain();
+        assert groupedState.batchRowCount() == 3 : groupedState.batchRowCount();
 
         ExecutionResult empty = runtime.execute(
                 onlinePlan,
@@ -679,6 +686,10 @@ public final class DagEngineSelfTest {
         assert ((CandidateBatchValue) empty.feature("batch_output")).values().isEmpty();
         assert batchCalls.get() == 2 : "Empty Batch must invoke the Batch contract";
         assert singleCalls.get() == 0;
+        var emptyState = empty.nodeStates().get(operatorNode.physicalNodeId());
+        assert emptyState.operatorInvocationKind() == OperatorInvocationKind.BATCH_NATIVE;
+        assert emptyState.batchDomain() == BatchDomain.ONLINE_CANDIDATE;
+        assert emptyState.batchRowCount() == 0 : emptyState.batchRowCount();
 
         ExecutionResult singleRequest = runtime.execute(
                 onlinePlan,
@@ -692,6 +703,11 @@ public final class DagEngineSelfTest {
                 .values().equals(List.of("S:p", "S:q"));
         assert batchCalls.get() == 3 : batchCalls.get();
         assert singleCalls.get() == 0;
+        var singleRequestState = singleRequest.nodeStates().get(operatorNode.physicalNodeId());
+        assert singleRequestState.operatorInvocationKind()
+                == OperatorInvocationKind.BATCH_NATIVE;
+        assert singleRequestState.batchDomain() == BatchDomain.ONLINE_CANDIDATE;
+        assert singleRequestState.batchRowCount() == 2 : singleRequestState.batchRowCount();
 
         PhysicalPlan offlinePlan = new PhysicalPlanner(registry).plan(
                 new LogicalDagOptimizer(registry).analyze(dag),
@@ -705,6 +721,15 @@ public final class DagEngineSelfTest {
         assert scalar.feature("batch_output").raw().equals("U:i");
         assert singleCalls.get() == 1 : singleCalls.get();
         assert batchCalls.get() == 3 : batchCalls.get();
+        PhysicalNode scalarOperatorNode = offlinePlan.nodes().stream()
+                .filter(node -> "native_batch_probe".equals(
+                        node.executorConfig().get("operatorName")))
+                .findFirst()
+                .orElseThrow();
+        var scalarState = scalar.nodeStates().get(scalarOperatorNode.physicalNodeId());
+        assert scalarState.operatorInvocationKind() == OperatorInvocationKind.SINGLE;
+        assert scalarState.batchDomain() == null : scalarState.batchDomain();
+        assert scalarState.batchRowCount() == 0 : scalarState.batchRowCount();
 
         IllegalArgumentException onlineBatchError = expectThrows(
                 IllegalArgumentException.class,
@@ -2079,6 +2104,16 @@ public final class DagEngineSelfTest {
         assert diagnostics.nodes().stream()
                 .anyMatch(node -> node.executorId().equals(PhysicalExecutorIds.GENERIC_OPERATOR))
                 : diagnostics.nodes();
+        assert diagnostics.nodes().stream()
+                .filter(node -> node.executorId().equals(PhysicalExecutorIds.GENERIC_OPERATOR))
+                .allMatch(node -> node.operatorInvocationKind() != null)
+                : diagnostics.nodes();
+        assert diagnostics.nodes().stream()
+                .anyMatch(node -> node.operatorInvocationKind() != null
+                        && node.operatorInvocationKind().isBatch()
+                        && node.batchDomain() != null
+                        && node.batchRowCount() > 0)
+                : diagnostics.nodes();
     }
 
     private static void testRuntimeObservabilityCoversBatchAndFailure() {
@@ -3446,6 +3481,11 @@ public final class DagEngineSelfTest {
         assert execution.nodeStates().values().stream().anyMatch(state ->
                 state.dedupInputCount() == 4 && state.uniqueInputCount() == 3)
                 : "Expected per-group key dedup counts 4 -> 3";
+        var specializedState = execution.nodeStates().get(specialized.physicalNodeId());
+        assert specializedState.operatorInvocationKind()
+                == OperatorInvocationKind.SPECIALIZED;
+        assert specializedState.batchDomain() == null : specializedState.batchDomain();
+        assert specializedState.batchRowCount() == 0 : specializedState.batchRowCount();
         assert execution.nodeStates().entrySet().stream().allMatch(entry ->
                 entry.getValue() != context.nodeStates().get(entry.getKey()))
                 : "ExecutionResult must expose node-state snapshots, not live context state";
@@ -3793,6 +3833,16 @@ public final class DagEngineSelfTest {
                 : result.feature("cached_value").raw();
         assert result.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert result.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 3;
+        var cachedState = result.nodeStates().get(cachedNode.physicalNodeId());
+        assert cachedState.operatorInvocationKind()
+                == OperatorInvocationKind.BATCH_SCALAR_ADAPTER;
+        assert cachedState.batchDomain() == BatchDomain.ONLINE_CANDIDATE;
+        assert cachedState.batchRowCount() == 3 : cachedState.batchRowCount();
+        var uncachedState = result.nodeStates().get(uncachedNode.physicalNodeId());
+        assert uncachedState.operatorInvocationKind()
+                == OperatorInvocationKind.BATCH_SCALAR_ADAPTER;
+        assert uncachedState.batchDomain() == BatchDomain.ONLINE_CANDIDATE;
+        assert uncachedState.batchRowCount() == 4 : uncachedState.batchRowCount();
         CacheStats requestCache = result.nodeStates()
                 .get(cachedNode.physicalNodeId())
                 .cacheStats()
@@ -3829,6 +3879,11 @@ public final class DagEngineSelfTest {
                 : grouped.feature("cached_value").raw();
         assert grouped.nodeStates().get(cachedNode.physicalNodeId()).dedupInputCount() == 4;
         assert grouped.nodeStates().get(cachedNode.physicalNodeId()).uniqueInputCount() == 2;
+        var groupedCachedState = grouped.nodeStates().get(cachedNode.physicalNodeId());
+        assert groupedCachedState.operatorInvocationKind()
+                == OperatorInvocationKind.BATCH_SCALAR_ADAPTER;
+        assert groupedCachedState.batchDomain() == BatchDomain.ONLINE_CANDIDATE;
+        assert groupedCachedState.batchRowCount() == 2 : groupedCachedState.batchRowCount();
         CacheStats groupedCache = grouped.nodeStates()
                 .get(cachedNode.physicalNodeId())
                 .cacheStats()

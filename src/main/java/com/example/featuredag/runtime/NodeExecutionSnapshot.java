@@ -1,5 +1,6 @@
 package com.example.featuredag.runtime;
 
+import com.example.featuredag.operator.BatchDomain;
 import com.example.featuredag.physical.CachePolicy;
 import com.example.featuredag.physical.ExecutionStage;
 
@@ -12,6 +13,9 @@ import java.util.Objects;
 public record NodeExecutionSnapshot(
         String physicalNodeId,
         String executorId,
+        OperatorInvocationKind operatorInvocationKind,
+        BatchDomain batchDomain,
+        int batchRowCount,
         ExecutionStage executionStage,
         CachePolicy cachePolicy,
         ExecutionStatus status,
@@ -25,6 +29,20 @@ public record NodeExecutionSnapshot(
     public NodeExecutionSnapshot {
         Objects.requireNonNull(physicalNodeId, "physicalNodeId");
         Objects.requireNonNull(executorId, "executorId");
+        if (batchRowCount < 0) {
+            throw new IllegalArgumentException("batchRowCount must not be negative");
+        }
+        if (operatorInvocationKind == null) {
+            if (batchDomain != null || batchRowCount != 0) {
+                throw new IllegalArgumentException(
+                        "Non-operator nodes must not contain Batch diagnostics");
+            }
+        } else if (operatorInvocationKind.isBatch()) {
+            Objects.requireNonNull(batchDomain, "batchDomain");
+        } else if (batchDomain != null || batchRowCount != 0) {
+            throw new IllegalArgumentException(
+                    "Non-Batch invocation must not contain Batch diagnostics");
+        }
         Objects.requireNonNull(executionStage, "executionStage");
         Objects.requireNonNull(cachePolicy, "cachePolicy");
         Objects.requireNonNull(status, "status");
@@ -40,5 +58,35 @@ public record NodeExecutionSnapshot(
             copy.putAll(cacheStats);
             cacheStats = Collections.unmodifiableMap(copy);
         }
+    }
+
+    /** 保留新增调用路径诊断前的构造形式，非算子节点和旧调用方默认无调用路径。 */
+    public NodeExecutionSnapshot(
+            String physicalNodeId,
+            String executorId,
+            ExecutionStage executionStage,
+            CachePolicy cachePolicy,
+            ExecutionStatus status,
+            long durationNanos,
+            Map<CacheKind, CacheStats> cacheStats,
+            int inputCount,
+            int uniqueInputCount,
+            boolean fallbackUsed,
+            String errorType) {
+        this(
+                physicalNodeId,
+                executorId,
+                null,
+                null,
+                0,
+                executionStage,
+                cachePolicy,
+                status,
+                durationNanos,
+                cacheStats,
+                inputCount,
+                uniqueInputCount,
+                fallbackUsed,
+                errorType);
     }
 }

@@ -634,6 +634,9 @@ public final class FeatureDagEngine {
                     nodes.add(new NodeExecutionSnapshot(
                             node.physicalNodeId(),
                             node.executorId(),
+                            state.operatorInvocationKind(),
+                            state.batchDomain(),
+                            state.batchRowCount(),
                             node.executionStage(),
                             node.cachePolicy(),
                             state.status(),

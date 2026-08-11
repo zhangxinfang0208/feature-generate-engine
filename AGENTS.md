@@ -4,7 +4,7 @@
 
 本项目是一个基于 Java 21 的三层特征表达式 DAG 引擎参考实现。生产代码位于 `src/main/java/com/example/featuredag/`：`definition`、`expression` 和 `config` 定义输入；`logical` 构建逻辑 DAG；`planning` 和 `physical` 生成物理计划；`runtime` 执行计划；`operator` 提供算子协议与实现。
 
-首期标准注册表严格只提供以下 8 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护显式清单，`StandardOperators` 不得额外注册其他算子。
+首期标准注册表严格只提供以下 8 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护唯一的显式清单，`OperatorRegistry.standard()` 直接注册该清单，不再增加纯转发聚合层。
 
 仓库只提供基于这 8 个算子的公共 API Demo、共享配置和调测脚本，不得在 Demo 或对应 UT 中重新引入其他标准算子。自测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`，辅助脚本位于 `scripts/`，编译产物写入 `target/`。
 

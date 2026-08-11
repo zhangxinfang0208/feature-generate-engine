@@ -19,7 +19,7 @@
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
 
-每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是首期算子清单，`StandardOperators` 只负责把该清单暴露给标准注册表。
+每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的首期算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
 这 8 个算子当前都使用框架提供的 `SCALAR_ADAPTER` 批执行适配器，没有额外的 Native Batch 实现。
 

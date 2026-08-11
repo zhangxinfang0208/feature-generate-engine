@@ -146,7 +146,7 @@ Make DiscreteOperator, LogBaseOperator, and GetSequenceLengthOperator implement 
 
 Discrete extracts toValue, toBoundaries, and bucket helpers. Batch converts value first, caches converted boundaries by identity, computes bucket, and wraps the current row.
 
-LogBase adds immutable LogParameterKey and LogParameters helpers. The key uses Double.doubleToLongBits(base/upbound). Preserve this row validation order: finite value, finite base, finite upbound, valid base, positive value, positive upbound. Cache inverse log base and upbound.
+LogBase adds immutable LogParameterKey and LogParameters helpers. The key uses Double.doubleToLongBits(base/upbound). Preserve this row validation order: finite value, finite base, finite upbound, valid base, positive value, positive upbound. Cache Math.log(base) and upbound, then retain Single's division order for bitwise-equivalent results.
 
 GetSequenceLength extracts evaluateSequence(Object), supporting OperatorSequence, Collection, and arrays. Batch calls it directly per row without a cache.
 

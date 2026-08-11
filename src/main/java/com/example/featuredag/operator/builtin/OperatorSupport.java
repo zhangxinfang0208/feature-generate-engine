@@ -3,6 +3,7 @@ package com.example.featuredag.operator.builtin;
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BatchOperatorEvaluationException;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -130,5 +131,51 @@ final class OperatorSupport {
 
     static <T> List<T> immutableList(List<T> values) {
         return Collections.unmodifiableList(new ArrayList<T>(values));
+    }
+
+    static BatchOperatorEvaluationException batchFailure(
+            int rowIndex,
+            RuntimeException error) {
+        return new BatchOperatorEvaluationException(rowIndex, error);
+    }
+
+    static IdentityBatchKey identityBatchKey(int groupIndex, Object... identities) {
+        return new IdentityBatchKey(groupIndex, identities);
+    }
+
+    static final class IdentityBatchKey {
+        private final int groupIndex;
+        private final Object[] identities;
+        private final int hashCode;
+
+        private IdentityBatchKey(int groupIndex, Object[] identities) {
+            this.groupIndex = groupIndex;
+            this.identities = identities.clone();
+            int hash = groupIndex;
+            for (Object identity : identities) {
+                hash = 31 * hash + System.identityHashCode(identity);
+            }
+            this.hashCode = hash;
+        }
+
+        @Override
+        public boolean equals(Object value) {
+            if (this == value) return true;
+            if (!(value instanceof IdentityBatchKey)) return false;
+            IdentityBatchKey other = (IdentityBatchKey) value;
+            if (groupIndex != other.groupIndex
+                    || identities.length != other.identities.length) {
+                return false;
+            }
+            for (int index = 0; index < identities.length; index++) {
+                if (identities[index] != other.identities[index]) return false;
+            }
+            return true;
+        }
+
+        @Override
+        public int hashCode() {
+            return hashCode;
+        }
     }
 }

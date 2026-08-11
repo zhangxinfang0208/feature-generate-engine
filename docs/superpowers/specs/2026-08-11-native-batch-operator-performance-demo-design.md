@@ -55,7 +55,7 @@
 
 ### `log_base`
 
-相同 base/upbound 参数组合只完成一次有限值、取值范围校验及换底系数计算。每行仍独立校验 value，并使用预处理参数计算结果。
+相同 base/upbound 参数组合只完成一次有限值、取值范围校验及 `Math.log(base)` 计算。每行仍独立校验 value，并沿用 Single Kernel 的除法顺序计算结果，避免乘倒数造成末位浮点差异。
 
 ### `slice_by_indices`
 

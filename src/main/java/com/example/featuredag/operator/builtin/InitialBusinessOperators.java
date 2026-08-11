@@ -2,14 +2,16 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.operator.OperatorDefinition;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
-/** 棣栨湡浜や粯鐨勪笟鍔＄畻瀛愭竻鍗曘€?*/
+/** Manifest for the eight operators delivered in the initial release. */
 public final class InitialBusinessOperators {
     private InitialBusinessOperators() {}
 
     public static List<OperatorDefinition> definitions() {
-        return List.of(
+        return Collections.unmodifiableList(Arrays.<OperatorDefinition>asList(
                 new DiscreteOperator(),
                 new LogBaseOperator(),
                 new SliceByIndicesOperator(),
@@ -17,6 +19,6 @@ public final class InitialBusinessOperators {
                 new GetSequenceLengthOperator(),
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
-                new CalculateDeltaSequenceOperator());
+                new CalculateDeltaSequenceOperator()));
     }
 }

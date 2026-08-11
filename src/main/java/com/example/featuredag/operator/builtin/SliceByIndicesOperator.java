@@ -18,14 +18,15 @@ public final class SliceByIndicesOperator extends AbstractBuiltinOperator {
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        List<?> sequence = OperatorSupport.asList(arguments.getFirst(), name(), "sequence");
-        List<?> indices = OperatorSupport.asList(arguments.getLast(), name(), "indices");
-        List<Object> result = new ArrayList<>(indices.size());
+        List<?> sequence = OperatorSupport.asList(arguments.get(0), name(), "sequence");
+        List<?> indices = OperatorSupport.asList(
+                arguments.get(arguments.size() - 1), name(), "indices");
+        List<Object> result = new ArrayList<Object>(indices.size());
         for (int position = 0; position < indices.size(); position++) {
             int index = OperatorSupport.asSequenceIndex(
                     indices.get(position), position, sequence.size(), name());
             result.add(sequence.get(index));
         }
-        return OperatorSupport.nullableImmutableList(result);
+        return OperatorSupport.immutableList(result);
     }
 }

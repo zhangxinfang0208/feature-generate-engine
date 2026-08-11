@@ -2,14 +2,14 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
-import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
-import com.example.featuredag.operator.OperatorSequence;
+import com.example.featuredag.operator.OperatorInputMetadata;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -26,50 +26,38 @@ final class OperatorSupport {
         return new OperatorInference(outputType, unionScopes(inputs), valueShape);
     }
 
-    static OperatorInference passThroughInference(List<OperatorInputMetadata> inputs, int inputIndex) {
+    static OperatorInference passThroughInference(
+            List<OperatorInputMetadata> inputs,
+            int inputIndex) {
         OperatorInputMetadata input = inputs.get(inputIndex);
         return new OperatorInference(input.outputType(), unionScopes(inputs), input.valueShape());
     }
 
-    static Set<EntityScope> unionScopes(List<OperatorInputMetadata> inputs) {
-        Set<EntityScope> result = new LinkedHashSet<>();
+    private static Set<EntityScope> unionScopes(List<OperatorInputMetadata> inputs) {
+        Set<EntityScope> result = new LinkedHashSet<EntityScope>();
         for (OperatorInputMetadata input : inputs) result.addAll(input.entityScopes());
         return result;
     }
 
     static Number asNumber(Object value) {
-        if (value instanceof Number number) return number;
+        if (value instanceof Number) return (Number) value;
         throw new IllegalArgumentException("Expected numeric value, got: " + value);
     }
 
-    static boolean isFloatingPoint(Number value) {
-        return value instanceof Float
-                || value instanceof Double
-                || value instanceof BigDecimal;
-    }
-
-    static Map<?, ?> asMap(Object value) {
-        if (value instanceof Map<?, ?> map) return map;
-        throw new IllegalArgumentException("Expected object/map, got: " + value);
-    }
-
-    static OperatorSequence asSequence(Object value) {
-        if (value instanceof OperatorSequence sequence) return sequence;
-        throw new IllegalArgumentException("Expected operator sequence, got: " + value);
-    }
-
     static BigDecimal asPreciseDecimal(Number number, String errorMessage) {
-        if (number instanceof BigDecimal decimal) return decimal;
-        if (number instanceof BigInteger integer) return new BigDecimal(integer);
+        if (number instanceof BigDecimal) return (BigDecimal) number;
+        if (number instanceof BigInteger) return new BigDecimal((BigInteger) number);
         if (number instanceof Byte || number instanceof Short
                 || number instanceof Integer || number instanceof Long) {
             return BigDecimal.valueOf(number.longValue());
         }
-        if (number instanceof Float floatValue) {
+        if (number instanceof Float) {
+            float floatValue = number.floatValue();
             if (!Float.isFinite(floatValue)) throw new IllegalArgumentException(errorMessage);
             return new BigDecimal(Float.toString(floatValue));
         }
-        if (number instanceof Double doubleValue) {
+        if (number instanceof Double) {
+            double doubleValue = number.doubleValue();
             if (!Double.isFinite(doubleValue)) throw new IllegalArgumentException(errorMessage);
             return BigDecimal.valueOf(doubleValue);
         }
@@ -81,7 +69,7 @@ final class OperatorSupport {
     }
 
     static List<?> asList(Object value, String operator, String argument) {
-        if (value instanceof List<?> list) return list;
+        if (value instanceof List<?>) return (List<?>) value;
         throw new IllegalArgumentException(
                 operator + " expects List for " + argument + ", got: " + typeName(value));
     }
@@ -91,16 +79,17 @@ final class OperatorSupport {
             int position,
             int sequenceSize,
             String operator) {
-        if (!(value instanceof Number number)) {
+        if (!(value instanceof Number)) {
             throw new IllegalArgumentException(
                     operator + " index at position " + position + " is not numeric: " + value);
         }
+        Number number = (Number) value;
         long longValue;
         try {
-            if (number instanceof BigDecimal decimal) {
-                longValue = decimal.longValueExact();
-            } else if (number instanceof BigInteger integer) {
-                longValue = integer.longValueExact();
+            if (number instanceof BigDecimal) {
+                longValue = ((BigDecimal) number).longValueExact();
+            } else if (number instanceof BigInteger) {
+                longValue = ((BigInteger) number).longValueExact();
             } else {
                 double doubleValue = number.doubleValue();
                 longValue = number.longValue();
@@ -139,12 +128,7 @@ final class OperatorSupport {
         return value == null ? "null" : value.getClass().getName();
     }
 
-    static <T> List<T> nullableImmutableList(List<T> values) {
-        return java.util.Collections.unmodifiableList(new ArrayList<>(values));
-    }
-
-    static double getDouble(Map<?, ?> params, String key, double defaultValue) {
-        Object value = params.get(key);
-        return value == null ? defaultValue : asNumber(value).doubleValue();
+    static <T> List<T> immutableList(List<T> values) {
+        return Collections.unmodifiableList(new ArrayList<T>(values));
     }
 }

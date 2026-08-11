@@ -20,14 +20,15 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        List<?> sequence = OperatorSupport.asList(arguments.getFirst(), name(), "sequence");
-        double base = OperatorSupport.finiteDouble(arguments.getLast(), "calc_delta_seq base");
-        List<Double> result = new ArrayList<>(sequence.size());
+        List<?> sequence = OperatorSupport.asList(arguments.get(0), name(), "sequence");
+        double base = OperatorSupport.finiteDouble(
+                arguments.get(arguments.size() - 1), "calc_delta_seq base");
+        List<Double> result = new ArrayList<Double>(sequence.size());
         for (int index = 0; index < sequence.size(); index++) {
             double value = OperatorSupport.finiteDouble(
                     sequence.get(index), "calc_delta_seq element at index " + index);
             result.add(value - base);
         }
-        return List.copyOf(result);
+        return OperatorSupport.immutableList(result);
     }
 }

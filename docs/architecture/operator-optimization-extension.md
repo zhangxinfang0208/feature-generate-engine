@@ -3,6 +3,11 @@
 本文规定特征 DAG 引擎新增算子优化、专用执行器、序列索引和缓存策略时必须遵守的扩展方式。
 目标是让核心 `planning`、`physical`、`runtime` 只依赖稳定协议，不再按业务算子名称增加分支。
 
+当前首期标准注册表只包含 `discrete`、`log_base`、`slice_by_indices`、`find_indices`、
+`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须拥有独立实现类；
+注册清单不得承载推断或求值逻辑。首期 `operator.builtin` 源码还必须保持 JDK 1.8 语法/API 兼容，
+但项目整体构建基线仍为 Java 21。
+
 ## 1. 基本原则
 
 1. 算子名称只用于表达式解析、注册表查找和通用算子执行，不得作为规划或物理优化条件。
@@ -48,7 +53,7 @@ L0 的 `OperatorSemantic` 不得引用 `PhysicalNode`、`CachePolicy`、`Physica
 - `KeyedSequenceFilterSemantic(sequenceInputIndex, keyInputIndex, keyDomain)`：按 key 等值过滤序列；
 - `SequenceCardinalitySemantic(sequenceInputIndex)`：返回序列元素数量。
 
-例如 `extractIndustry` 声明：
+例如，未来扩展的序列过滤算子可以声明：
 
 ```java
 new KeyedSequenceFilterSemantic(
@@ -57,7 +62,7 @@ new KeyedSequenceFilterSemantic(
         SequenceKeyDomains.INDUSTRY)
 ```
 
-`count` 声明：
+对应的序列基数算子可以声明：
 
 ```java
 new SequenceCardinalitySemantic(0)

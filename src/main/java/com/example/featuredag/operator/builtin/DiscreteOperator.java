@@ -21,20 +21,21 @@ public final class DiscreteOperator extends AbstractBuiltinOperator {
     @Override
     public Object evaluate(List<Object> arguments) {
         BigDecimal value = OperatorSupport.asPreciseDecimal(
-                OperatorSupport.asNumber(arguments.getFirst()),
+                OperatorSupport.asNumber(arguments.get(0)),
                 "discrete requires a finite numeric value");
         List<?> boundaries = OperatorSupport.asList(
-                arguments.getLast(), name(), "discrete_key");
+                arguments.get(arguments.size() - 1), name(), "discrete_key");
         BigDecimal previous = null;
         int bucket = 0;
         for (int index = 0; index < boundaries.size(); index++) {
             Object boundary = boundaries.get(index);
-            if (!(boundary instanceof Number number)) {
+            if (!(boundary instanceof Number)) {
                 throw new IllegalArgumentException(
                         "discrete boundary at index " + index + " is not numeric: " + boundary);
             }
             BigDecimal current = OperatorSupport.asPreciseDecimal(
-                    number, "discrete boundary at index " + index + " must be finite");
+                    (Number) boundary,
+                    "discrete boundary at index " + index + " must be finite");
             if (previous != null && current.compareTo(previous) <= 0) {
                 throw new IllegalArgumentException(
                         "discrete boundaries must be strictly increasing at index " + index);

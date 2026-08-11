@@ -9,14 +9,14 @@
 ## 1. 融合是什么、解决什么问题
 
 逻辑 DAG 是「一个算子一个节点」的细粒度表示。如果每个逻辑节点都单独物化并执行一遍，会带来
-不必要的中间结果和重复计算。例如：
+不必要的中间结果和重复计算。下面使用未注册到首期标准清单的概念算子说明机制：
 
 ```text
-extractIndustry(user_seq, item_industry)   // 按 key 过滤序列
-count(上述结果)                              // 统计过滤后的元素个数
+keyedFilter(user_seq, candidate_key)       // 按 key 过滤序列
+sequenceCardinality(上述结果)               // 统计过滤后的元素个数
 ```
 
-按通用路径执行，`extractIndustry` 要先把过滤后的序列整体物化出来，`count` 再遍历一遍计数。
+按通用路径执行，`keyedFilter` 要先把过滤后的序列整体物化出来，`sequenceCardinality` 再遍历一遍计数。
 但「按 key 等值过滤序列 + 计数」本质上是同一个算法：**建一次 key 索引，直接查 count**。
 物理节点融合就是把这个模式识别出来，替换成一个专用执行器，中间结果不再物化。
 
@@ -112,8 +112,8 @@ count(上述结果)                              // 统计过滤后的元素个�
 它匹配的模式（`physical/rewrite/CountAfterKeyedSequenceFilterRule.java:26`）：
 
 ```text
-SequenceCardinality(              ← 根节点，如 count
-    KeyedSequenceFilter(          ← 被消费节点，如 extractIndustry
+SequenceCardinality(              ← 根节点
+    KeyedSequenceFilter(          ← 被消费节点
         sequence, candidateKey
     )
 )
@@ -206,24 +206,24 @@ for (PhysicalRewrite rewrite : rewrites.values()) {
 
 ### 5.3 融合前后对照
 
-以 `ExampleFeatures` 中真实存在的模式为例（`demo/ExampleFeatures.java:30-36`）：
-`extractIndustry(user_seq1, item_industry)` → `same_industry_seq` → `count(same_industry_seq)`
-→ `same_industry_count`。假设该特征为 ONLINE 目标特征：
+以下是扩展算子注册相应语义后可形成的概念模式；它不属于当前首期标准算子清单：
+`keyedFilter(user_sequence, candidate_key)` → `filtered_sequence` →
+`sequenceCardinality(filtered_sequence)` → `matching_count`。假设该特征为 ONLINE 目标特征：
 
 ```text
 融合前（通用路径）                              融合后
 ─────────────                                   ─────────────
 source:user_seq1  → slot:1                     source:user_seq1     → slot:1
 source:item_industry → slot:2                  source:item_industry → slot:2
-operator:extractIndustry → slot:3              physical:N:specialized → slot:3
+operator:keyedFilter → slot:3                  physical:N:specialized → slot:3
   input [slot:1, slot:2]                         input [slot:1, slot:2]   ← 直接吃外部输入
-operator:count → slot:4                          consumed: [extractIndustry, count]
+operator:sequenceCardinality → slot:4            consumed: [keyedFilter, sequenceCardinality]
   input [slot:3]
-feature:same_industry_count → slot:5
+feature:matching_count → slot:5
   input [slot:4]
 ```
 
-`extractIndustry` 与 `count` 两个逻辑节点合并为一个物理节点，中间序列结果
+`keyedFilter` 与 `sequenceCardinality` 两个逻辑节点合并为一个物理节点，中间序列结果
 （slot:3 原本的完整过滤序列）不再物化，下游直接消费融合节点的计数输出。
 
 ## 6. 运行时执行

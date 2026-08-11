@@ -96,6 +96,7 @@ Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表
 
 ## 7. 测试要求
 
+- 首期标准注册表中的 8 个算子全部使用 `SCALAR_ADAPTER`，当前没有标准 Native Batch 算子；
 - 每个标准 Native Batch 使用相同输入逐行对比 Single 结果；
 - `SCALAR_ADAPTER` 保持调用次数、顺序和异常语义；
 - 零行、单行、多行 Batch；
@@ -104,7 +105,3 @@ Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表
 - `CANDIDATE_KEY` 唯一 miss 批量执行、结果 scatter 顺序以及真实 cache/dedup 指标分离；
 - 命中 Rewrite 时仍执行 SPECIALIZED 物理节点，未命中时才走普通 Batch Kernel；
 - 节点诊断准确区分 Single、Native Batch、Adapter Batch 和 SPECIALIZED，并记录紧凑批实际行数。
-
-仓库中的 `OperatorBatchKernelBenchmark` 使用相同 `add` 输入直接比较 Native 与
-`SCALAR_ADAPTER`，用于判断逐行参数对象优化是否值得保留。正式基准必须启用 fork、充分预热并记录
-`alloc/op` 与 GC；非 fork 短迭代只用于验证基准能够运行。

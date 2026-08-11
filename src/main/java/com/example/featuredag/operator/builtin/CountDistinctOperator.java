@@ -23,21 +23,22 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator {
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        Object sequence = arguments.getFirst();
+        Object sequence = arguments.get(0);
         Collection<?> values;
-        if (sequence instanceof OperatorSequence value) {
-            List<Object> events = new ArrayList<>(value.size());
+        if (sequence instanceof OperatorSequence) {
+            OperatorSequence value = (OperatorSequence) sequence;
+            List<Object> events = new ArrayList<Object>(value.size());
             for (int index = 0; index < value.size(); index++) {
                 events.add(value.elementAt(index));
             }
             values = events;
-        } else if (sequence instanceof Collection<?> collection) {
-            values = collection;
+        } else if (sequence instanceof Collection<?>) {
+            values = (Collection<?>) sequence;
         } else {
             throw new IllegalArgumentException(
                     "count_distinct expects a sequence, got: "
                             + OperatorSupport.typeName(sequence));
         }
-        return new LinkedHashSet<>(values).size();
+        return new LinkedHashSet<Object>(values).size();
     }
 }

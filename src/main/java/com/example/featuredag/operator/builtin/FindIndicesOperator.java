@@ -21,12 +21,12 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator {
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        List<?> sequence = OperatorSupport.asList(arguments.getFirst(), name(), "sequence");
-        Object target = arguments.getLast();
-        List<Integer> result = new ArrayList<>();
+        List<?> sequence = OperatorSupport.asList(arguments.get(0), name(), "sequence");
+        Object target = arguments.get(arguments.size() - 1);
+        List<Integer> result = new ArrayList<Integer>();
         for (int index = 0; index < sequence.size(); index++) {
             if (Objects.equals(sequence.get(index), target)) result.add(index);
         }
-        return List.copyOf(result);
+        return OperatorSupport.immutableList(result);
     }
 }

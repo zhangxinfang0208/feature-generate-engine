@@ -23,16 +23,17 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator {
     public Object evaluate(List<Object> arguments) {
         int sequenceCount = arguments.size();
         String delimiter = "#";
-        Object last = arguments.getLast();
-        if (last instanceof Map<?, ?> config) {
+        Object last = arguments.get(arguments.size() - 1);
+        if (last instanceof Map<?, ?>) {
             sequenceCount--;
+            Map<?, ?> config = (Map<?, ?>) last;
             Object configured = config.get("delimiter");
             if (configured != null) delimiter = String.valueOf(configured);
         }
         if (sequenceCount < 2) {
             throw new IllegalArgumentException("zip_concat requires at least two sequences");
         }
-        List<List<?>> sequences = new ArrayList<>(sequenceCount);
+        List<List<?>> sequences = new ArrayList<List<?>>(sequenceCount);
         int size = -1;
         for (int index = 0; index < sequenceCount; index++) {
             List<?> sequence = OperatorSupport.asList(
@@ -45,7 +46,7 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator {
             }
             sequences.add(sequence);
         }
-        List<String> result = new ArrayList<>(size);
+        List<String> result = new ArrayList<String>(size);
         for (int row = 0; row < size; row++) {
             StringBuilder joined = new StringBuilder();
             for (int column = 0; column < sequences.size(); column++) {
@@ -54,6 +55,6 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator {
             }
             result.add(joined.toString());
         }
-        return List.copyOf(result);
+        return OperatorSupport.immutableList(result);
     }
 }

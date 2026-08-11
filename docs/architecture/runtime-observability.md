@@ -157,17 +157,5 @@ feature_dag_candidates
 缓存命中率本身不是验收结论。只有业务输出一致，并且单位 candidate 耗时、吞吐或分配量得到改善，
 才说明优化真实有效。
 
-仓库提供独立的 `benchmarks` Maven profile；默认构建不会引入 JMH 运行依赖。完整参数矩阵可运行：
-
-```bash
-bash ./scripts/run-benchmark.sh
-```
-
-快速验证单请求场景可运行：
-
-```bash
-bash ./scripts/run-benchmark.sh \
-  'FeatureDagEngineBenchmark.onlineSingle -p candidateCount=10 -p distinctKeyCount=1 -p observabilityMode=OFF'
-```
-
-默认结果写入 `target/jmh-result.json`，正式基线应保留 fork、预热和 GC profiler，不应使用非 fork 的冒烟结果。
+首期仓库不再携带依赖非首期算子的 JMH profile 和基准脚本。需要验证性能优化时，应在业务方的
+代表性数据集上单独建立基准，并保留 fork、预热、延迟分位数、`alloc/op` 和 GC 数据。

@@ -3,6 +3,8 @@ package com.example.featuredag.operator.builtin;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorSemantic;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -25,7 +27,7 @@ public abstract class AbstractBuiltinOperator implements OperatorDefinition {
             boolean parameterized,
             boolean supportsSequenceView) {
         this(name, minArguments, maxArguments, deterministic, parameterized,
-                supportsSequenceView, 1L, List.of());
+                supportsSequenceView, 1L, Collections.<OperatorSemantic>emptyList());
     }
 
     protected AbstractBuiltinOperator(
@@ -38,7 +40,7 @@ public abstract class AbstractBuiltinOperator implements OperatorDefinition {
             long estimatedCost,
             List<OperatorSemantic> semantics) {
         this.name = Objects.requireNonNull(name, "name");
-        if (name.isBlank()) throw new IllegalArgumentException("name must not be blank");
+        if (name.trim().isEmpty()) throw new IllegalArgumentException("name must not be blank");
         if (minArguments < 0 || maxArguments < minArguments) {
             throw new IllegalArgumentException("invalid argument range for operator " + name);
         }
@@ -51,7 +53,7 @@ public abstract class AbstractBuiltinOperator implements OperatorDefinition {
         this.parameterized = parameterized;
         this.supportsSequenceView = supportsSequenceView;
         this.estimatedCost = estimatedCost;
-        this.semantics = List.copyOf(semantics);
+        this.semantics = Collections.unmodifiableList(new ArrayList<OperatorSemantic>(semantics));
     }
 
     @Override public final String name() { return name; }

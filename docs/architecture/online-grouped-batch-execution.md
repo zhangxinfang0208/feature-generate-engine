@@ -138,15 +138,5 @@ Batch 会延长中间槽内批值的生命周期，因此调用方应同时限�
 - 专用序列执行器的逐组索引、去重和顺序还原；
 - 原单请求在线、离线单行与离线 Batch 回归。
 
-## 统一配置 Demo
-
-三个可运行入口统一加载 `src/main/resources/demo/config.json`，不在 Java 代码中复制特征定义：
-
-- `DagDemo` 选择三天 app 点击计数目标，使用相同 RAW 输入分别初始化 OFFLINE 与 ONLINE 计划，
-  保留原 `FEATURES` 输出并额外输出 `ONLINE_FEATURES`；
-- `OfflineBatchDemo` 选择 user/item Batch 目标，将在线示例中的三个 candidate 展平成三行；
-- `OnlineGroupedBatchDemo` 选择同一组 Batch 目标，保留 user 分组及其共享输入。
-
-统一配置可以包含多个互不相关的目标集合，`InitOptions.targetFeatures` 负责触发 C3 的目标驱动构图，
-因此每个 Demo 只要求其可达子图使用的 RAW 输入。自测试把在线每组的请求级输出与候选级输出合并，
-再与离线三行逐一比较，以覆盖 user 广播隔离、candidate 顺序恢复及两种环境下的结果一致性。
+首期仓库不提供依赖非首期算子的在线/离线 Batch Demo。调用方仍可通过
+`InitOptions.targetFeatures` 触发 C3 的目标驱动构图，并使用公共 Batch API 验证自己的业务配置。

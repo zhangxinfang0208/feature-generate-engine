@@ -8,8 +8,8 @@ import java.util.Map;
 /**
  * Small dependency-free parser for function-style feature expressions.
  * Supported examples:
- *   count(extractIndustry(user_seq1, item_industry))
- *   normalize(coalesce(user_click_count, 0), {"method":"min_max","min":0,"max":100})
+ *   discrete(price, [0, 100, 1000])
+ *   zip_concat(item_ids, category_ids)
  */
 public final class ExpressionParser {
     private static final int ERROR_EXCERPT_RADIUS = 80;

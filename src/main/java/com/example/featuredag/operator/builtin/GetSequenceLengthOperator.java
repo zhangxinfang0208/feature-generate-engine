@@ -21,9 +21,9 @@ public final class GetSequenceLengthOperator extends AbstractBuiltinOperator {
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        Object sequence = arguments.getFirst();
-        if (sequence instanceof OperatorSequence value) return value.size();
-        if (sequence instanceof Collection<?> collection) return collection.size();
+        Object sequence = arguments.get(0);
+        if (sequence instanceof OperatorSequence) return ((OperatorSequence) sequence).size();
+        if (sequence instanceof Collection<?>) return ((Collection<?>) sequence).size();
         if (sequence != null && sequence.getClass().isArray()) {
             return java.lang.reflect.Array.getLength(sequence);
         }

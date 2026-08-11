@@ -1,88 +1,57 @@
 # 仓库贡献指南
 
-## 项目结构与模块组织
+## 项目结构与首期范围
 
-本项目是一个基于 Java 21 的三层特征表达式 DAG 引擎参考实现。生产代码位于 `src/main/java/com/example/featuredag/`，并按职责划分：`definition` 和 `expression` 定义输入与表达式；`logical` 构建逻辑 DAG；`planning` 和 `physical` 完成优化及物理计划转换；`runtime` 执行计划；`operator` 提供算子行为。`demo` 仅用于可运行示例，不应承载核心抽象。无外部依赖的集成测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`。辅助脚本存放在 `scripts/`，编译产物和 JAR 文件统一写入 `target/`。
+本项目是一个基于 Java 21 的三层特征表达式 DAG 引擎参考实现。生产代码位于 `src/main/java/com/example/featuredag/`：`definition`、`expression` 和 `config` 定义输入；`logical` 构建逻辑 DAG；`planning` 和 `physical` 生成物理计划；`runtime` 执行计划；`operator` 提供算子协议与实现。
+
+首期标准注册表严格只提供以下 8 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护显式清单，`StandardOperators` 不得额外注册其他算子。
+
+仓库不提供依赖其他算子的 Demo、Demo 配置、Demo 脚本或对应 UT。自测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`，辅助脚本位于 `scripts/`，编译产物写入 `target/`。
 
 ## 三层 DAG 构建约束
 
-引擎按「定义 → 逻辑 → 物理」三层构建 DAG，各层职责与约束如下；代码中的中文注解均引用此处编号（如 C3），修改对应逻辑时应保持注解与约束同步。
+- C1 单向分层依赖：L0（`definition`/`expression`/`config`）→ L1（`logical`）→ 规划/物理层（`planning`/`physical`）→ 运行时（`runtime`）。禁止反向引用；规划层不得改写逻辑节点。
+- C2 定义层：`FeatureDefinition` 构造后不可变；RAW 必须声明 entityScopes 且不得携带表达式，DERIVED 必须有表达式。所有校验在构造器内完成。
+- C3 逻辑层：`LogicalDagBuilder` 从 targetFeatures 逆向构建可达子图；表达式 AST 构建后丢弃，不进入持久化计划模型。
+- C4 无环约束：构建期用 DFS 三色标记检测依赖环，拓扑排序再次校验。
+- C5 节点去重与命名：节点按 canonical 签名合并；ID 使用 `source:`、`literal:`、`operator:`、`feature:` 前缀。
+- C6 声明与推断一致：声明类型、值形状和实体域必须与推断结果一致；唯一例外是声明 DOUBLE 可接受推断 INT。
+- C7 逻辑节点不可变：依赖通过 `NodeInput` 的节点 ID 与端口引用。
+- C8 规划层只读：引用计数、可达根、依赖维度、缓存资格、成本和大小放在 `NodePlanningMetadata`，融合由注册的物理改写规则匹配。
+- C9 物理转换：每个未融合逻辑节点只产生一个物理输出槽；融合节点记录全部 consumed logical node IDs，并遵守共享节点与根节点安全约束。
+- C10 环境决策：执行阶段、模式、缓存策略及 Single/Batch Kernel 只能由环境、实体域、算子语义、成本、shape 和注册能力推导；核心层禁止按业务算子名特判。
 
-- C1 单向分层依赖：L0 定义层（`definition`/`expression`/`config`）→ L1 逻辑层（`logical`）→ 规划/物理层（`planning`/`physical`）→ 运行时（`runtime`）。上层可引用下层类型，禁止反向引用；规划层不得改写逻辑节点。
-- C2 定义层（L0）：`FeatureDefinition` 构造后不可变；RAW 特征必须声明 entityScopes 且不得携带表达式，DERIVED 特征必须有表达式。所有校验在构造器内完成，校验失败直接抛异常，不产出半成品定义。
-- C3 逻辑层构建（L1）：`LogicalDagBuilder` 采用目标驱动，从 targetFeatures 逆向构建可达子图；表达式 AST 只是临时中间表示，构建完成后即丢弃，严禁进入持久化计划模型。
-- C4 无环约束：逻辑 DAG 必须无环。构建期用 DFS 三色标记（VISITING/VISITED）检测特征依赖环，构建完成后拓扑排序再兜底校验一次。
-- C5 节点去重与命名：逻辑节点按 canonical 签名合并等价节点（`source|名字`、`literal|类型|值`、`operator|名称|输入`）；节点 ID 遵循前缀规范 `source:`、`literal:`、`operator:`、`feature:`，新增节点类型必须沿用。
-- C6 声明与推断一致性：特征的声明类型/值形状/实体域必须与 DAG 推断结果一致（唯一例外：声明 DOUBLE 允许推断为 INT），不一致时抛 `DagBuildException`。
-- C7 逻辑节点不可变：`LogicalNode` 及其实现（`SourceNode`、`LiteralNode`、`OperatorNode`、`FeatureOutputNode`）构造后不可变，依赖关系通过 `NodeInput` 的节点 ID 与端口引用。
-- C8 规划层只读：`LogicalDagOptimizer` 只读遍历 DAG，通用优化事实（引用计数、可达根、依赖维度、缓存资格、成本与大小）外置在 `NodePlanningMetadata`，禁止回写或修改逻辑节点本身；融合由注册的物理改写规则根据算子语义匹配。
-- C9 物理转换（L2）：每个未融合逻辑节点必须且只能产出一个物理输出槽（`slot:N`），物理节点保持逻辑拓扑序；节点融合仅在规则允许的环境执行，且被消费的中间节点必须引用计数为 1 且不是根节点，融合节点记录全部 consumed logical node IDs。
-- C10 环境相关决策：物理节点的执行阶段/执行模式/缓存策略以及 Single/Batch Kernel ID 与实现种类只能由 `ExecutionEnvironment`、实体域、算子语义、成本、值形状和已注册能力推导，禁止按业务算子名特判或在运行时临时决定；运行时只可按输入载体分派计划已声明的 Single 或 Batch Kernel，不得重新匹配融合规则；输出特征槽位必须与逻辑根节点一一对应。
-
-## 算子优化与缓存扩展规范
-
-后续新增算子优化、融合、索引或缓存能力必须遵循 `docs/architecture/operator-optimization-extension.md`：
+## 算子实现与扩展
 
 - `operator` 层通过 `OperatorSemantic` 声明逻辑语义，不得引用物理或运行时类型。
-- `planning`/`physical`/`runtime` 核心类禁止按业务算子名增加判断；DAG 模式通过 `PhysicalRewriteRule` 注册。
-- 专用算法通过 `PhysicalExecutorRegistry` 注册，`DagRuntime` 只按 `executorId` 路由。
-- 等值序列索引通过 `SequenceIndexProvider` 注册；字段不同但算法相同不得复制业务专用索引类。
-- `CachePolicy` 必须有对应运行时实现；缓存 key 必须覆盖 keyDomain、具体序列视图和所有候选变化输入。
-- 每项优化必须验证语义别名匹配、未声明语义不匹配、共享/根节点安全、ONLINE/OFFLINE、SequenceView 与缓存隔离。
+- 每个业务算子单独实现元数据、推断和求值；注册类只装配实例，不承载业务逻辑。
+- `OperatorDefinition` 的 Single Kernel 是语义基准。Native `BatchOperatorKernel` 可选；未提供时使用 `SingleLoopBatchOperatorKernel`。
+- Batch 必须逐行等价于 Single，保持行数和顺序；Kernel 实例必须无请求状态且可并发复用。
+- `planning`、`physical`、`runtime` 禁止按业务算子名增加分支；DAG 模式通过 `PhysicalRewriteRule` 注册，专用算法通过 `PhysicalExecutorRegistry` 注册。
+- 缓存只允许 deterministic 且 sideEffectFree 的算子；缓存 key 必须覆盖域、具体序列视图和所有变化输入。
+- 详细约束见 `docs/architecture/operator-optimization-extension.md` 和 `docs/architecture/operator-single-batch-execution.md`。
 
-## 算子 Single/Batch 执行约束
+## Java 版本约束
 
-算子双执行契约遵循 `docs/architecture/operator-single-batch-execution.md`：
+项目整体构建基线仍为 Java 21。首期 8 个算子及其直接共用的 `operator.builtin` 支撑代码必须只使用 JDK 1.8 可用的语言特性和标准库 API，不得使用 `record`、文本块、模式匹配 `instanceof`、`List.of/copyOf`、`Stream.toList`、`List.getFirst/getLast` 等更高版本能力。
 
-- `OperatorDefinition` 的 Single Kernel 是必须实现的单值语义基准；Native `BatchOperatorKernel` 可选，未提供时必须使用框架的 `SingleLoopBatchOperatorKernel`，不得复制一套默认业务实现。
-- 对逐行等价的 Native Batch，Single 与 Batch 必须复用同一个行级语义函数；禁止分别复制公式。只有确需跨行、列式或第三方批量算法时才允许独立 Batch 实现，并必须用差分测试证明等价。
-- Batch 必须逐行等价于 Single，输出行数与输入相同并保持顺序；零行 Batch 返回零行结果，异常必须携带 Batch 行号以映射到 offline row 或 online group/candidate。
-- Batch 维度不得进入逻辑 `ValueShape`。`operator` 层的 `BatchColumn`、`BatchLayout` 等协议不得引用 `runtime` 的 `ExecutionContext` 或 `ValueHandle`（C1）。
-- Kernel 实例必须无请求状态且可并发复用；只有 deterministic 且 sideEffectFree 的算子允许缓存去重调用，在线缓存、索引和候选去重必须按 group 隔离。
-- 物理计划必须记录 `singleKernelId`、`batchKernelId`、`batchKernelKind` 和 `OperatorInvocationPolicy` 枚举；运行时必须读取并执行该策略。Rewrite 仍在初始化阶段生成 SPECIALIZED 节点，真实请求不得临时融合（C9/C10）。
-- 批内 pending 重复属于 dedup reuse，不得计入真实缓存 lookup/hit；由 `dedupInputCount/uniqueInputCount` 表达，缓存指标只统计实际缓存 Map 操作。
-- 节点级观测必须用 `OperatorInvocationKind` 区分 Single、Native Batch、Adapter Batch 与 SPECIALIZED；Batch 同时记录域和真正提交给 Kernel 的行数，紧凑 miss Batch 不得记录外层原始行数。
-- 新增 Native Batch 必须验证与逐行 Single 的结果一致性，并覆盖零行、单行、多行、广播、scatter 顺序、分组隔离、错误定位及现有融合回归。
+该约束保证首期算子源码便于独立抽取或代码生成，不表示整个仓库可以在 JDK 1.8 下编译。
 
-## 构建、测试与开发命令
+## 构建与测试
 
-- `mvn clean package`：使用 Java 21 编译，并生成 thin JAR 与包含 Jackson 依赖的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`。
-- `java -jar target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`：运行已打包的 `DagDemo`；普通不带 `-all` 的 JAR 不包含第三方依赖。
-- `./scripts/run-demo.sh`：通过 Maven 编译并运行 `DagDemo`，需要 Bash 环境。
-- `./scripts/run-self-test.sh`：编译主代码和测试代码，并通过 `java -ea` 启用断言执行自测试。
+- `mvn clean package`：使用 Java 21 编译，生成 thin JAR 和包含 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`；产物不包含 Demo `Main-Class`。
+- `./scripts/run-self-test.sh`：编译主代码和测试代码，并通过 `java -ea` 执行自测试。
 
-开发环境要求 JDK 21 或更高版本。源码运行依赖由 Maven 管理；使用 `-all.jar` 运行 Demo 时不需要额外配置依赖。
+提交前必须显式运行自测试；`mvn package` 只编译测试源码，不会自动执行 `DagEngineSelfTest`。
 
-## Demo 输入契约
+## 编码风格
 
-`com.example.featuredag.demo.DagDemo#main` 必须展示真实的公共 API 调用，不应绕过
-`FeatureDagEngine.generate` 或使用伪造的算子结果。当前 Demo 使用三天 app 点击计数案例：
+使用四个空格缩进和 UTF-8。每个文件只声明一个公共顶级类型。类名和枚举名使用 `PascalCase`，方法与变量使用 `camelCase`，枚举常量使用 `UPPER_SNAKE_CASE`。领域类型应小型、不可变，并在构造器或 Builder 中显式校验。
 
-- 公共 generate API 的所有输入值均为普通 Java `List`。
-- SCALAR 使用单元素 List，例如 auid=["aaaa"]、request_time=[1785549653]。
-- SEQUENCE 使用完整元素 List；第一版不执行跨序列 alignment 校验。
-- 调用方负责在调用引擎前把 "1|0|1|v2" 等旧协议转换为干净数组。
-- 三天计数公共输出为 auid_omnichannel_paid_cnt_3d=[1]。
-- 另有两个派生特征复用该计数作为输入：
-  `auid_appc3_omnichannel_paid_cnt_div10_365d = LEAST(ROUND(cnt/10), 1000)`、
-  `auid_appc3_omnichannel_paid_cnt_log_365d = LEAST(ROUND(LOG(cnt)/LOG(1.1)), 1000)`，
-  经 `div_num`/`div`/`log`/`round`/`least` 计算；输入计数为 1 时两者输出均为 [0]，
-  同时验证「派生特征引用派生特征」的目标驱动构建（C3）。
-- 两条序列按时间从近到远排列；示例时间戳单位是秒。
-- `request_time - 259200` 是三天前的边界，窗口判断为严格 `timestamp > boundary`。
-- 目标特征 `auid_omnichannel_paid_cnt_3d` 应通过 `greater_in_sequence_typed`、`list_index_typed`、
-  `find_list_index_typed` 和 `count` 计算，而不是在 Demo 中手工统计。
+层间转换点使用中文注解说明转换语义并引用 C1–C10；核心链路不引入运行时日志。
 
-## 编码风格与命名约定
+## 测试与提交
 
-使用四个空格缩进和 UTF-8 编码，每个文件只声明一个公共顶级类型，并遵循现有的 `com.example.featuredag.<area>` 包结构。类名和枚举名使用 `PascalCase`，方法名和变量名使用 `camelCase`，枚举常量使用 `UPPER_SNAKE_CASE`。领域类型应尽量保持小型、不可变，并在构造器或 Builder 中通过明确的异常校验输入。沿用 `LogicalDag`、`PhysicalPlan`、`ExecutionContext` 等架构术语。项目未配置格式化或静态检查工具，因此应遵循相邻代码的风格并使用显式导入。
+测试使用 Java `assert` 而非 JUnit。首期算子测试只覆盖上述 8 个算子的注册、推断、执行、异常和 Batch 路由，不得在测试中保留或重新实现其他标准算子。
 
-- 注解约定：层间转换点（L0 映射、L1 构建、规划分析、L2 转换、运行时执行）以中文注解说明转换语义，并引用约束编号（C1–C10）；核心链路不引入运行时日志（LOGGER），转换过程信息通过注解与各层产物类型呈现。
-
-## 测试指南
-
-当前测试使用 Java `assert`，而非 JUnit。端到端测试应添加到 `DagEngineSelfTest`，使用确定性测试数据，并为不直观的断言提供清晰的失败消息。修改相关模块时，应覆盖逻辑依赖选择、计划器转换、在线/离线行为和运行时输出。提交前始终运行 `./scripts/run-self-test.sh` 或等价的 `java -ea` 命令。注意：`mvn package` 会编译测试源码，但不会执行该自测试程序；需要显式运行 `DagEngineSelfTest`。
-
-## 提交与拉取请求规范
-
-提交标题应简短、使用祈使语气，例如 `Add cycle detection coverage`，并确保每次提交只聚焦一个主题。拉取请求应说明行为变化及受影响的架构层、列出已运行的验证命令，并关联相关 Issue。若执行行为发生变化，请附上示例计划或控制台输出；本项目没有 UI，通常无需截图。
+提交标题应简短并使用祈使语气。每次提交聚焦一个主题；拉取请求说明行为变化、受影响架构层和已运行的验证命令。

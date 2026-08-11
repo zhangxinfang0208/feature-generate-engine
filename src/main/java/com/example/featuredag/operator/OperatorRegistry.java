@@ -24,6 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class OperatorRegistry {
     private final Map<String, OperatorDefinition> definitions = new ConcurrentHashMap<>();
+    private final Map<String, BatchOperatorKernel> batchKernels = new ConcurrentHashMap<>();
+    private final Map<String, BatchOperatorKernel> scalarBatchAdapters = new ConcurrentHashMap<>();
 
     public OperatorRegistry register(OperatorDefinition definition) {
         Objects.requireNonNull(definition, "definition");
@@ -31,6 +33,11 @@ public final class OperatorRegistry {
         if (previous != null) {
             throw new IllegalArgumentException("Operator already registered: " + definition.name());
         }
+        BatchOperatorKernel scalarAdapter = new SingleLoopBatchOperatorKernel(definition);
+        scalarBatchAdapters.put(definition.name(), scalarAdapter);
+        batchKernels.put(
+                definition.name(),
+                definition instanceof BatchOperatorKernel nativeBatch ? nativeBatch : scalarAdapter);
         return this;
     }
 
@@ -58,6 +65,61 @@ public final class OperatorRegistry {
         OperatorDefinition definition = require(name);
         validateArity(definition, arguments.size());
         return definition.evaluate(arguments);
+    }
+
+    public BatchOperatorResult evaluateBatch(String name, BatchOperatorCall call) {
+        return evaluateBatch(name, call, batchKernelKind(name));
+    }
+
+    public BatchOperatorResult evaluateBatch(
+            String name,
+            BatchOperatorCall call,
+            BatchKernelKind plannedKind) {
+        Objects.requireNonNull(call, "call");
+        Objects.requireNonNull(plannedKind, "plannedKind");
+        OperatorDefinition definition = require(name);
+        validateArity(definition, call.arguments().size());
+        BatchOperatorKernel registered = batchKernel(definition);
+        BatchOperatorKernel kernel;
+        if (plannedKind == BatchKernelKind.SCALAR_ADAPTER) {
+            kernel = scalarBatchAdapter(name);
+        } else {
+            if (registered.batchKernelKind() != BatchKernelKind.NATIVE) {
+                throw new IllegalStateException(
+                        "Physical plan requires native Batch kernel for operator " + name);
+            }
+            kernel = registered;
+        }
+        BatchOperatorResult result = kernel.evaluateBatch(call);
+        if (result.values().size() != call.rowCount()) {
+            throw new IllegalStateException(
+                    "Batch operator " + name + " returned " + result.values().size()
+                            + " rows, expected " + call.rowCount());
+        }
+        return result;
+    }
+
+    public BatchKernelKind batchKernelKind(String name) {
+        require(name);
+        return batchKernel(name).batchKernelKind();
+    }
+
+    private BatchOperatorKernel batchKernel(OperatorDefinition definition) {
+        return batchKernel(definition.name());
+    }
+
+    private BatchOperatorKernel batchKernel(String name) {
+        BatchOperatorKernel kernel = batchKernels.get(name);
+        if (kernel == null) throw new IllegalStateException("Missing batch kernel for operator: " + name);
+        return kernel;
+    }
+
+    private BatchOperatorKernel scalarBatchAdapter(String name) {
+        BatchOperatorKernel kernel = scalarBatchAdapters.get(name);
+        if (kernel == null) {
+            throw new IllegalStateException("Missing scalar Batch adapter for operator: " + name);
+        }
+        return kernel;
     }
 
     public <T extends OperatorSemantic> Optional<T> semantic(String operatorName, Class<T> semanticType) {
@@ -102,7 +164,7 @@ public final class OperatorRegistry {
                     return sequence.filterByIndustry(industry);
                 }));
 
-        registry.register(simple("count", 1, 1, true, false, true,
+        registry.register(rowWiseSimple("count", 1, 1, true, false, true,
                 10L,
                 List.of(new SequenceCardinalitySemantic(0)),
                 inputs -> {
@@ -116,30 +178,20 @@ public final class OperatorRegistry {
                     }
                     return new OperatorInference(DataType.INT, unionScopes(inputs), ValueShape.SCALAR);
                 },
-                args -> {
-                    Object value = args.get(0);
-                    if (value == null) return 0;
-                    if (value instanceof OperatorSequence sequence) return sequence.size();
-                    if (value instanceof Collection<?> collection) return collection.size();
-                    if (value.getClass().isArray()) return java.lang.reflect.Array.getLength(value);
-                    throw new IllegalArgumentException("count does not support: " + value.getClass());
-                }));
+                arguments -> evaluateCountValue(arguments.getFirst())));
 
-        registry.register(simple("add", 2, Integer.MAX_VALUE, true, false, false,
+        registry.register(rowWiseSimple("add", 2, Integer.MAX_VALUE, true, false, false,
                 inputs -> new OperatorInference(DataType.DOUBLE, unionScopes(inputs), ValueShape.SCALAR),
-                args -> {
-                    double result = 0.0;
-                    for (Object arg : args) result += asNumber(arg).doubleValue();
-                    return result;
-                }));
+                OperatorRegistry::evaluateAdd));
 
-        registry.register(simple("log", 1, 1, true, false, false,
+        registry.register(rowWiseSimple("log", 1, 1, true, false, false,
                 inputs -> new OperatorInference(DataType.DOUBLE, unionScopes(inputs), ValueShape.SCALAR),
-                args -> Math.log(asNumber(args.get(0)).doubleValue())));
+                arguments -> Math.log(asNumber(arguments.getFirst()).doubleValue())));
 
-        registry.register(simple("multiply", 2, 2, true, false, false,
+        registry.register(rowWiseSimple("multiply", 2, 2, true, false, false,
                 inputs -> new OperatorInference(DataType.DOUBLE, unionScopes(inputs), ValueShape.SCALAR),
-                args -> asNumber(args.get(0)).doubleValue() * asNumber(args.get(1)).doubleValue()));
+                arguments -> asNumber(arguments.get(0)).doubleValue()
+                        * asNumber(arguments.get(1)).doubleValue()));
 
         registerSequenceOperators(registry);
         registerConversionOperators(registry);
@@ -202,30 +254,17 @@ public final class OperatorRegistry {
                 }));
         registry.register(simple("list_multi", 3, 3, true, true, true,
                 fixed(DataType.DOUBLE, ValueShape.SEQUENCE), unsupported("list_multi")));
-        registry.register(simple("div_num", 2, 2, true, true, false,
+        registry.register(rowWiseSimple("div_num", 2, 2, true, true, false,
                 fixed(DataType.DOUBLE, ValueShape.SCALAR),
-                args -> {
-                    double value = asNumber(args.getFirst()).doubleValue();
-                    Map<?, ?> params = asMap(args.getLast());
-                    double divisor = getDouble(params, "divisor", 1.0);
-                    if (divisor == 0.0) {
-                        throw new IllegalArgumentException("divisor must not be zero");
-                    }
-                    return value / divisor;
-                }));
-        registry.register(simple("round", 1, 1, true, false, false,
+                OperatorRegistry::evaluateDivNum));
+        registry.register(rowWiseSimple("round", 1, 1, true, false, false,
                 fixed(DataType.INT, ValueShape.SCALAR),
-                args -> Math.toIntExact(Math.round(asNumber(args.getFirst()).doubleValue()))));
-        registry.register(simple("div", 2, 2, true, false, false,
+                arguments -> Math.toIntExact(Math.round(
+                        asNumber(arguments.getFirst()).doubleValue()))));
+        registry.register(rowWiseSimple("div", 2, 2, true, false, false,
                 fixed(DataType.DOUBLE, ValueShape.SCALAR),
-                args -> {
-                    double divisor = asNumber(args.getLast()).doubleValue();
-                    if (divisor == 0.0) {
-                        throw new IllegalArgumentException("divisor must not be zero");
-                    }
-                    return asNumber(args.getFirst()).doubleValue() / divisor;
-                }));
-        registry.register(simple("least", 2, Integer.MAX_VALUE, true, false, false,
+                OperatorRegistry::evaluateDiv));
+        registry.register(rowWiseSimple("least", 2, Integer.MAX_VALUE, true, false, false,
                 inputs -> {
                     boolean allInt = true;
                     for (OperatorInputMetadata input : inputs) {
@@ -239,17 +278,7 @@ public final class OperatorRegistry {
                             unionScopes(inputs),
                             ValueShape.SCALAR);
                 },
-                args -> {
-                    Number minimum = asNumber(args.getFirst());
-                    boolean returnDouble = isFloatingPoint(minimum);
-                    for (int index = 1; index < args.size(); index++) {
-                        Number candidate = asNumber(args.get(index));
-                        returnDouble |= isFloatingPoint(candidate);
-                        if (candidate.doubleValue() < minimum.doubleValue()) minimum = candidate;
-                    }
-                    if (returnDouble) return minimum.doubleValue();
-                    return minimum.intValue();
-                }));
+                OperatorRegistry::evaluateLeast));
         registry.register(simple("dis2xl", 2, 2, true, true, false,
                 fixed(DataType.INT, ValueShape.SCALAR), unsupported("dis2xl")));
         registry.register(simple("default_key_if", 2, 2, true, true, false,
@@ -274,6 +303,48 @@ public final class OperatorRegistry {
                 fixed(DataType.STRING, ValueShape.SEQUENCE), OperatorRegistry::evaluateZipConcat));
         registry.register(simple("calc_delta_seq", 2, 2, true, false, true,
                 fixed(DataType.DOUBLE, ValueShape.SEQUENCE), OperatorRegistry::evaluateCalcDeltaSeq));
+    }
+
+    private static Object evaluateCountValue(Object value) {
+        if (value == null) return 0;
+        if (value instanceof OperatorSequence sequence) return sequence.size();
+        if (value instanceof Collection<?> collection) return collection.size();
+        if (value.getClass().isArray()) return java.lang.reflect.Array.getLength(value);
+        throw new IllegalArgumentException("count does not support: " + value.getClass());
+    }
+
+    private static Object evaluateAdd(RowArguments args) {
+        double result = 0.0;
+        for (int index = 0; index < args.size(); index++) {
+            result += asNumber(args.get(index)).doubleValue();
+        }
+        return result;
+    }
+
+    private static Object evaluateDivNum(RowArguments args) {
+        double value = asNumber(args.getFirst()).doubleValue();
+        Map<?, ?> params = asMap(args.getLast());
+        double divisor = getDouble(params, "divisor", 1.0);
+        if (divisor == 0.0) throw new IllegalArgumentException("divisor must not be zero");
+        return value / divisor;
+    }
+
+    private static Object evaluateDiv(RowArguments args) {
+        double divisor = asNumber(args.getLast()).doubleValue();
+        if (divisor == 0.0) throw new IllegalArgumentException("divisor must not be zero");
+        return asNumber(args.getFirst()).doubleValue() / divisor;
+    }
+
+    private static Object evaluateLeast(RowArguments args) {
+        Number minimum = asNumber(args.getFirst());
+        boolean returnDouble = isFloatingPoint(minimum);
+        for (int index = 1; index < args.size(); index++) {
+            Number candidate = asNumber(args.get(index));
+            returnDouble |= isFloatingPoint(candidate);
+            if (candidate.doubleValue() < minimum.doubleValue()) minimum = candidate;
+        }
+        if (returnDouble) return minimum.doubleValue();
+        return minimum.intValue();
     }
 
     private static Object evaluateDiscrete(List<Object> args) {
@@ -446,6 +517,35 @@ public final class OperatorRegistry {
                 false, 1L, List.of(), inference, evaluator);
     }
 
+    private static OperatorDefinition simple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            java.util.function.Function<List<Object>, Object> evaluator,
+            BatchOperatorKernel batchKernel) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                false, 1L, List.of(), inference, evaluator, batchKernel);
+    }
+
+    private static OperatorDefinition rowWiseSimple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            RowEvaluator evaluator) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                inference, singleEvaluator(evaluator), nativeBatch(evaluator));
+    }
+
     private static OperatorDefinition curriedSimple(
             String name,
             int minArgs,
@@ -483,26 +583,204 @@ public final class OperatorRegistry {
             boolean deterministic,
             boolean parameterized,
             boolean supportsView,
+            long estimatedCost,
+            List<OperatorSemantic> semantics,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            java.util.function.Function<List<Object>, Object> evaluator,
+            BatchOperatorKernel batchKernel) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                false, estimatedCost, semantics, inference, evaluator, batchKernel);
+    }
+
+    private static OperatorDefinition rowWiseSimple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            long estimatedCost,
+            List<OperatorSemantic> semantics,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            RowEvaluator evaluator) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                estimatedCost, semantics, inference,
+                singleEvaluator(evaluator), nativeBatch(evaluator));
+    }
+
+    private static OperatorDefinition simple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
             boolean supportsCurriedInvocation,
             long estimatedCost,
             List<OperatorSemantic> semantics,
             java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
             java.util.function.Function<List<Object>, Object> evaluator) {
-        return new OperatorDefinition() {
-            @Override public String name() { return name; }
-            @Override public int minArguments() { return minArgs; }
-            @Override public int maxArguments() { return maxArgs; }
-            @Override public boolean deterministic() { return deterministic; }
-            @Override public boolean parameterized() { return parameterized; }
-            @Override public boolean supportsSequenceView() { return supportsView; }
-            @Override public boolean supportsCurriedInvocation() { return supportsCurriedInvocation; }
-            @Override public long estimatedCost() { return estimatedCost; }
-            @Override public List<OperatorSemantic> semantics() { return List.copyOf(semantics); }
-            @Override public OperatorInference infer(List<OperatorInputMetadata> inputs) {
-                return inference.apply(inputs);
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                supportsCurriedInvocation, estimatedCost, semantics, inference, evaluator, null);
+    }
+
+    private static OperatorDefinition simple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            boolean supportsCurriedInvocation,
+            long estimatedCost,
+            List<OperatorSemantic> semantics,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            java.util.function.Function<List<Object>, Object> evaluator,
+            BatchOperatorKernel batchKernel) {
+        return new SimpleOperatorDefinition(
+                name,
+                minArgs,
+                maxArgs,
+                deterministic,
+                parameterized,
+                supportsView,
+                supportsCurriedInvocation,
+                estimatedCost,
+                semantics,
+                inference,
+                evaluator,
+                batchKernel);
+    }
+
+    private interface RowArguments {
+        int size();
+
+        Object get(int index);
+
+        default Object getFirst() {
+            return get(0);
+        }
+
+        default Object getLast() {
+            return get(size() - 1);
+        }
+    }
+
+    private record ListRowArguments(List<Object> values) implements RowArguments {
+        @Override public int size() { return values.size(); }
+        @Override public Object get(int index) { return values.get(index); }
+    }
+
+    private static final class BatchRowArguments implements RowArguments {
+        private final BatchOperatorCall call;
+        private int rowIndex;
+
+        private BatchRowArguments(BatchOperatorCall call) {
+            this.call = call;
+        }
+
+        private void moveTo(int value) {
+            rowIndex = value;
+        }
+
+        @Override public int size() { return call.arguments().size(); }
+        @Override public Object get(int index) {
+            return call.arguments().get(index).valueAt(rowIndex);
+        }
+    }
+
+    @FunctionalInterface
+    private interface RowEvaluator {
+        Object evaluate(RowArguments arguments);
+    }
+
+    private static java.util.function.Function<List<Object>, Object> singleEvaluator(
+            RowEvaluator evaluator) {
+        return arguments -> evaluator.evaluate(new ListRowArguments(arguments));
+    }
+
+    private static BatchOperatorKernel nativeBatch(RowEvaluator evaluator) {
+        return call -> {
+            List<Object> result = new ArrayList<>(call.rowCount());
+            BatchRowArguments arguments = new BatchRowArguments(call);
+            for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+                try {
+                    arguments.moveTo(rowIndex);
+                    result.add(evaluator.evaluate(arguments));
+                } catch (RuntimeException error) {
+                    throw new BatchOperatorEvaluationException(rowIndex, error);
+                }
             }
-            @Override public Object evaluate(List<Object> arguments) { return evaluator.apply(arguments); }
+            return new BatchOperatorResult(new ListBatchColumn(result));
         };
+    }
+
+    private static final class SimpleOperatorDefinition
+            implements OperatorDefinition, BatchOperatorKernel {
+        private final String name;
+        private final int minArgs;
+        private final int maxArgs;
+        private final boolean deterministic;
+        private final boolean parameterized;
+        private final boolean supportsView;
+        private final boolean supportsCurriedInvocation;
+        private final long estimatedCost;
+        private final List<OperatorSemantic> semantics;
+        private final java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference;
+        private final java.util.function.Function<List<Object>, Object> evaluator;
+        private final BatchOperatorKernel batchKernel;
+
+        private SimpleOperatorDefinition(
+                String name,
+                int minArgs,
+                int maxArgs,
+                boolean deterministic,
+                boolean parameterized,
+                boolean supportsView,
+                boolean supportsCurriedInvocation,
+                long estimatedCost,
+                List<OperatorSemantic> semantics,
+                java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+                java.util.function.Function<List<Object>, Object> evaluator,
+                BatchOperatorKernel batchKernel) {
+            this.name = name;
+            this.minArgs = minArgs;
+            this.maxArgs = maxArgs;
+            this.deterministic = deterministic;
+            this.parameterized = parameterized;
+            this.supportsView = supportsView;
+            this.supportsCurriedInvocation = supportsCurriedInvocation;
+            this.estimatedCost = estimatedCost;
+            this.semantics = List.copyOf(semantics);
+            this.inference = inference;
+            this.evaluator = evaluator;
+            this.batchKernel = batchKernel == null
+                    ? new SingleLoopBatchOperatorKernel(this)
+                    : batchKernel;
+        }
+
+        @Override public String name() { return name; }
+        @Override public int minArguments() { return minArgs; }
+        @Override public int maxArguments() { return maxArgs; }
+        @Override public boolean deterministic() { return deterministic; }
+        @Override public boolean parameterized() { return parameterized; }
+        @Override public boolean supportsSequenceView() { return supportsView; }
+        @Override public boolean supportsCurriedInvocation() { return supportsCurriedInvocation; }
+        @Override public long estimatedCost() { return estimatedCost; }
+        @Override public List<OperatorSemantic> semantics() { return semantics; }
+        @Override public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+            return inference.apply(inputs);
+        }
+        @Override public Object evaluate(List<Object> arguments) { return evaluator.apply(arguments); }
+        @Override public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
+            return batchKernel.evaluateBatch(call);
+        }
+        @Override public BatchKernelKind batchKernelKind() {
+            return batchKernel.batchKernelKind();
+        }
     }
 
     private static Set<EntityScope> unionScopes(List<OperatorInputMetadata> inputs) {

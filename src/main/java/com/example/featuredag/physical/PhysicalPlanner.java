@@ -149,6 +149,14 @@ public final class PhysicalPlanner {
             executorType = ExecutorType.GENERIC_OPERATOR;
             executorId = PhysicalExecutorIds.GENERIC_OPERATOR;
             config.put("operatorName", operator.operatorName());
+            config.put("singleKernelId", operator.operatorName());
+            config.put("batchKernelId", operator.operatorName());
+            config.put("batchKernelKind", operatorRegistry.find(operator.operatorName())
+                    .map(ignored -> operatorRegistry.batchKernelKind(operator.operatorName()).name())
+                    .orElse("SCALAR_ADAPTER"));
+            config.put(
+                    "invocationPolicy",
+                    OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN);
         } else if (node instanceof FeatureOutputNode output) {
             executorType = ExecutorType.FEATURE_OUTPUT;
             executorId = PhysicalExecutorIds.FEATURE_OUTPUT;

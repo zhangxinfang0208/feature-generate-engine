@@ -17,7 +17,7 @@
 - C7 逻辑节点不可变：`LogicalNode` 及其实现（`SourceNode`、`LiteralNode`、`OperatorNode`、`FeatureOutputNode`）构造后不可变，依赖关系通过 `NodeInput` 的节点 ID 与端口引用。
 - C8 规划层只读：`LogicalDagOptimizer` 只读遍历 DAG，通用优化事实（引用计数、可达根、依赖维度、缓存资格、成本与大小）外置在 `NodePlanningMetadata`，禁止回写或修改逻辑节点本身；融合由注册的物理改写规则根据算子语义匹配。
 - C9 物理转换（L2）：每个未融合逻辑节点必须且只能产出一个物理输出槽（`slot:N`），物理节点保持逻辑拓扑序；节点融合仅在规则允许的环境执行，且被消费的中间节点必须引用计数为 1 且不是根节点，融合节点记录全部 consumed logical node IDs。
-- C10 环境相关决策：物理节点的执行阶段/执行模式/缓存策略只能由 `ExecutionEnvironment`、实体域、算子语义、成本与值形状推导，禁止按业务算子名特判或在运行时临时决定；输出特征槽位必须与逻辑根节点一一对应。
+- C10 环境相关决策：物理节点的执行阶段/执行模式/缓存策略以及 Single/Batch Kernel ID 与实现种类只能由 `ExecutionEnvironment`、实体域、算子语义、成本、值形状和已注册能力推导，禁止按业务算子名特判或在运行时临时决定；运行时只可按输入载体分派计划已声明的 Single 或 Batch Kernel，不得重新匹配融合规则；输出特征槽位必须与逻辑根节点一一对应。
 
 ## 算子优化与缓存扩展规范
 
@@ -29,6 +29,19 @@
 - 等值序列索引通过 `SequenceIndexProvider` 注册；字段不同但算法相同不得复制业务专用索引类。
 - `CachePolicy` 必须有对应运行时实现；缓存 key 必须覆盖 keyDomain、具体序列视图和所有候选变化输入。
 - 每项优化必须验证语义别名匹配、未声明语义不匹配、共享/根节点安全、ONLINE/OFFLINE、SequenceView 与缓存隔离。
+
+## 算子 Single/Batch 执行约束
+
+算子双执行契约遵循 `docs/architecture/operator-single-batch-execution.md`：
+
+- `OperatorDefinition` 的 Single Kernel 是必须实现的单值语义基准；Native `BatchOperatorKernel` 可选，未提供时必须使用框架的 `SingleLoopBatchOperatorKernel`，不得复制一套默认业务实现。
+- 对逐行等价的 Native Batch，Single 与 Batch 必须复用同一个行级语义函数；禁止分别复制公式。只有确需跨行、列式或第三方批量算法时才允许独立 Batch 实现，并必须用差分测试证明等价。
+- Batch 必须逐行等价于 Single，输出行数与输入相同并保持顺序；零行 Batch 返回零行结果，异常必须携带 Batch 行号以映射到 offline row 或 online group/candidate。
+- Batch 维度不得进入逻辑 `ValueShape`。`operator` 层的 `BatchColumn`、`BatchLayout` 等协议不得引用 `runtime` 的 `ExecutionContext` 或 `ValueHandle`（C1）。
+- Kernel 实例必须无请求状态且可并发复用；只有 deterministic 且 sideEffectFree 的算子允许缓存去重调用，在线缓存、索引和候选去重必须按 group 隔离。
+- 物理计划必须记录 `singleKernelId`、`batchKernelId`、`batchKernelKind` 和 `OperatorInvocationPolicy` 枚举；运行时必须读取并执行该策略。Rewrite 仍在初始化阶段生成 SPECIALIZED 节点，真实请求不得临时融合（C9/C10）。
+- 批内 pending 重复属于 dedup reuse，不得计入真实缓存 lookup/hit；由 `dedupInputCount/uniqueInputCount` 表达，缓存指标只统计实际缓存 Map 操作。
+- 新增 Native Batch 必须验证与逐行 Single 的结果一致性，并覆盖零行、单行、多行、广播、scatter 顺序、分组隔离、错误定位及现有融合回归。
 
 ## 构建、测试与开发命令
 

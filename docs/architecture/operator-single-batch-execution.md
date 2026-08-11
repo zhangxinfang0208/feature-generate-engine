@@ -1,0 +1,92 @@
+# 算子 Single/Batch 双执行契约
+
+## 1. 目标
+
+逻辑 DAG 的算子仍表达单值语义；运行时批维度位于 `ValueShape` 之外。每个算子必须具备
+`SingleOperatorKernel`，可以选择实现原生 `BatchOperatorKernel`。未提供原生 Batch 的算子由
+`SingleLoopBatchOperatorKernel` 逐行适配，因此新增算子无需复制两套实现。
+
+物理节点融合仍由 `PhysicalRewriteRule` 在初始化阶段完成。请求执行阶段只调用物理计划已经声明的
+Single、Batch 或 SPECIALIZED 执行器，不重新匹配规则、不修改 DAG（C9/C10）。
+
+## 2. 执行契约
+
+Batch Kernel 必须满足逐行等价：
+
+```text
+batch(arguments)[i] == single(arguments[i])
+```
+
+同时满足：
+
+- 输出行数等于输入行数，零行 Batch 返回零行结果；
+- 不改变行顺序，不把运行时 Batch 维度混入逻辑 `ValueShape`；
+- `BatchOperatorEvaluationException` 携带 Batch 内行号；
+- Kernel 实例无请求状态并可被并发复用；
+- 只有确定且无副作用的算子才允许通过 `CANDIDATE_KEY` 去重调用。
+
+`BatchLayout` 描述 `OFFLINE_ROW`、`ONLINE_REQUEST`、`ONLINE_CANDIDATE` 三种批域，在线候选行
+可以映射回 group 和组内 candidate 下标。输入通过只读 `BatchColumn` 暴露；标量广播以及
+request-to-candidate 广播由运行时虚拟列完成，不复制展开后的值。
+
+## 3. 规划期选择
+
+普通算子物理节点记录：
+
+```text
+singleKernelId
+batchKernelId
+batchKernelKind = NATIVE | SCALAR_ADAPTER
+invocationPolicy = OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN
+```
+
+规划器只为未被 Rewrite 消费的逻辑算子生成上述配置。命中融合规则时仍生成
+`ExecutorType.SPECIALIZED` 节点，并记录全部 consumed logical node IDs。
+
+`invocationPolicy` 使用物理层枚举，`DagRuntime` 必须读取后执行对应分派，不能只把它作为计划打印配置。
+运行时无批值输入时调用 Single Kernel；存在 `OfflineBatchValue`、`RequestBatchValue`、
+`CandidateVectorValue` 或 `CandidateBatchValue` 时调用计划声明的 Batch Kernel。这是对输入载体的
+固定分派，不是运行时物理改写。
+
+## 4. 缓存与批内去重
+
+通用 `CANDIDATE_KEY` 缓存由 `DagRuntime` 包裹 Kernel：
+
+1. 以 `physicalNodeId + groupIndex + arguments` 形成逐行 key；
+2. 合并同一批中的相同 miss；pending 重复只计入 dedup reuse，不计为 cache lookup/hit；
+3. 把唯一 miss 形成紧凑 Batch；
+4. 一次调用 Batch Kernel；
+5. 写缓存并 scatter 回原始顺序。
+
+专用序列索引缓存仍由注册式 `PhysicalExecutor` 管理。跨 group 不得共享请求级序列、索引或
+候选缓存。
+
+## 5. 与融合的关系
+
+```text
+初始化：Logical DAG → Rewrite 选择 → PhysicalPlan
+调用：  PhysicalPlan → Single/Batch/SPECIALIZED Kernel
+```
+
+逐行 Native Batch 使用同一个 `RowEvaluator` 同时生成 Single 与 Batch 路径，Batch 侧通过可移动
+行视图访问列值，不创建逐行参数 List。它减少逐行调度和参数对象，但不自动减少逐行业务计算；
+批内重复计算由紧凑 miss Batch 消除。Rewrite 仍负责跨节点消除中间物化和改变算法复杂度，例如
+把“按 key 过滤序列后 count”转换为“一次建索引后按 key 查询”。两者是互补能力。
+
+直接实现 `BatchOperatorKernel` 的扩展算子必须把行级失败包装为
+`BatchOperatorEvaluationException`。如果 Kernel 直接抛出无法关联行号的异常，运行时只能保留
+Batch 域和原始 cause，不能推断具体 row/group/candidate。
+
+## 6. 测试要求
+
+- 每个标准 Native Batch 使用相同输入逐行对比 Single 结果；
+- `SCALAR_ADAPTER` 保持调用次数、顺序和异常语义；
+- 零行、单行、多行 Batch；
+- request-to-candidate 广播及多 group 隔离；
+- Batch 错误映射到 offline row 或 online group/candidate；
+- `CANDIDATE_KEY` 唯一 miss 批量执行、结果 scatter 顺序以及真实 cache/dedup 指标分离；
+- 命中 Rewrite 时仍执行 SPECIALIZED 物理节点，未命中时才走普通 Batch Kernel。
+
+仓库中的 `OperatorBatchKernelBenchmark` 使用相同 `add` 输入直接比较 Native 与
+`SCALAR_ADAPTER`，用于判断逐行参数对象优化是否值得保留。正式基准必须启用 fork、充分预热并记录
+`alloc/op` 与 GC；非 fork 短迭代只用于验证基准能够运行。

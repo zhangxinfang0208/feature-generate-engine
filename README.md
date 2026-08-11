@@ -16,6 +16,8 @@
 - 循环依赖检测和类型推导。
 - 实体范围推导：`USER`、`SCENE`、`ITEM`。
 - 在线阶段划分：`REQUEST_SHARED`、`CANDIDATE_BATCH`。
+- 算子双执行契约：Single Kernel 定义单值语义，Native Batch Kernel 一次处理完整运行时批；
+  未提供原生 Batch 的算子由框架逐行适配。
 - 在线算子融合：根据算子语义把“按 key 过滤序列后计数”改写为注册式 `sequence-key-count` 执行器。
 - 候选参数去重：按 `item_industry` 去重，而不是按 `itemId` 重复执行。
 - 序列索引：`industry -> positions`。
@@ -23,6 +25,34 @@
 - 普通元素数组序列：`auid_app_time_seq`（`STRING + SEQUENCE`）与 `timestamp`（`INT + SEQUENCE`）可用于窗口特征。
 - 三天 app 点击计数：`auid_omnichannel_paid_cnt_3d` 可直接从两条原始序列生成。
 - 离线完整特征输出与在线子图执行。
+
+## 算子 Single/Batch 执行
+
+运行时 Batch 维度独立于逻辑 `ValueShape`。`OperatorDefinition` 通过
+`SingleOperatorKernel` 提供必须实现的单值语义；算子可以额外实现 `BatchOperatorKernel`。
+没有 Native Batch 实现时，`SingleLoopBatchOperatorKernel` 保持逐行调用次数、顺序和异常语义。
+
+物理计划在初始化阶段固化 `singleKernelId`、`batchKernelId`、`batchKernelKind` 和分派策略：
+
+```text
+普通输入                         → Single Kernel
+Offline/Request/Candidate Batch → Native Batch 或 Single Adapter
+命中 PhysicalRewriteRule        → SPECIALIZED 融合执行器
+```
+
+真实请求只执行已经生成的物理计划，不会重新匹配融合规则或修改 DAG。Batch 输入通过只读列访问；
+request-to-candidate 广播不复制展开值，`CANDIDATE_KEY` 缓存会合并相同 miss 后一次批量计算并按
+原 candidate 顺序回填。
+
+当前提供 Native Batch 的标准算子包括 `count`、`add`、`log`、`multiply`、`div_num`、`round`、
+`div` 和 `least`。它们由同一个行级语义函数同时驱动 Single 与 Batch，避免维护两份业务公式；
+Native 路径主要减少逐行参数对象与调用开销，并不改变逐行业务计算复杂度。`discrete`、`log_base`、
+`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`calc_delta_seq` 和
+`zip_concat` 暂时使用 `SCALAR_ADAPTER`。算法级共享仍由候选去重、索引和 SPECIALIZED 融合负责。
+完整接口、缓存、错误定位及融合边界见
+[算子 Single/Batch 双执行契约](docs/architecture/operator-single-batch-execution.md)。
+Native 与 Adapter 的固定开销可通过 `OperatorBatchKernelBenchmark` 做同输入 A/B；正式结论必须使用
+完整 JMH 预热、fork 和 GC profiler，不能使用非 fork 冒烟结果作为性能基线。
 
 ## 算子支持情况
 
@@ -84,7 +114,9 @@ src/main/java/com/example/featuredag
 ```
 
 算子语义、物理改写、专用执行器、序列索引与缓存的扩展约束见
-[`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)。
+[`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)；
+Single/Batch Kernel 的执行契约见
+[`docs/architecture/operator-single-batch-execution.md`](docs/architecture/operator-single-batch-execution.md)。
 
 ## 直接运行
 

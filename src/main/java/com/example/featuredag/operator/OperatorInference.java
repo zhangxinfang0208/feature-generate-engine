@@ -2,7 +2,7 @@ package com.example.featuredag.operator;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
-import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.definition.ValueShape;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;

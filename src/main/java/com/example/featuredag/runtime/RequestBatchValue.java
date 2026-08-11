@@ -1,6 +1,6 @@
 package com.example.featuredag.runtime;
 
-import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.definition.ValueShape;
 
 import java.util.ArrayList;
 import java.util.Collections;

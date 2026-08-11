@@ -78,27 +78,21 @@ public final class RuntimeNodeState {
     }
     void setFallbackUsed(boolean value) { this.fallbackUsed = value; }
 
-    private static final class MutableCacheStats {
-        private long lookups;
-        private long hits;
-        private long misses;
-        private long puts;
-
-        private void recordLookup(boolean hit) {
-            lookups++;
-            if (hit) {
-                hits++;
-            } else {
-                misses++;
-            }
+    RuntimeNodeState snapshot() {
+        RuntimeNodeState copy = new RuntimeNodeState(physicalNodeId);
+        copy.status = status;
+        copy.resultHandle = resultHandle;
+        copy.cacheHit = cacheHit;
+        copy.cacheSource = cacheSource;
+        copy.durationNanos = durationNanos;
+        copy.allocatedBytes = allocatedBytes;
+        copy.dedupInputCount = dedupInputCount;
+        copy.uniqueInputCount = uniqueInputCount;
+        copy.error = error;
+        copy.fallbackUsed = fallbackUsed;
+        for (Map.Entry<CacheKind, MutableCacheStats> entry : cacheStats.entrySet()) {
+            copy.cacheStats.put(entry.getKey(), entry.getValue().copy());
         }
-
-        private void recordPut() {
-            puts++;
-        }
-
-        private CacheStats snapshot() {
-            return new CacheStats(lookups, hits, misses, puts);
-        }
+        return copy;
     }
 }

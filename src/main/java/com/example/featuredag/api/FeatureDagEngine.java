@@ -5,10 +5,10 @@ import com.example.featuredag.config.FeatureConfigMapper;
 import com.example.featuredag.config.FeatureOutputDescriptor;
 import com.example.featuredag.config.FeatureSetConfig;
 import com.example.featuredag.config.MappedFeatureSet;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
-import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutorType;
@@ -446,7 +446,7 @@ public final class FeatureDagEngine {
         long start = System.nanoTime();
         try {
             return operation.get();
-        } catch (RuntimeException | Error error) {
+        } catch (RuntimeException error) {
             observation.markFailure(phase, error);
             throw error;
         } finally {

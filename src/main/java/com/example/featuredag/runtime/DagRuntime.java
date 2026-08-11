@@ -1,6 +1,6 @@
 package com.example.featuredag.runtime;
 
-import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.CachePolicy;
 import com.example.featuredag.physical.ExecutorType;
@@ -16,7 +16,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Executes a physical plan without reparsing expressions. */
+/**
+ * 运行时只消费已确定的物理计划：按拓扑序读取输入槽并写入唯一输出槽（C9），
+ * 执行阶段、模式、缓存策略及专用执行器均由物理层给定，运行时不再临时决策（C10）。
+ */
 public final class DagRuntime {
     private final OperatorRegistry operatorRegistry;
     private final PhysicalExecutorRegistry executorRegistry;
@@ -49,7 +52,7 @@ public final class DagRuntime {
                     "Plan environment " + plan.environment() + " does not match context " + context.environment());
         }
         executorRegistry.validate(plan);
-        // 运行时：按物理计划顺序逐节点执行，各节点结果写入执行上下文的输出槽（slot:N）
+        // C9：按物理拓扑序逐节点执行，每个节点只写入计划分配的唯一输出槽（slot:N）。
         for (PhysicalNode node : plan.nodes()) {
             executeNode(node, context);
         }
@@ -61,7 +64,7 @@ public final class DagRuntime {
             }
             outputs.put(entry.getKey(), value);
         }
-        // 运行时：从输出槽收集根特征结果，连同各节点运行状态一起返回
+        // C9：输出特征只从物理计划声明的一一对应根槽位收集。
         return new ExecutionResult(
                 outputs, context.nodeStates(), context.runtimeCache().snapshot());
     }
@@ -83,11 +86,9 @@ public final class DagRuntime {
             };
             context.resultSlots().put(node.outputSlot(), result);
             state.markSuccess(result, System.nanoTime() - start);
-        } catch (Throwable error) {
+        } catch (RuntimeException error) {
             state.markFailure(error, System.nanoTime() - start);
-            throw error instanceof RuntimeException runtimeException
-                    ? runtimeException
-                    : new IllegalStateException("Physical node failed: " + node.physicalNodeId(), error);
+            throw error;
         }
     }
 
@@ -296,6 +297,7 @@ public final class DagRuntime {
     }
 
     private static int evaluationSize(EvaluationDomain domain, ExecutionContext context) {
+        // ONLINE 允许零候选：候选域节点执行零次并产出空向量，供公共 API 原样编码。
         return switch (domain) {
             case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> context.candidateCount();
             case OFFLINE_ROW -> context.offlineBatchSize();

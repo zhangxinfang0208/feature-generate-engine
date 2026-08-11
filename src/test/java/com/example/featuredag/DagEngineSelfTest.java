@@ -22,6 +22,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.OutputPolicy;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.demo.ExampleFeatures;
 import com.example.featuredag.demo.OfflineBatchDemo;
 import com.example.featuredag.demo.OnlineGroupedBatchDemo;
@@ -39,9 +40,9 @@ import com.example.featuredag.logical.LogicalDagBuilder;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.LiteralNode;
 import com.example.featuredag.logical.OperatorNode;
-import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorInference;
+import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.operator.KeyedSequenceFilterSemantic;
 import com.example.featuredag.operator.SequenceCardinalitySemantic;
@@ -109,8 +110,11 @@ public final class DagEngineSelfTest {
     public static void main(String[] args) throws Exception {
         FeatureValueCodecSelfTest.run();
         testExtendedExpressionParsing();
+        testCanonicalNodeDeduplication();
+        testCurriedInvocationValidation();
         testCompleteBusinessExpressionParsing();
         testArrayLiteralDagConstruction();
+        testOperatorTypeRuntimeConsistency();
         testNullArrayLiteralDagConstruction();
         testObjectListsRemainScalarAtRuntime();
         testAlignedPlainListSequenceRuntime();
@@ -121,6 +125,7 @@ public final class DagEngineSelfTest {
         testDiscreteFeatureDagConstruction();
         testArrayLiteralDisabledFeatureReferenceValidation();
         testBusinessOperatorRegistry();
+        testOperatorRegistryConcurrentRegistration();
         testAllBusinessOperatorExpressionsBuildAndInfer();
         testBusinessJsonParsing();
         testUnifiedFeatureJsonParsing();
@@ -131,6 +136,7 @@ public final class DagEngineSelfTest {
         testBatchDemos();
         testConfigPathInit();
         testOfflineSequenceMaterialization();
+        testEventSequencePublicApi();
         testOnlinePublicApi();
         testOnlineBatchPublicApi();
         testRuntimeObservability();
@@ -227,6 +233,7 @@ public final class DagEngineSelfTest {
                 "slice_v3_typed({\"start\": 4})(time_impr_seq_th_f_1)");
         assert curried.functionName().equals("slice_v3_typed");
         assert curried.arguments().size() == 2;
+        assert curried.invocationCount() == 2;
         assert curried.arguments().get(0) instanceof AstObjectLiteral;
         assert curried.arguments().get(1) instanceof AstFeatureRef;
 
@@ -238,6 +245,58 @@ public final class DagEngineSelfTest {
         assert ((AstLiteral) parser.parse("3.14")).value() instanceof Double;
         expectThrows(ExpressionParseException.class, () -> parser.parse("[1, 2"));
         expectThrows(ExpressionParseException.class, () -> parser.parse("f(a,)"));
+
+        String longInvalidExpression = "coalesce(" + "a".repeat(10_000) + ", @)";
+        ExpressionParseException longError = expectThrows(
+                ExpressionParseException.class,
+                () -> parser.parse(longInvalidExpression));
+        assert longError.getMessage().length() < 300 : longError.getMessage().length();
+        assert longError.getMessage().contains("offset") : longError.getMessage();
+        ExpressionParseException longNumberError = expectThrows(
+                ExpressionParseException.class,
+                () -> parser.parse("9".repeat(10_000)));
+        assert longNumberError.getMessage().length() < 300
+                : longNumberError.getMessage().length();
+    }
+
+    private static void testCanonicalNodeDeduplication() {
+        LogicalDag dag = new LogicalDagBuilder(
+                new ExpressionParser(), OperatorRegistry.standard()).build(
+                List.of(
+                        FeatureDefinition.raw("raw", DataType.INT, EntityScope.USER, 0),
+                        FeatureDefinition.derived(
+                                "first", DataType.DOUBLE, "add(raw, 1)", OutputPolicy.OUTPUT),
+                        FeatureDefinition.derived(
+                                "second", DataType.DOUBLE, "add(raw, 1)", OutputPolicy.OUTPUT)),
+                linkedSet("first", "second"));
+
+        assert dag.nodes().values().stream()
+                .filter(node -> node instanceof com.example.featuredag.logical.SourceNode)
+                .count() == 1 : dag.nodes();
+        assert dag.nodes().values().stream()
+                .filter(node -> node instanceof LiteralNode)
+                .count() == 1 : dag.nodes();
+        assert countOperatorNodes(dag, "add") == 1 : dag.nodes();
+        assert dag.featureOutputNodeIds().keySet().equals(linkedSet("first", "raw", "second"))
+                : dag.featureOutputNodeIds();
+    }
+
+    private static void testCurriedInvocationValidation() {
+        DagBuildException error = expectThrows(
+                DagBuildException.class,
+                () -> new LogicalDagBuilder(
+                        new ExpressionParser(), OperatorRegistry.standard()).build(
+                        List.of(
+                                FeatureDefinition.raw(
+                                        "source", DataType.INT, EntityScope.USER, 0),
+                                FeatureDefinition.derived(
+                                        "invalid_curried",
+                                        DataType.INT,
+                                        "coalesce(source)(0)",
+                                        OutputPolicy.OUTPUT)),
+                        Set.of("invalid_curried")));
+        assert error.getMessage().contains("does not support chained invocation")
+                : error.getMessage();
     }
 
     private static void testCompleteBusinessExpressionParsing() {
@@ -468,7 +527,7 @@ public final class DagEngineSelfTest {
             public boolean deterministic() { return true; }
             public boolean parameterized() { return true; }
             public boolean supportsSequenceView() { return false; }
-            public OperatorInference infer(List<LogicalNode> inputs) {
+            public OperatorInference infer(List<OperatorInputMetadata> inputs) {
                 assert inputs.get(1) instanceof LiteralNode;
                 LiteralNode array = (LiteralNode) inputs.get(1);
                 assert array.value().equals(List.of(1, 10, 100));
@@ -488,6 +547,63 @@ public final class DagEngineSelfTest {
                 Set.of("bucket"));
 
         assert dag.featureOutputNodeIds().containsKey("bucket") : dag.featureOutputNodeIds();
+    }
+
+    private static void testOperatorTypeRuntimeConsistency() {
+        OperatorRegistry standard = OperatorRegistry.standard();
+        Object mixedLeast = standard.evaluate("least", List.of(1, 2.5));
+        assert mixedLeast instanceof Double : mixedLeast.getClass();
+        assert ((Double) mixedLeast) == 1.0 : mixedLeast;
+        Object integerLeast = standard.evaluate("least", List.of(2, 1));
+        assert integerLeast instanceof Integer : integerLeast.getClass();
+        assert integerLeast.equals(1) : integerLeast;
+
+        LogicalDag countDag = new LogicalDagBuilder(
+                new ExpressionParser(), standard).build(
+                List.of(FeatureDefinition.derived(
+                        "literal_count",
+                        DataType.INT,
+                        "count([1, 2, 3])",
+                        OutputPolicy.OUTPUT)),
+                Set.of("literal_count"));
+        PhysicalPlan countPlan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(countDag),
+                ExecutionEnvironment.OFFLINE,
+                "literal-count");
+        ExecutionResult countResult = new DagRuntime(standard).execute(
+                countPlan,
+                ExecutionContext.offlineRow("literal-count-row", Map.of()));
+        assert countResult.feature("literal_count").raw().equals(3)
+                : countResult.featureOutputs();
+
+        AssertionError marker = new AssertionError("fatal-marker");
+        OperatorRegistry fatalRegistry = new OperatorRegistry().register(new OperatorDefinition() {
+            public String name() { return "fatal"; }
+            public int minArguments() { return 1; }
+            public int maxArguments() { return 1; }
+            public boolean deterministic() { return true; }
+            public boolean parameterized() { return false; }
+            public boolean supportsSequenceView() { return false; }
+            public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+                return new OperatorInference(DataType.INT, Set.of(), ValueShape.SCALAR);
+            }
+            public Object evaluate(List<Object> arguments) { throw marker; }
+        });
+        LogicalDag fatalDag = new LogicalDagBuilder(
+                new ExpressionParser(), fatalRegistry).build(
+                List.of(FeatureDefinition.derived(
+                        "fatal_output", DataType.INT, "fatal(1)", OutputPolicy.OUTPUT)),
+                Set.of("fatal_output"));
+        PhysicalPlan fatalPlan = new PhysicalPlanner().plan(
+                new LogicalDagOptimizer().analyze(fatalDag),
+                ExecutionEnvironment.OFFLINE,
+                "fatal-error");
+        AssertionError propagated = expectThrows(
+                AssertionError.class,
+                () -> new DagRuntime(fatalRegistry).execute(
+                        fatalPlan,
+                        ExecutionContext.offlineRow("fatal-error-row", Map.of())));
+        assert propagated == marker : propagated;
     }
 
     private static void testNullArrayLiteralDagConstruction() {
@@ -1676,6 +1792,20 @@ public final class DagEngineSelfTest {
         assert missing.getMessage().contains("candidate 0") : missing.getMessage();
     }
 
+    private static void testOperatorRegistryConcurrentRegistration() throws Exception {
+        OperatorRegistry registry = new OperatorRegistry();
+        int operatorCount = 32;
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<? extends Future<?>> registrations = IntStream.range(0, operatorCount)
+                    .mapToObj(index -> executor.submit(() -> registry.register(
+                            echoOperator("concurrent_echo_" + index, true, new AtomicInteger()))))
+                    .toList();
+            for (Future<?> registration : registrations) registration.get();
+        }
+        assert IntStream.range(0, operatorCount)
+                .allMatch(index -> registry.find("concurrent_echo_" + index).isPresent());
+    }
+
     private static void testRuntimeObservability() {
         InMemoryRuntimeObserver observer = new InMemoryRuntimeObserver(4);
         FeatureDagEngine engine = FeatureDagEngine.init(
@@ -2248,7 +2378,84 @@ public final class DagEngineSelfTest {
                 : result.featureValues();
     }
 
+    private static void testEventSequencePublicApi() {
+        String json = """
+                {
+                  "features": [
+                    {"name":"user_events","raw_name":"user_events","type":"EVENT_SEQUENCE",
+                     "definition_type":"BASE","entity_scopes":["USER"],"value_shape":"SEQUENCE"},
+                    {"name":"item_industry","raw_name":"item_industry","type":"STRING",
+                     "definition_type":"BASE","entity_scopes":["ITEM"],"value_shape":"SCALAR"},
+                    {"name":"same_industry_seq","store_name":"same_industry_seq",
+                     "type":"EVENT_SEQUENCE","definition_type":"DERIVED",
+                     "expression":"extractIndustry(user_events, item_industry)",
+                     "output_policy":"OUTPUT","entity_scopes":["USER","ITEM"],
+                     "value_shape":"SEQUENCE","order":1},
+                    {"name":"same_industry_count","store_name":"same_industry_count",
+                     "type":"INT","definition_type":"DERIVED",
+                     "expression":"count(same_industry_seq)",
+                     "output_policy":"OUTPUT","entity_scopes":["USER","ITEM"],
+                     "value_shape":"SCALAR","order":2}
+                  ],
+                  "feature_set_name":"event_sequence_public_api",
+                  "version":"1"
+                }
+                """;
+
+        FeatureDagEngine online = FeatureDagEngine.init(
+                json,
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.ONLINE)
+                        .planId("event-sequence-online")
+                        .targetFeatures(Set.of("same_industry_count"))
+                        .build());
+        GenerateResult onlineResult = online.generate(new OnlineGenerateRequest(
+                "event-sequence-request",
+                Map.of("user_events", publicEventSequence()),
+                List.of(
+                        Map.of("item_industry", List.of("industry1")),
+                        Map.of("item_industry", List.of("industry2")))));
+        assert onlineResult.candidateFeatureValues().stream()
+                .map(values -> scalarFeature(values, "same_industry_count"))
+                .toList().equals(List.of(3, 1)) : onlineResult.candidateFeatureValues();
+
+        FeatureDagEngine offline = FeatureDagEngine.init(
+                json,
+                InitOptions.builder()
+                        .environment(ExecutionEnvironment.OFFLINE)
+                        .planId("event-sequence-offline")
+                        .targetFeatures(Set.of("same_industry_seq", "same_industry_count"))
+                        .build());
+        GenerateResult offlineResult = offline.generate(new OfflineGenerateRequest(
+                "event-sequence-row",
+                Map.of(
+                        "user_events", publicEventSequence(),
+                        "item_industry", List.of("industry1"))));
+        assert offlineResult.featureValues().get("same_industry_count").equals(List.of(3))
+                : offlineResult.featureValues();
+        List<Map<String, Object>> expected = List.of(
+                publicEventSequence().get(0),
+                publicEventSequence().get(2),
+                publicEventSequence().get(4));
+        assert offlineResult.featureValues().get("same_industry_seq").equals(expected)
+                : offlineResult.featureValues();
+    }
+
     private static void testConfigurationAndRequestValidation() {
+        IllegalArgumentException propertyTypo = expectThrows(
+                IllegalArgumentException.class,
+                () -> FeatureConfigLoader.load("""
+                        {
+                          "features":[
+                            {"name":"source","raw_name":"source","type":"INT",
+                             "definition_type":"BASE","entity_scop":["ITEM"]}
+                          ],
+                          "feature_set_name":"property_typo","version":"1"
+                        }
+                        """));
+        assert propertyTypo.getMessage().contains("entity_scopes")
+                : propertyTypo.getMessage();
+
         FeatureDagInitializationException invalidJson = expectThrows(
                 FeatureDagInitializationException.class,
                 () -> FeatureDagEngine.init("{not-json}", InitOptions.offline("invalid-json")));
@@ -2731,6 +2938,21 @@ public final class DagEngineSelfTest {
                         "count(item_price)"), Set.of("bad_count")));
         assert countScalar.getMessage().contains("count")
                 && countScalar.getMessage().contains("item_price") : countScalar.getMessage();
+
+        DagBuildException declaredTypeMismatch = expectThrows(
+                DagBuildException.class,
+                () -> builder.build(withDerived(
+                        definitions, "bad_declared_type", DataType.INT,
+                        "coalesce(item_industry, \"unknown\")"), Set.of("bad_declared_type")));
+        assert declaredTypeMismatch.getMessage().contains("Declared type mismatch")
+                && declaredTypeMismatch.getMessage().contains("bad_declared_type")
+                : declaredTypeMismatch.getMessage();
+
+        LogicalDag widened = builder.build(withDerived(
+                definitions, "allowed_numeric_widening", DataType.DOUBLE,
+                "round(item_price)"), Set.of("allowed_numeric_widening"));
+        assert widened.featureOutput("allowed_numeric_widening").outputType() == DataType.INT
+                : widened.featureOutput("allowed_numeric_widening").outputType();
     }
 
     private static void testExecutionStagesAndTargetSelection() {
@@ -2899,9 +3121,21 @@ public final class DagEngineSelfTest {
                 ExampleFeatures.definitions(), Set.of("same_industry_count"));
         PhysicalPlan onlinePlan = planner.plan(
                 optimizer.analyze(countDag), ExecutionEnvironment.ONLINE, "dedup-four");
-        assert onlinePlan.nodes().stream()
-                .anyMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
-                : "Online count plan should fuse extraction and count";
+        PhysicalNode specialized = onlinePlan.nodes().stream()
+                .filter(node -> node.executorType() == ExecutorType.SPECIALIZED)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "Online count plan should fuse extraction and count"));
+        Set<String> expectedConsumedNodeIds = countDag.nodes().values().stream()
+                .filter(node -> node.nodeId().equals("feature:same_industry_seq")
+                        || node instanceof OperatorNode operator
+                        && (operator.operatorName().equals("extractIndustry")
+                        || operator.operatorName().equals("count")))
+                .map(LogicalNode::nodeId)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        assert new LinkedHashSet<>(specialized.logicalNodeIds()).equals(expectedConsumedNodeIds)
+                : "expected=" + expectedConsumedNodeIds
+                + ", actual=" + specialized.logicalNodeIds();
 
         ExecutionResult result = runtime.execute(
                 onlinePlan,
@@ -2992,6 +3226,9 @@ public final class DagEngineSelfTest {
         assert execution.nodeStates().values().stream().anyMatch(state ->
                 state.dedupInputCount() == 4 && state.uniqueInputCount() == 3)
                 : "Expected per-group key dedup counts 4 -> 3";
+        assert execution.nodeStates().entrySet().stream().allMatch(entry ->
+                entry.getValue() != context.nodeStates().get(entry.getKey()))
+                : "ExecutionResult must expose node-state snapshots, not live context state";
 
         SequenceBlock sharedSequence = sequence();
         ExecutionResult isolated = new DagRuntime(operators).execute(
@@ -3154,51 +3391,8 @@ public final class DagEngineSelfTest {
 
     private static void testFusionMatchesRegisteredSemanticsInsteadOfOperatorNames() {
         OperatorRegistry registry = new OperatorRegistry()
-                .register(new OperatorDefinition() {
-                    @Override public String name() { return "select_by_registered_key"; }
-                    @Override public int minArguments() { return 2; }
-                    @Override public int maxArguments() { return 2; }
-                    @Override public boolean deterministic() { return true; }
-                    @Override public boolean parameterized() { return false; }
-                    @Override public boolean supportsSequenceView() { return true; }
-                    @Override public long estimatedCost() { return 1_000L; }
-                    @Override public List<com.example.featuredag.operator.OperatorSemantic> semantics() {
-                        return List.of(new KeyedSequenceFilterSemantic(
-                                0, 1, SequenceKeyDomains.INDUSTRY));
-                    }
-                    @Override public OperatorInference infer(List<LogicalNode> inputs) {
-                        return new OperatorInference(
-                                DataType.EVENT_SEQUENCE,
-                                unionEntityScopes(inputs),
-                                ValueShape.SEQUENCE);
-                    }
-                    @Override public Object evaluate(List<Object> arguments) {
-                        return SequenceView.filterByIndustry(
-                                (SequenceValue) arguments.get(0),
-                                String.valueOf(arguments.get(1)));
-                    }
-                })
-                .register(new OperatorDefinition() {
-                    @Override public String name() { return "registered_cardinality"; }
-                    @Override public int minArguments() { return 1; }
-                    @Override public int maxArguments() { return 1; }
-                    @Override public boolean deterministic() { return true; }
-                    @Override public boolean parameterized() { return false; }
-                    @Override public boolean supportsSequenceView() { return true; }
-                    @Override public long estimatedCost() { return 1_000L; }
-                    @Override public List<com.example.featuredag.operator.OperatorSemantic> semantics() {
-                        return List.of(new SequenceCardinalitySemantic(0));
-                    }
-                    @Override public OperatorInference infer(List<LogicalNode> inputs) {
-                        return new OperatorInference(
-                                DataType.INT,
-                                unionEntityScopes(inputs),
-                                ValueShape.SCALAR);
-                    }
-                    @Override public Object evaluate(List<Object> arguments) {
-                        return ((SequenceValue) arguments.getFirst()).size();
-                    }
-                });
+                .register(keyedSequenceFilterOperator("select_by_registered_key", true))
+                .register(sequenceCardinalityOperator("registered_cardinality", true));
 
         LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry).build(
                 List.of(
@@ -3234,6 +3428,92 @@ public final class DagEngineSelfTest {
                                 .toList()));
         CandidateVectorValue counts = (CandidateVectorValue) result.feature("registered_count");
         assert counts.values().equals(List.of(3, 1, 3, 0)) : counts.values();
+
+        OperatorRegistry undeclaredRegistry = new OperatorRegistry()
+                .register(keyedSequenceFilterOperator("select_without_semantic", false))
+                .register(sequenceCardinalityOperator("cardinality_without_semantic", false));
+        LogicalDag undeclaredDag = new LogicalDagBuilder(
+                new ExpressionParser(), undeclaredRegistry).build(
+                List.of(
+                        FeatureDefinition.raw(
+                                "history", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
+                        FeatureDefinition.raw(
+                                "candidate_key", DataType.STRING, EntityScope.ITEM, "unknown"),
+                        FeatureDefinition.derived(
+                                "unmatched_count",
+                                DataType.INT,
+                                "cardinality_without_semantic("
+                                        + "select_without_semantic(history, candidate_key))",
+                                OutputPolicy.OUTPUT)),
+                Set.of("unmatched_count"));
+        PhysicalPlan undeclaredPlan = new PhysicalPlanner(
+                undeclaredRegistry, PhysicalRewriteRegistry.standard()).plan(
+                new LogicalDagOptimizer(undeclaredRegistry).analyze(undeclaredDag),
+                ExecutionEnvironment.ONLINE,
+                "undeclared-semantics");
+        assert undeclaredPlan.nodes().stream()
+                .noneMatch(node -> node.executorType() == ExecutorType.SPECIALIZED)
+                : "Operators without declared semantics must not match rewrite rules: "
+                + PhysicalPlanPrinter.print(undeclaredPlan);
+    }
+
+    private static OperatorDefinition keyedSequenceFilterOperator(
+            String name,
+            boolean declareSemantic) {
+        return new OperatorDefinition() {
+            @Override public String name() { return name; }
+            @Override public int minArguments() { return 2; }
+            @Override public int maxArguments() { return 2; }
+            @Override public boolean deterministic() { return true; }
+            @Override public boolean parameterized() { return false; }
+            @Override public boolean supportsSequenceView() { return true; }
+            @Override public long estimatedCost() { return 1_000L; }
+            @Override public List<com.example.featuredag.operator.OperatorSemantic> semantics() {
+                return declareSemantic
+                        ? List.of(new KeyedSequenceFilterSemantic(
+                                0, 1, SequenceKeyDomains.INDUSTRY))
+                        : List.of();
+            }
+            @Override public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+                return new OperatorInference(
+                        DataType.EVENT_SEQUENCE,
+                        unionEntityScopes(inputs),
+                        ValueShape.SEQUENCE);
+            }
+            @Override public Object evaluate(List<Object> arguments) {
+                return SequenceView.filterByIndustry(
+                        (SequenceValue) arguments.get(0),
+                        String.valueOf(arguments.get(1)));
+            }
+        };
+    }
+
+    private static OperatorDefinition sequenceCardinalityOperator(
+            String name,
+            boolean declareSemantic) {
+        return new OperatorDefinition() {
+            @Override public String name() { return name; }
+            @Override public int minArguments() { return 1; }
+            @Override public int maxArguments() { return 1; }
+            @Override public boolean deterministic() { return true; }
+            @Override public boolean parameterized() { return false; }
+            @Override public boolean supportsSequenceView() { return true; }
+            @Override public long estimatedCost() { return 1_000L; }
+            @Override public List<com.example.featuredag.operator.OperatorSemantic> semantics() {
+                return declareSemantic
+                        ? List.of(new SequenceCardinalitySemantic(0))
+                        : List.of();
+            }
+            @Override public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+                return new OperatorInference(
+                        DataType.INT,
+                        unionEntityScopes(inputs),
+                        ValueShape.SCALAR);
+            }
+            @Override public Object evaluate(List<Object> arguments) {
+                return ((SequenceValue) arguments.getFirst()).size();
+            }
+        };
     }
 
     private static void testGenericCandidateCacheUsesOperatorTraits() {
@@ -3341,8 +3621,8 @@ public final class DagEngineSelfTest {
             @Override public boolean parameterized() { return false; }
             @Override public boolean supportsSequenceView() { return false; }
             @Override public long estimatedCost() { return 1_000L; }
-            @Override public OperatorInference infer(List<LogicalNode> inputs) {
-                LogicalNode input = inputs.getFirst();
+            @Override public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+                OperatorInputMetadata input = inputs.getFirst();
                 return new OperatorInference(
                         input.outputType(), input.entityScopes(), ValueShape.SCALAR);
             }
@@ -3495,6 +3775,28 @@ public final class DagEngineSelfTest {
                 "industry3", "industry1", "industry3");
     }
 
+    private static List<Map<String, Object>> publicEventSequence() {
+        return List.of(
+                Map.of(
+                        "itemId", "h1", "industryId", "industry1",
+                        "timestamp", 1L, "eventType", "click", "value", 1.0),
+                Map.of(
+                        "itemId", "h2", "industryId", "industry2",
+                        "timestamp", 2L, "eventType", "click", "value", 1.0),
+                Map.of(
+                        "itemId", "h3", "industryId", "industry1",
+                        "timestamp", 3L, "eventType", "view", "value", 1.0),
+                Map.of(
+                        "itemId", "h4", "industryId", "industry3",
+                        "timestamp", 4L, "eventType", "view", "value", 1.0),
+                Map.of(
+                        "itemId", "h5", "industryId", "industry1",
+                        "timestamp", 5L, "eventType", "buy", "value", 1.0),
+                Map.of(
+                        "itemId", "h6", "industryId", "industry3",
+                        "timestamp", 6L, "eventType", "view", "value", 1.0));
+    }
+
     private static List<FeatureDefinition> withDerived(
             List<FeatureDefinition> definitions,
             String name,
@@ -3509,9 +3811,9 @@ public final class DagEngineSelfTest {
         return new LinkedHashSet<>(List.of(values));
     }
 
-    private static Set<EntityScope> unionEntityScopes(List<LogicalNode> inputs) {
+    private static Set<EntityScope> unionEntityScopes(List<OperatorInputMetadata> inputs) {
         Set<EntityScope> result = new LinkedHashSet<>();
-        for (LogicalNode input : inputs) result.addAll(input.entityScopes());
+        for (OperatorInputMetadata input : inputs) result.addAll(input.entityScopes());
         return result;
     }
 

@@ -5,13 +5,13 @@ import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.FeatureDefinition;
 import com.example.featuredag.definition.FeatureRole;
 import com.example.featuredag.definition.OutputPolicy;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.expression.AstCall;
 import com.example.featuredag.expression.AstArrayLiteral;
 import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstNode;
 import com.example.featuredag.expression.AstObjectLiteral;
 import com.example.featuredag.expression.ExpressionParser;
-import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.physical.ExecutionEnvironment;
 
 import java.util.ArrayList;

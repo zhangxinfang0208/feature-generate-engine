@@ -1,7 +1,7 @@
 package com.example.featuredag.api;
 
 import com.example.featuredag.logical.LogicalDag;
-import com.example.featuredag.logical.ValueShape;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.runtime.ExternalValueMaterializer;
 import com.example.featuredag.runtime.ValueHandle;
 

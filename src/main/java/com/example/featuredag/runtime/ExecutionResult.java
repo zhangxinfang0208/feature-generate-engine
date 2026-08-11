@@ -25,7 +25,11 @@ public final class ExecutionResult {
             Map<String, RuntimeNodeState> nodeStates,
             Map<CacheKind, CacheStats> cacheStats) {
         this.featureOutputs = Collections.unmodifiableMap(new LinkedHashMap<>(featureOutputs));
-        this.nodeStates = Collections.unmodifiableMap(new LinkedHashMap<>(nodeStates));
+        Map<String, RuntimeNodeState> stateSnapshots = new LinkedHashMap<>();
+        for (Map.Entry<String, RuntimeNodeState> entry : nodeStates.entrySet()) {
+            stateSnapshots.put(entry.getKey(), entry.getValue().snapshot());
+        }
+        this.nodeStates = Collections.unmodifiableMap(stateSnapshots);
         if (cacheStats.isEmpty()) {
             this.cacheStats = Map.of();
         } else {

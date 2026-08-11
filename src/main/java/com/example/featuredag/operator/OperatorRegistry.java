@@ -2,23 +2,18 @@ package com.example.featuredag.operator;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
-import com.example.featuredag.logical.LogicalNode;
-import com.example.featuredag.logical.ValueShape;
-import com.example.featuredag.runtime.SequenceBlock;
-import com.example.featuredag.runtime.SequenceValue;
-import com.example.featuredag.runtime.SequenceView;
-
+import com.example.featuredag.definition.ValueShape;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Registry shared by logical inference and runtime execution.
@@ -28,7 +23,7 @@ import java.util.Set;
  * 每个算子名只能注册一次。
  */
 public final class OperatorRegistry {
-    private final Map<String, OperatorDefinition> definitions = new LinkedHashMap<>();
+    private final Map<String, OperatorDefinition> definitions = new ConcurrentHashMap<>();
 
     public OperatorRegistry register(OperatorDefinition definition) {
         Objects.requireNonNull(definition, "definition");
@@ -51,10 +46,12 @@ public final class OperatorRegistry {
         return Optional.ofNullable(definitions.get(name));
     }
 
-    public OperatorInference infer(String name, List<LogicalNode> inputs) {
+    public OperatorInference infer(
+            String name,
+            List<? extends OperatorInputMetadata> inputs) {
         OperatorDefinition definition = require(name);
         validateArity(definition, inputs.size());
-        return definition.infer(inputs);
+        return definition.infer(List.copyOf(inputs));
     }
 
     public Object evaluate(String name, List<Object> arguments) {
@@ -100,17 +97,18 @@ public final class OperatorRegistry {
                 List.of(new KeyedSequenceFilterSemantic(0, 1, SequenceKeyDomains.INDUSTRY)),
                 inputs -> new OperatorInference(DataType.EVENT_SEQUENCE, unionScopes(inputs), ValueShape.SEQUENCE),
                 args -> {
-                    SequenceValue sequence = asSequence(args.get(0));
+                    OperatorSequence sequence = asSequence(args.get(0));
                     String industry = String.valueOf(args.get(1));
-                    return SequenceView.filterByIndustry(sequence, industry);
+                    return sequence.filterByIndustry(industry);
                 }));
 
         registry.register(simple("count", 1, 1, true, false, true,
                 10L,
                 List.of(new SequenceCardinalitySemantic(0)),
                 inputs -> {
-                    LogicalNode input = inputs.getFirst();
-                    if (input.valueShape() != ValueShape.SEQUENCE) {
+                    OperatorInputMetadata input = inputs.getFirst();
+                    if (input.valueShape() != ValueShape.SEQUENCE
+                            && input.outputType() != DataType.OBJECT) {
                         throw new IllegalArgumentException(
                                 "count expects a sequence/collection input, got type="
                                         + input.outputType() + ", shape=" + input.valueShape()
@@ -121,7 +119,7 @@ public final class OperatorRegistry {
                 args -> {
                     Object value = args.get(0);
                     if (value == null) return 0;
-                    if (value instanceof SequenceValue sequence) return sequence.size();
+                    if (value instanceof OperatorSequence sequence) return sequence.size();
                     if (value instanceof Collection<?> collection) return collection.size();
                     if (value.getClass().isArray()) return java.lang.reflect.Array.getLength(value);
                     throw new IllegalArgumentException("count does not support: " + value.getClass());
@@ -162,7 +160,7 @@ public final class OperatorRegistry {
                 fixed(DataType.INT, ValueShape.SEQUENCE), unsupported("greater_than_index_typed")));
         registry.register(simple("reverse_typed", 1, 1, true, false, true,
                 passThrough(0), unsupported("reverse_typed")));
-        registry.register(simple("slice_v3_typed", 2, 2, true, true, true,
+        registry.register(curriedSimple("slice_v3_typed", 2, 2, true, true, true,
                 passThrough(1), unsupported("slice_v3_typed")));
         registry.register(simple("intersection_typed", 2, 2, true, false, true,
                 passThrough(0), unsupported("intersection_typed")));
@@ -230,7 +228,7 @@ public final class OperatorRegistry {
         registry.register(simple("least", 2, Integer.MAX_VALUE, true, false, false,
                 inputs -> {
                     boolean allInt = true;
-                    for (LogicalNode input : inputs) {
+                    for (OperatorInputMetadata input : inputs) {
                         if (input.outputType() != DataType.INT) {
                             allInt = false;
                             break;
@@ -243,11 +241,14 @@ public final class OperatorRegistry {
                 },
                 args -> {
                     Number minimum = asNumber(args.getFirst());
+                    boolean returnDouble = isFloatingPoint(minimum);
                     for (int index = 1; index < args.size(); index++) {
                         Number candidate = asNumber(args.get(index));
+                        returnDouble |= isFloatingPoint(candidate);
                         if (candidate.doubleValue() < minimum.doubleValue()) minimum = candidate;
                     }
-                    return minimum;
+                    if (returnDouble) return minimum.doubleValue();
+                    return minimum.intValue();
                 }));
         registry.register(simple("dis2xl", 2, 2, true, true, false,
                 fixed(DataType.INT, ValueShape.SCALAR), unsupported("dis2xl")));
@@ -340,7 +341,7 @@ public final class OperatorRegistry {
 
     private static Object evaluateGetSeqLength(List<Object> args) {
         Object sequence = args.getFirst();
-        if (sequence instanceof SequenceValue value) return value.size();
+        if (sequence instanceof OperatorSequence value) return value.size();
         if (sequence instanceof Collection<?> collection) return collection.size();
         if (sequence != null && sequence.getClass().isArray()) {
             return java.lang.reflect.Array.getLength(sequence);
@@ -351,9 +352,9 @@ public final class OperatorRegistry {
     private static Object evaluateCountDistinct(List<Object> args) {
         Object sequence = args.getFirst();
         Collection<?> values;
-        if (sequence instanceof SequenceValue value) {
+        if (sequence instanceof OperatorSequence value) {
             List<Object> events = new ArrayList<>(value.size());
-            for (int index = 0; index < value.size(); index++) events.add(value.eventAt(index));
+            for (int index = 0; index < value.size(); index++) events.add(value.elementAt(index));
             values = events;
         } else if (sequence instanceof Collection<?> collection) {
             values = collection;
@@ -411,15 +412,15 @@ public final class OperatorRegistry {
         return List.copyOf(result);
     }
 
-    private static java.util.function.Function<List<LogicalNode>, OperatorInference> passThrough(
+    private static java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> passThrough(
             int inputIndex) {
         return inputs -> {
-            LogicalNode input = inputs.get(inputIndex);
+            OperatorInputMetadata input = inputs.get(inputIndex);
             return new OperatorInference(input.outputType(), unionScopes(inputs), input.valueShape());
         };
     }
 
-    private static java.util.function.Function<List<LogicalNode>, OperatorInference> fixed(
+    private static java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> fixed(
             DataType outputType,
             ValueShape valueShape) {
         return inputs -> new OperatorInference(outputType, unionScopes(inputs), valueShape);
@@ -438,11 +439,25 @@ public final class OperatorRegistry {
             boolean deterministic,
             boolean parameterized,
             boolean supportsView,
-            java.util.function.Function<List<LogicalNode>, OperatorInference> inference,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
             java.util.function.Function<List<Object>, Object> evaluator) {
         return simple(
                 name, minArgs, maxArgs, deterministic, parameterized, supportsView,
-                1L, List.of(), inference, evaluator);
+                false, 1L, List.of(), inference, evaluator);
+    }
+
+    private static OperatorDefinition curriedSimple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            java.util.function.Function<List<Object>, Object> evaluator) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                true, 1L, List.of(), inference, evaluator);
     }
 
     private static OperatorDefinition simple(
@@ -454,7 +469,24 @@ public final class OperatorRegistry {
             boolean supportsView,
             long estimatedCost,
             List<OperatorSemantic> semantics,
-            java.util.function.Function<List<LogicalNode>, OperatorInference> inference,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
+            java.util.function.Function<List<Object>, Object> evaluator) {
+        return simple(
+                name, minArgs, maxArgs, deterministic, parameterized, supportsView,
+                false, estimatedCost, semantics, inference, evaluator);
+    }
+
+    private static OperatorDefinition simple(
+            String name,
+            int minArgs,
+            int maxArgs,
+            boolean deterministic,
+            boolean parameterized,
+            boolean supportsView,
+            boolean supportsCurriedInvocation,
+            long estimatedCost,
+            List<OperatorSemantic> semantics,
+            java.util.function.Function<List<OperatorInputMetadata>, OperatorInference> inference,
             java.util.function.Function<List<Object>, Object> evaluator) {
         return new OperatorDefinition() {
             @Override public String name() { return name; }
@@ -463,16 +495,19 @@ public final class OperatorRegistry {
             @Override public boolean deterministic() { return deterministic; }
             @Override public boolean parameterized() { return parameterized; }
             @Override public boolean supportsSequenceView() { return supportsView; }
+            @Override public boolean supportsCurriedInvocation() { return supportsCurriedInvocation; }
             @Override public long estimatedCost() { return estimatedCost; }
             @Override public List<OperatorSemantic> semantics() { return List.copyOf(semantics); }
-            @Override public OperatorInference infer(List<LogicalNode> inputs) { return inference.apply(inputs); }
+            @Override public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+                return inference.apply(inputs);
+            }
             @Override public Object evaluate(List<Object> arguments) { return evaluator.apply(arguments); }
         };
     }
 
-    private static Set<EntityScope> unionScopes(List<LogicalNode> inputs) {
+    private static Set<EntityScope> unionScopes(List<OperatorInputMetadata> inputs) {
         Set<EntityScope> result = new LinkedHashSet<>();
-        for (LogicalNode input : inputs) result.addAll(input.entityScopes());
+        for (OperatorInputMetadata input : inputs) result.addAll(input.entityScopes());
         return result;
     }
 
@@ -489,14 +524,20 @@ public final class OperatorRegistry {
         throw new IllegalArgumentException("Expected numeric value, got: " + value);
     }
 
+    private static boolean isFloatingPoint(Number value) {
+        return value instanceof Float
+                || value instanceof Double
+                || value instanceof java.math.BigDecimal;
+    }
+
     private static Map<?, ?> asMap(Object value) {
         if (value instanceof Map<?, ?> map) return map;
         throw new IllegalArgumentException("Expected object/map, got: " + value);
     }
 
-    private static SequenceValue asSequence(Object value) {
-        if (value instanceof SequenceValue sequence) return sequence;
-        throw new IllegalArgumentException("Expected SequenceValue, got: " + value);
+    private static OperatorSequence asSequence(Object value) {
+        if (value instanceof OperatorSequence sequence) return sequence;
+        throw new IllegalArgumentException("Expected operator sequence, got: " + value);
     }
 
     private static Object evaluateFindListIndexTyped(List<Object> args) {
@@ -596,32 +637,26 @@ public final class OperatorRegistry {
             throw new IllegalArgumentException(
                     operator + " index at position " + position + " is not numeric: " + value);
         }
-        long longValue;
+        int index;
         try {
-            if (number instanceof BigDecimal decimal) {
-                longValue = decimal.longValueExact();
-            } else if (number instanceof BigInteger integer) {
-                longValue = integer.longValueExact();
-            } else {
-                double doubleValue = number.doubleValue();
-                longValue = number.longValue();
-                if (!Double.isFinite(doubleValue) || doubleValue != longValue) {
-                    throw new IllegalArgumentException(
-                            operator + " index at position " + position
-                                    + " is out of bounds: " + value + ", size=" + sequenceSize);
-                }
-            }
-        } catch (ArithmeticException error) {
-            throw new IllegalArgumentException(
-                    operator + " index at position " + position
-                            + " is out of bounds: " + value + ", size=" + sequenceSize);
+            index = asPreciseDecimal(number, "invalid sequence index").intValueExact();
+        } catch (ArithmeticException | IllegalArgumentException error) {
+            throw invalidSequenceIndex(operator, position, value, sequenceSize);
         }
-        if (longValue < 0 || longValue >= sequenceSize) {
-            throw new IllegalArgumentException(
-                    operator + " index at position " + position
-                            + " is out of bounds: " + value + ", size=" + sequenceSize);
+        if (index < 0 || index >= sequenceSize) {
+            throw invalidSequenceIndex(operator, position, value, sequenceSize);
         }
-        return (int) longValue;
+        return index;
+    }
+
+    private static IllegalArgumentException invalidSequenceIndex(
+            String operator,
+            int position,
+            Object value,
+            int sequenceSize) {
+        return new IllegalArgumentException(
+                operator + " index at position " + position
+                        + " is out of bounds: " + value + ", size=" + sequenceSize);
     }
 
     private static double finiteDouble(Object value, String argument) {

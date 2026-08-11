@@ -2,6 +2,7 @@ package com.example.featuredag.logical;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
+import com.example.featuredag.definition.ValueShape;
 
 import java.util.Set;
 

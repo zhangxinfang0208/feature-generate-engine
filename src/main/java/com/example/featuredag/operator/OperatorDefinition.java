@@ -1,7 +1,5 @@
 package com.example.featuredag.operator;
 
-import com.example.featuredag.logical.LogicalNode;
-
 import java.util.List;
 
 public interface OperatorDefinition {
@@ -11,9 +9,10 @@ public interface OperatorDefinition {
     boolean deterministic();
     boolean parameterized();
     boolean supportsSequenceView();
+    default boolean supportsCurriedInvocation() { return false; }
     default boolean sideEffectFree() { return true; }
     default long estimatedCost() { return 1L; }
     default List<OperatorSemantic> semantics() { return List.of(); }
-    OperatorInference infer(List<LogicalNode> inputs);
+    OperatorInference infer(List<OperatorInputMetadata> inputs);
     Object evaluate(List<Object> arguments);
 }

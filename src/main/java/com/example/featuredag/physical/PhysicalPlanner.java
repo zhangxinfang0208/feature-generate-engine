@@ -1,13 +1,13 @@
 package com.example.featuredag.physical;
 
 import com.example.featuredag.definition.EntityScope;
+import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.logical.FeatureOutputNode;
 import com.example.featuredag.logical.LiteralNode;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.logical.SourceNode;
-import com.example.featuredag.logical.ValueShape;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.rewrite.PhysicalRewrite;
 import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;

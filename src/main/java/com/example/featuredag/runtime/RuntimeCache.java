@@ -63,28 +63,4 @@ public final class RuntimeCache {
     }
 
     public record CacheLookup(boolean hit, Object value) {}
-
-    private static final class MutableCacheStats {
-        private long lookups;
-        private long hits;
-        private long misses;
-        private long puts;
-
-        private void recordLookup(boolean hit) {
-            lookups++;
-            if (hit) {
-                hits++;
-            } else {
-                misses++;
-            }
-        }
-
-        private void recordPut() {
-            puts++;
-        }
-
-        private CacheStats snapshot() {
-            return new CacheStats(lookups, hits, misses, puts);
-        }
-    }
 }

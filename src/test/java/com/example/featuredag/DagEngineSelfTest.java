@@ -47,6 +47,14 @@ public final class DagEngineSelfTest {
             "zip_concat",
             "calc_delta_seq");
 
+    /**
+     * 提供原生 BatchOperatorKernel 的算子：批内按 (group, sequence, 参数) 身份键复用
+     * 收益显著；其余 4 个（discrete / log_base / slice_by_indices / get_seq_length）
+     * 实测批开销反噬，不提供原生 Batch，由 SingleLoopBatchOperatorKernel 逐行适配。
+     */
+    private static final Set<String> NATIVE_BATCH_OPERATORS = Set.of(
+            "find_indices", "count_distinct", "zip_concat", "calc_delta_seq");
+
     private DagEngineSelfTest() {}
 
     public static void main(String[] args) {
@@ -60,6 +68,8 @@ public final class DagEngineSelfTest {
         testInitialOperatorExpressionsBuildAndInfer();
         testInitialOperatorPublicApiDemos();
         testNativeBatchPerformanceDemo();
+        testOperatorBatchComparisonDemo();
+        testFeatureExpressionBatchComparisonDemo();
         System.out.println("All DAG engine self tests passed.");
     }
 
@@ -94,8 +104,10 @@ public final class DagEngineSelfTest {
                     : name + " min arity=" + definition.minArguments();
             assert definition.maxArguments() == arities.get(name).get(1)
                     : name + " max arity=" + definition.maxArguments();
-            assert registry.batchKernelKind(name) == BatchKernelKind.NATIVE
-                    : name + " should use its Native Batch kernel";
+            BatchKernelKind expectedKernel = NATIVE_BATCH_OPERATORS.contains(name)
+                    ? BatchKernelKind.NATIVE : BatchKernelKind.SCALAR_ADAPTER;
+            assert registry.batchKernelKind(name) == expectedKernel
+                    : name + " batch kernel kind=" + registry.batchKernelKind(name);
         }
     }
 
@@ -125,22 +137,11 @@ public final class DagEngineSelfTest {
     }
 
     private static void testInitialOperatorNativeBatchEquivalence() {
-        List<NativeBatchCase> cases = List.of(
-                new NativeBatchCase("discrete", List.of(
-                        batchRow(16.0, List.of(0, 10, 100)),
-                        batchRow(150.0, List.of(0, 10, 100)))),
-                new NativeBatchCase("log_base", List.of(
-                        batchRow(8.0, 2.0, 1024.0),
-                        batchRow(32.0, 2.0, 1024.0))),
-                new NativeBatchCase("slice_by_indices", List.of(
-                        batchRow(List.of("a", "b", "c"), List.of(0, 2)),
-                        batchRow(List.of("x", "y", "z"), List.of(1, 2)))),
+        // 保留原生 Batch 的 4 个算子：显式 NATIVE 内核与 Single 逐行等价
+        List<NativeBatchCase> nativeCases = List.of(
                 new NativeBatchCase("find_indices", List.of(
                         batchRow(List.of("a", "b", "a"), "a"),
                         batchRow(List.of("x", "y", "x"), "y"))),
-                new NativeBatchCase("get_seq_length", List.of(
-                        batchRow(List.of("a", "b")),
-                        batchRow(List.of("x", "y", "z")))),
                 new NativeBatchCase("count_distinct", List.of(
                         batchRow(List.of("a", "b", "a")),
                         batchRow(List.of("x", "x", "x")))),
@@ -150,34 +151,65 @@ public final class DagEngineSelfTest {
                 new NativeBatchCase("calc_delta_seq", List.of(
                         batchRow(List.of(2.0, 5.0), 10.0),
                         batchRow(List.of(10.0, 8.0), 5.0))));
+        // 移除原生 Batch 的 4 个算子：注册路由自动走标量适配器，仍须与 Single 等价
+        List<NativeBatchCase> adapterCases = List.of(
+                new NativeBatchCase("discrete", List.of(
+                        batchRow(16.0, List.of(0, 10, 100)),
+                        batchRow(150.0, List.of(0, 10, 100)))),
+                new NativeBatchCase("log_base", List.of(
+                        batchRow(8.0, 2.0, 1024.0),
+                        batchRow(32.0, 2.0, 1024.0))),
+                new NativeBatchCase("slice_by_indices", List.of(
+                        batchRow(List.of("a", "b", "c"), List.of(0, 2)),
+                        batchRow(List.of("x", "y", "z"), List.of(1, 2)))),
+                new NativeBatchCase("get_seq_length", List.of(
+                        batchRow(List.of("a", "b")),
+                        batchRow(List.of("x", "y", "z")))));
 
         OperatorRegistry registry = OperatorRegistry.standard();
-        for (NativeBatchCase batchCase : cases) {
+        for (NativeBatchCase batchCase : nativeCases) {
+            assert registry.batchKernelKind(batchCase.operatorName())
+                    == BatchKernelKind.NATIVE : batchCase.operatorName();
             BatchOperatorCall call = batchCall(batchCase.rows(), BatchDomain.OFFLINE_ROW);
             BatchOperatorResult result = registry.evaluateBatch(
                     batchCase.operatorName(), call, BatchKernelKind.NATIVE);
-            assert result.values().size() == batchCase.rows().size();
-            for (int row = 0; row < batchCase.rows().size(); row++) {
-                Object expected = registry.evaluate(
-                        batchCase.operatorName(), batchCase.rows().get(row));
-                assert expected.equals(result.values().valueAt(row))
-                        : batchCase.operatorName() + " row=" + row;
-            }
+            assertEquivalentToSingle(registry, batchCase, result);
+        }
+        for (NativeBatchCase batchCase : adapterCases) {
+            assert registry.batchKernelKind(batchCase.operatorName())
+                    == BatchKernelKind.SCALAR_ADAPTER : batchCase.operatorName();
+            BatchOperatorCall call = batchCall(batchCase.rows(), BatchDomain.OFFLINE_ROW);
+            BatchOperatorResult result = registry.evaluateBatch(batchCase.operatorName(), call);
+            assertEquivalentToSingle(registry, batchCase, result);
+        }
+    }
+
+    private static void assertEquivalentToSingle(
+            OperatorRegistry registry,
+            NativeBatchCase batchCase,
+            BatchOperatorResult result) {
+        assert result.values().size() == batchCase.rows().size();
+        for (int row = 0; row < batchCase.rows().size(); row++) {
+            Object expected = registry.evaluate(
+                    batchCase.operatorName(), batchCase.rows().get(row));
+            assert expected.equals(result.values().valueAt(row))
+                    : batchCase.operatorName() + " row=" + row;
         }
     }
 
     private static void testNativeBatchFailureRow() {
         OperatorRegistry registry = OperatorRegistry.standard();
+        // calc_delta_seq 保留原生 Batch，第 2 行 base 非有限数触发失败行定位
         BatchOperatorCall call = batchCall(List.of(
-                batchRow(8.0, 2.0, 1024.0),
-                batchRow(-1.0, 2.0, 1024.0),
-                batchRow(32.0, 2.0, 1024.0)), BatchDomain.OFFLINE_ROW);
+                batchRow(List.of(2.0, 5.0), 10.0),
+                batchRow(List.of(1.0), Double.NaN),
+                batchRow(List.of(10.0, 8.0), 5.0)), BatchDomain.OFFLINE_ROW);
         BatchOperatorEvaluationException failure = expectThrows(
                 BatchOperatorEvaluationException.class,
                 () -> registry.evaluateBatch(
-                        "log_base", call, BatchKernelKind.NATIVE));
+                        "calc_delta_seq", call, BatchKernelKind.NATIVE));
         assert failure.rowIndex() == 1 : failure.rowIndex();
-        assert failure.getMessage().contains("greater than zero") : failure.getMessage();
+        assert failure.getMessage().contains("finite") : failure.getMessage();
     }
 
     private static void testFindIndicesNativeBatchReusesSequenceScan() {
@@ -315,6 +347,41 @@ public final class DagEngineSelfTest {
             if (cause instanceof Error) throw (Error) cause;
             throw new AssertionError(
                     "Native Batch performance demo failed",
+                    cause == null ? error : cause);
+        }
+    }
+
+    private static void testOperatorBatchComparisonDemo() {
+        try {
+            Class<?> demo = Class.forName(
+                    "com.example.featuredag.demo.OperatorBatchComparisonDemo");
+            demo.getMethod("runSmokeTest").invoke(null);
+        } catch (ClassNotFoundException error) {
+            throw new AssertionError("Operator Batch comparison demo is missing", error);
+        } catch (ReflectiveOperationException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            if (cause instanceof Error) throw (Error) cause;
+            throw new AssertionError(
+                    "Operator Batch comparison demo failed",
+                    cause == null ? error : cause);
+        }
+    }
+
+    private static void testFeatureExpressionBatchComparisonDemo() {
+        try {
+            Class<?> demo = Class.forName(
+                    "com.example.featuredag.demo.FeatureExpressionBatchComparisonDemo");
+            demo.getMethod("runSmokeTest").invoke(null);
+        } catch (ClassNotFoundException error) {
+            throw new AssertionError(
+                    "Feature expression batch comparison demo is missing", error);
+        } catch (ReflectiveOperationException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            if (cause instanceof Error) throw (Error) cause;
+            throw new AssertionError(
+                    "Feature expression batch comparison demo failed",
                     cause == null ? error : cause);
         }
     }

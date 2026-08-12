@@ -1,22 +1,22 @@
 package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
-import com.example.featuredag.operator.BatchOperatorCall;
-import com.example.featuredag.operator.BatchOperatorKernel;
-import com.example.featuredag.operator.BatchOperatorResult;
-import com.example.featuredag.operator.ListBatchColumn;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
-public final class DiscreteOperator extends AbstractBuiltinOperator
-        implements BatchOperatorKernel {
+/**
+ * discrete：数值分桶。
+ *
+ * <p>不提供原生 BatchOperatorKernel：批内可复用的只有边界→BigDecimal 转换，
+ * 每行仍需 bucket 比较，复用收益不足以覆盖批开销（实测 batch 劣化），
+ * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
+ */
+public final class DiscreteOperator extends AbstractBuiltinOperator {
     public DiscreteOperator() {
         super("discrete", 2, 2, true, true, false);
     }
@@ -29,30 +29,6 @@ public final class DiscreteOperator extends AbstractBuiltinOperator
     @Override
     public Object evaluate(List<Object> arguments) {
         return bucket(toValue(arguments.get(0)), toBoundaries(arguments.get(1)));
-    }
-
-    @Override
-    public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> result = new ArrayList<Object>(call.rowCount());
-        Map<OperatorSupport.IdentityBatchKey, List<BigDecimal>> convertedBoundaries =
-                new LinkedHashMap<OperatorSupport.IdentityBatchKey, List<BigDecimal>>();
-        for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
-            try {
-                BigDecimal value = toValue(call.arguments().get(0).valueAt(rowIndex));
-                Object rawBoundaries = call.arguments().get(1).valueAt(rowIndex);
-                OperatorSupport.IdentityBatchKey key =
-                        OperatorSupport.identityBatchKey(-1, rawBoundaries);
-                List<BigDecimal> boundaries = convertedBoundaries.get(key);
-                if (boundaries == null) {
-                    boundaries = toBoundaries(rawBoundaries);
-                    convertedBoundaries.put(key, boundaries);
-                }
-                result.add(bucket(value, boundaries));
-            } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
-            }
-        }
-        return new BatchOperatorResult(new ListBatchColumn(result));
     }
 
     private static BigDecimal toValue(Object value) {

@@ -30,23 +30,28 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Public-API demo for deep expression CSE and Native Batch execution.
+ * 特征表达式层对比 demo：首期 8 个算子各以一个 DERIVED 特征表达式定义，
+ * 走完整引擎链路（表达式解析 → 逻辑 DAG → 物理计划 → runtime 分派），
+ * 对比「逐个请求 generate（不走批量请求）」与「generateBatch 批量请求」的执行差异。
  *
- * <p>This demo intentionally keeps physical fusion disabled and reports timing without
- * asserting a machine-dependent speedup threshold.
+ * <p>引擎分派由输入载体决定（C10）：候选行存在时算子节点一律走原生 Batch
+ * kernel（BATCH_NATIVE），差异集中在请求解码与调度摊销；本 demo 同时断言
+ * 全部算子节点均为 BATCH_NATIVE、无物理融合节点。
  */
-public final class NativeBatchPerformanceDemo {
-    private static final String CONFIG_RESOURCE = "/demo/native-batch-performance.json";
-    private static final String COMPLEX_DISTINCT = "complex_distinct";
-    private static final String COMPLEX_DISTINCT_ALIAS = "complex_distinct_alias";
-    private static final String DEEP_NUMERIC_BUCKET = "deep_numeric_bucket";
-    private static final String DEEP_NUMERIC_BUCKET_ALIAS = "deep_numeric_bucket_alias";
-    private static final int EXPECTED_NATIVE_OPERATOR_NODES = 10;
+public final class FeatureExpressionBatchComparisonDemo {
+    private static final String CONFIG_RESOURCE =
+            "/demo/feature-expression-batch-comparison.json";
+    private static final String[] TARGET_FEATURES = {
+        "bucket_level", "log_amount", "code_window", "target_positions",
+        "behavior_length", "distinct_codes", "joined_window", "delta_sequence",
+    };
+    /** 8 个特征表达式对应的逻辑算子节点数：1+1+1+1+1+1+3+1。 */
+    private static final int EXPECTED_OPERATOR_NODES = 10;
 
-    private NativeBatchPerformanceDemo() {}
+    private FeatureExpressionBatchComparisonDemo() {}
 
     public static void runSmokeTest() {
-        run(new Options(64, 2, 16, 0, 1), false);
+        run(new Options(16, 2, 4, 1, 1), false);
     }
 
     public static void main(String[] args) {
@@ -57,78 +62,52 @@ public final class NativeBatchPerformanceDemo {
         String config = loadConfig();
         List<OnlineRequestGroup> groups = createGroups(options);
 
-        InMemoryRuntimeObserver primaryObserver = new InMemoryRuntimeObserver(32);
-        InMemoryRuntimeObserver aliasObserver = new InMemoryRuntimeObserver(4096);
-        FeatureDagEngine primaryEngine = createEngine(
-                config,
-                "native-batch-primary",
-                primaryObserver,
-                targetFeatures(COMPLEX_DISTINCT, DEEP_NUMERIC_BUCKET));
-        FeatureDagEngine aliasEngine = createEngine(
-                config,
-                "native-batch-alias",
-                aliasObserver,
-                targetFeatures(
-                        COMPLEX_DISTINCT,
-                        COMPLEX_DISTINCT_ALIAS,
-                        DEEP_NUMERIC_BUCKET,
-                        DEEP_NUMERIC_BUCKET_ALIAS));
-
-        primaryEngine.generateBatch(new OnlineBatchGenerateRequest(
-                "native-batch-primary-structure", groups));
-        OnlineBatchGenerateResult aliasStructureResult = aliasEngine.generateBatch(
-                new OnlineBatchGenerateRequest("native-batch-alias-structure", groups));
-        assertStructure(primaryObserver.latest(), aliasObserver.latest());
-        assertAliases(aliasStructureResult);
-
-        for (int round = 0; round < options.warmupRounds; round++) {
-            List<GenerateResult> individual = executeIndividual(
-                    aliasEngine, groups, "native-batch-warmup-individual-" + round);
-            OnlineBatchGenerateResult grouped = aliasEngine.generateBatch(
-                    new OnlineBatchGenerateRequest(
-                            "native-batch-warmup-grouped-" + round, groups));
-            assertEquivalent(individual, grouped);
-        }
-
-        long[] individualDurations = new long[options.measurementRounds];
-        long[] groupedDurations = new long[options.measurementRounds];
-        for (int round = 0; round < options.measurementRounds; round++) {
-            long individualStart = System.nanoTime();
-            List<GenerateResult> individual = executeIndividual(
-                    aliasEngine, groups, "native-batch-measure-individual-" + round);
-            individualDurations[round] = System.nanoTime() - individualStart;
-
-            long groupedStart = System.nanoTime();
-            OnlineBatchGenerateResult grouped = aliasEngine.generateBatch(
-                    new OnlineBatchGenerateRequest(
-                            "native-batch-measure-grouped-" + round, groups));
-            groupedDurations[round] = System.nanoTime() - groupedStart;
-            assertEquivalent(individual, grouped);
-            assertAliases(grouped);
-        }
-
-        if (printReport) {
-            printReport(options, individualDurations, groupedDurations, aliasObserver.latest());
-        }
-    }
-
-    private static FeatureDagEngine createEngine(
-            String config,
-            String planId,
-            InMemoryRuntimeObserver observer,
-            Set<String> targets) {
-        return FeatureDagEngine.init(
+        InMemoryRuntimeObserver observer = new InMemoryRuntimeObserver(32);
+        FeatureDagEngine engine = FeatureDagEngine.init(
                 config,
                 InitOptions.builder()
                         .environment(ExecutionEnvironment.ONLINE)
-                        .planId(planId)
-                        .targetFeatures(targets)
+                        .planId("feature-expression-batch-comparison")
+                        .targetFeatures(targetFeatures())
                         .runtimeObserver(observer)
                         .build());
+
+        long[] individualDurations = new long[options.measurementRounds];
+        long[] groupedDurations = new long[options.measurementRounds];
+        ExecutionDiagnostics individualDiagnostics = null;
+        ExecutionDiagnostics groupedDiagnostics = null;
+        for (int round = 0; round < options.warmupRounds; round++) {
+            List<GenerateResult> individual = executeIndividual(
+                    engine, groups, "feature-expression-warmup-individual-" + round);
+            if (round == 0) individualDiagnostics = observer.latest();
+            OnlineBatchGenerateResult grouped = engine.generateBatch(
+                    new OnlineBatchGenerateRequest(
+                            "feature-expression-warmup-grouped-" + round, groups));
+            if (round == 0) groupedDiagnostics = observer.latest();
+            assertEquivalent(individual, grouped);
+        }
+        for (int round = 0; round < options.measurementRounds; round++) {
+            long individualStart = System.nanoTime();
+            List<GenerateResult> individual = executeIndividual(
+                    engine, groups, "feature-expression-measure-individual-" + round);
+            individualDurations[round] = System.nanoTime() - individualStart;
+
+            long groupedStart = System.nanoTime();
+            OnlineBatchGenerateResult grouped = engine.generateBatch(
+                    new OnlineBatchGenerateRequest(
+                            "feature-expression-measure-grouped-" + round, groups));
+            groupedDurations[round] = System.nanoTime() - groupedStart;
+            assertEquivalent(individual, grouped);
+        }
+
+        assertInvocationMix(individualDiagnostics, groupedDiagnostics);
+        if (printReport) {
+            printReport(options, individualDurations, groupedDurations, groupedDiagnostics);
+        }
     }
 
-    private static Set<String> targetFeatures(String... names) {
-        return new LinkedHashSet<String>(Arrays.asList(names));
+    private static Set<String> targetFeatures() {
+        return new LinkedHashSet<String>(Arrays.asList(TARGET_FEATURES));
     }
 
     private static List<OnlineRequestGroup> createGroups(Options options) {
@@ -137,22 +116,13 @@ public final class NativeBatchPerformanceDemo {
         for (int groupIndex = 0; groupIndex < options.groupCount; groupIndex++) {
             Map<String, List<?>> shared = new LinkedHashMap<String, List<?>>();
             List<String> codes = new ArrayList<String>(options.sequenceLength);
-            List<String> labels = new ArrayList<String>(options.sequenceLength);
-            List<Integer> allIndices = new ArrayList<Integer>(options.sequenceLength);
-            List<String> indexTags = new ArrayList<String>(options.sequenceLength);
             List<Double> numbers = new ArrayList<Double>(options.sequenceLength);
             for (int index = 0; index < options.sequenceLength; index++) {
                 codes.add("code-" + ((index + groupIndex) % 128));
-                labels.add("label-" + (index % 32));
-                allIndices.add(index);
-                indexTags.add("tag-" + (index % 64));
                 numbers.add(index + groupIndex + 1.0);
             }
             shared.put("codes", immutable(codes));
-            shared.put("labels", immutable(labels));
-            shared.put("all_indices", immutable(allIndices));
-            shared.put("index_tags", immutable(indexTags));
-            shared.put("number_sequence", immutable(numbers));
+            shared.put("numbers", immutable(numbers));
 
             List<Map<String, List<?>>> candidates =
                     new ArrayList<Map<String, List<?>>>(options.candidatesPerGroup);
@@ -160,18 +130,18 @@ public final class NativeBatchPerformanceDemo {
                     candidateIndex < options.candidatesPerGroup;
                     candidateIndex++) {
                 Map<String, List<?>> candidate = new LinkedHashMap<String, List<?>>();
-                candidate.put(
-                        "target_tag",
-                        Collections.<String>singletonList(
-                                "tag-" + (candidateIndex % 64)));
-                candidate.put(
-                        "delta_base",
-                        Collections.<Double>singletonList(
-                                (candidateIndex % 32) + 1.0));
+                // log_base 要求 value > 0，discrete 边界 [0,10,50,100,500]
+                candidate.put("amount", Collections.<Double>singletonList(
+                        (candidateIndex % 32) + 1.0));
+                // calc_delta_seq 的 base 不得为 1
+                candidate.put("delta_base", Collections.<Double>singletonList(
+                        (candidateIndex % 15) + 2.0));
+                candidate.put("target_tag", Collections.<String>singletonList(
+                        "code-" + ((candidateIndex * 3 + groupIndex) % 128)));
                 candidates.add(candidate);
             }
             groups.add(new OnlineRequestGroup(
-                    "native-batch-group-" + groupIndex, shared, candidates));
+                    "feature-expression-group-" + groupIndex, shared, candidates));
         }
         return Collections.unmodifiableList(groups);
     }
@@ -198,83 +168,74 @@ public final class NativeBatchPerformanceDemo {
     private static void assertEquivalent(
             List<GenerateResult> individual,
             OnlineBatchGenerateResult grouped) {
-        require(individual.size() == grouped.groupResults().size(),
-                "Individual/grouped result size mismatch");
+        if (individual.size() != grouped.groupResults().size()) {
+            throw new IllegalStateException(
+                    "Individual/grouped result size mismatch: "
+                            + individual.size() + " vs " + grouped.groupResults().size());
+        }
         for (int groupIndex = 0; groupIndex < individual.size(); groupIndex++) {
             GenerateResult expected = individual.get(groupIndex);
             GenerateResult actual = grouped.groupResults().get(groupIndex);
-            require(expected.featureValues().equals(actual.featureValues()),
-                    "Request output mismatch for group " + groupIndex);
-            require(expected.candidateFeatureValues().equals(
-                            actual.candidateFeatureValues()),
-                    "Candidate output mismatch for group " + groupIndex);
-        }
-    }
-
-    private static void assertAliases(OnlineBatchGenerateResult result) {
-        for (int groupIndex = 0;
-                groupIndex < result.groupResults().size();
-                groupIndex++) {
-            List<Map<String, List<?>>> candidates =
-                    result.groupResults().get(groupIndex).candidateFeatureValues();
-            for (int candidateIndex = 0;
-                    candidateIndex < candidates.size();
-                    candidateIndex++) {
-                Map<String, List<?>> values = candidates.get(candidateIndex);
-                require(values.get(COMPLEX_DISTINCT).equals(
-                                values.get(COMPLEX_DISTINCT_ALIAS)),
-                        "Sequence alias mismatch for group " + groupIndex
-                                + ", candidate " + candidateIndex);
-                require(values.get(DEEP_NUMERIC_BUCKET).equals(
-                                values.get(DEEP_NUMERIC_BUCKET_ALIAS)),
-                        "Numeric alias mismatch for group " + groupIndex
-                                + ", candidate " + candidateIndex);
-            }
-        }
-    }
-
-    private static void assertStructure(
-            ExecutionDiagnostics primary,
-            ExecutionDiagnostics alias) {
-        require(alias.logicalNodeCount() == primary.logicalNodeCount() + 2,
-                "Alias outputs should add only two logical output nodes: primary="
-                        + primary.logicalNodeCount() + ", alias="
-                        + alias.logicalNodeCount());
-        require(alias.physicalNodeCount() == primary.physicalNodeCount() + 2,
-                "Alias outputs should add only two physical output nodes: primary="
-                        + primary.physicalNodeCount() + ", alias="
-                        + alias.physicalNodeCount());
-        require(alias.fusedPhysicalNodeCount() == 0,
-                "Native Batch demo must not contain fused physical nodes");
-
-        int genericOperatorNodes = 0;
-        int nativeNodes = 0;
-        int scalarAdapterNodes = 0;
-        for (NodeExecutionSnapshot node : alias.nodes()) {
-            if (!PhysicalExecutorIds.GENERIC_OPERATOR.equals(node.executorId())) continue;
-            genericOperatorNodes++;
-            // discrete/log_base/get_seq_length/slice_by_indices 不提供原生 Batch，
-            // 由标量适配器逐行执行；count_distinct/zip_concat/find_indices/calc_delta_seq 走原生 Batch
-            if (node.operatorInvocationKind() == OperatorInvocationKind.BATCH_NATIVE) {
-                nativeNodes++;
-            } else if (node.operatorInvocationKind()
-                    == OperatorInvocationKind.BATCH_SCALAR_ADAPTER) {
-                scalarAdapterNodes++;
-            } else {
+            if (!expected.featureValues().equals(actual.featureValues())) {
                 throw new IllegalStateException(
-                        "Unexpected invocation kind for " + node.physicalNodeId()
-                                + ": " + node.operatorInvocationKind());
+                        "Request output mismatch for group " + groupIndex);
+            }
+            if (!expected.candidateFeatureValues().equals(
+                            actual.candidateFeatureValues())) {
+                throw new IllegalStateException(
+                        "Candidate output mismatch for group " + groupIndex);
             }
         }
-        require(genericOperatorNodes == EXPECTED_NATIVE_OPERATOR_NODES,
-                "Expected " + EXPECTED_NATIVE_OPERATOR_NODES
-                        + " generic operator nodes, got " + genericOperatorNodes);
-        // CSE 合并后：complex_distinct 分支 3 native（count/zip/find）+ 3 scalar（slice×3）；
-        // deep_numeric_bucket 分支 1 native（calc_delta_seq）+ 3 scalar（discrete/log_base/get_seq_length）
-        require(nativeNodes == 4,
-                "Expected 4 Native operator nodes, got " + nativeNodes);
-        require(scalarAdapterNodes == 6,
-                "Expected 6 scalar-adapter operator nodes, got " + scalarAdapterNodes);
+    }
+
+    /**
+     * 表达式层载体分派断言（C10）：individual 单请求执行时，纯共享序列特征
+     * （无候选输入）走 SINGLE kernel；候选特征按注册能力路由——保留原生 Batch 的
+     * find_indices/count_distinct/zip_concat/calc_delta_seq 走 BATCH_NATIVE，
+     * 不提供原生 Batch 的 discrete/log_base/slice_by_indices/get_seq_length
+     * 走 BATCH_SCALAR_ADAPTER（逐行 single 语义）。grouped 批量执行时共享值
+     * 向量化为请求批域，算子节点全部走批路径、无 SINGLE。
+     */
+    private static void assertInvocationMix(
+            ExecutionDiagnostics individual,
+            ExecutionDiagnostics grouped) {
+        requireNoFusion(individual);
+        requireNoFusion(grouped);
+        int individualNative = countNodes(individual, OperatorInvocationKind.BATCH_NATIVE);
+        int individualScalar = countNodes(
+                individual, OperatorInvocationKind.BATCH_SCALAR_ADAPTER);
+        int individualSingle = countNodes(individual, OperatorInvocationKind.SINGLE);
+        if (individualNative < 1 || individualScalar < 1 || individualSingle < 1) {
+            throw new IllegalStateException(
+                    "Individual execution must mix Native/Scalar/Single invocations: "
+                            + "native=" + individualNative + ", scalar=" + individualScalar
+                            + ", single=" + individualSingle);
+        }
+        int groupedNative = countNodes(grouped, OperatorInvocationKind.BATCH_NATIVE);
+        int groupedScalar = countNodes(grouped, OperatorInvocationKind.BATCH_SCALAR_ADAPTER);
+        int groupedSingle = countNodes(grouped, OperatorInvocationKind.SINGLE);
+        if (groupedNative < 1 || groupedScalar < 1 || groupedSingle != 0) {
+            throw new IllegalStateException(
+                    "Grouped execution must use batch paths for all operator nodes: "
+                            + "native=" + groupedNative + ", scalar=" + groupedScalar
+                            + ", single=" + groupedSingle);
+        }
+    }
+
+    private static void requireNoFusion(ExecutionDiagnostics diagnostics) {
+        if (diagnostics.fusedPhysicalNodeCount() != 0) {
+            throw new IllegalStateException(
+                    "Expression demo must not contain fused physical nodes");
+        }
+        int genericOperatorNodes = countNodes(
+                diagnostics, OperatorInvocationKind.BATCH_NATIVE)
+                + countNodes(diagnostics, OperatorInvocationKind.BATCH_SCALAR_ADAPTER)
+                + countNodes(diagnostics, OperatorInvocationKind.SINGLE);
+        if (genericOperatorNodes != EXPECTED_OPERATOR_NODES) {
+            throw new IllegalStateException(
+                    "Expected " + EXPECTED_OPERATOR_NODES
+                            + " generic operator nodes, got " + genericOperatorNodes);
+        }
     }
 
     private static void printReport(
@@ -283,22 +244,39 @@ public final class NativeBatchPerformanceDemo {
             long[] groupedDurations,
             ExecutionDiagnostics diagnostics) {
         long candidates = (long) options.groupCount * options.candidatesPerGroup;
-        System.out.println("=== NATIVE BATCH PERFORMANCE DEMO ===");
+        System.out.println("=== FEATURE EXPRESSION BATCH VS INDIVIDUAL ===");
         System.out.println("sequenceLength=" + options.sequenceLength
                 + ", groups=" + options.groupCount
                 + ", candidatesPerGroup=" + options.candidatesPerGroup
                 + ", totalCandidates=" + candidates
                 + ", warmups=" + options.warmupRounds
                 + ", measurements=" + options.measurementRounds);
-        printTiming("individual", individualDurations, candidates);
-        printTiming("grouped", groupedDurations, candidates);
-        System.out.println("diagnostics decodeMs=" + millis(diagnostics.decodeDurationNanos())
+        printTiming("individual(逐请求 generate)", individualDurations, candidates);
+        printTiming("grouped(generateBatch)", groupedDurations, candidates);
+        long individualMedian = percentile(sorted(individualDurations), 0.50);
+        long groupedMedian = percentile(sorted(groupedDurations), 0.50);
+        System.out.println("grouped/individual 加速比="
+                + String.format(Locale.ROOT, "%.2fx",
+                        (double) individualMedian / groupedMedian));
+        System.out.println("diagnostics decodeMs="
+                + millis(diagnostics.decodeDurationNanos())
                 + ", runtimeMs=" + millis(diagnostics.runtimeDurationNanos())
                 + ", encodeMs=" + millis(diagnostics.encodeDurationNanos())
                 + ", logicalNodes=" + diagnostics.logicalNodeCount()
                 + ", physicalNodes=" + diagnostics.physicalNodeCount()
-                + ", nativeNodes=" + countNativeNodes(diagnostics)
+                + ", nativeNodes=" + countNodes(diagnostics, OperatorInvocationKind.BATCH_NATIVE)
+                + ", singleNodes=" + countNodes(diagnostics, OperatorInvocationKind.SINGLE)
                 + ", fusedNodes=" + diagnostics.fusedPhysicalNodeCount());
+    }
+
+    private static int countNodes(
+            ExecutionDiagnostics diagnostics,
+            OperatorInvocationKind kind) {
+        int result = 0;
+        for (NodeExecutionSnapshot node : diagnostics.nodes()) {
+            if (node.operatorInvocationKind() == kind) result++;
+        }
+        return result;
     }
 
     private static void printTiming(String name, long[] durations, long candidates) {
@@ -315,6 +293,12 @@ public final class NativeBatchPerformanceDemo {
                 + String.format(Locale.ROOT, "%.2f", throughput));
     }
 
+    private static long[] sorted(long[] durations) {
+        long[] copy = durations.clone();
+        Arrays.sort(copy);
+        return copy;
+    }
+
     private static long percentile(long[] sorted, double percentile) {
         int index = (int) Math.ceil(percentile * sorted.length) - 1;
         return sorted[Math.max(0, Math.min(index, sorted.length - 1))];
@@ -324,19 +308,9 @@ public final class NativeBatchPerformanceDemo {
         return String.format(Locale.ROOT, "%.3f", nanos / 1_000_000.0);
     }
 
-    private static int countNativeNodes(ExecutionDiagnostics diagnostics) {
-        int result = 0;
-        for (NodeExecutionSnapshot node : diagnostics.nodes()) {
-            if (node.operatorInvocationKind() == OperatorInvocationKind.BATCH_NATIVE) {
-                result++;
-            }
-        }
-        return result;
-    }
-
     private static String loadConfig() {
-        InputStream stream = NativeBatchPerformanceDemo.class.getResourceAsStream(
-                CONFIG_RESOURCE);
+        InputStream stream = FeatureExpressionBatchComparisonDemo.class
+                .getResourceAsStream(CONFIG_RESOURCE);
         if (stream == null) {
             throw new IllegalStateException(
                     "Missing demo resource: " + CONFIG_RESOURCE);
@@ -356,14 +330,10 @@ public final class NativeBatchPerformanceDemo {
         return json.toString();
     }
 
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new IllegalStateException(message);
-    }
-
     private static final class Options {
-        private static final int DEFAULT_SEQUENCE_LENGTH = 10_000;
+        private static final int DEFAULT_SEQUENCE_LENGTH = 200;
         private static final int DEFAULT_GROUP_COUNT = 8;
-        private static final int DEFAULT_CANDIDATES_PER_GROUP = 1_000;
+        private static final int DEFAULT_CANDIDATES_PER_GROUP = 1000;
         private static final int DEFAULT_WARMUP_ROUNDS = 2;
         private static final int DEFAULT_MEASUREMENT_ROUNDS = 5;
 
@@ -391,7 +361,7 @@ public final class NativeBatchPerformanceDemo {
         private static Options parse(String[] args) {
             if (args.length > 5) {
                 throw new IllegalArgumentException(
-                        "Usage: NativeBatchPerformanceDemo "
+                        "Usage: FeatureExpressionBatchComparisonDemo "
                                 + "[sequenceLength] [groupCount] "
                                 + "[candidatesPerGroup] [warmups] [measurements]");
             }

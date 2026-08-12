@@ -247,22 +247,34 @@ public final class NativeBatchPerformanceDemo {
         require(alias.fusedPhysicalNodeCount() == 0,
                 "Native Batch demo must not contain fused physical nodes");
 
-        int nativeNodes = 0;
         int genericOperatorNodes = 0;
+        int nativeNodes = 0;
+        int scalarAdapterNodes = 0;
         for (NodeExecutionSnapshot node : alias.nodes()) {
             if (!PhysicalExecutorIds.GENERIC_OPERATOR.equals(node.executorId())) continue;
             genericOperatorNodes++;
-            require(node.operatorInvocationKind() == OperatorInvocationKind.BATCH_NATIVE,
-                    "Generic operator did not use Native Batch: "
-                            + node.physicalNodeId());
-            nativeNodes++;
+            // discrete/log_base/get_seq_length/slice_by_indices 不提供原生 Batch，
+            // 由标量适配器逐行执行；count_distinct/zip_concat/find_indices/calc_delta_seq 走原生 Batch
+            if (node.operatorInvocationKind() == OperatorInvocationKind.BATCH_NATIVE) {
+                nativeNodes++;
+            } else if (node.operatorInvocationKind()
+                    == OperatorInvocationKind.BATCH_SCALAR_ADAPTER) {
+                scalarAdapterNodes++;
+            } else {
+                throw new IllegalStateException(
+                        "Unexpected invocation kind for " + node.physicalNodeId()
+                                + ": " + node.operatorInvocationKind());
+            }
         }
         require(genericOperatorNodes == EXPECTED_NATIVE_OPERATOR_NODES,
                 "Expected " + EXPECTED_NATIVE_OPERATOR_NODES
                         + " generic operator nodes, got " + genericOperatorNodes);
-        require(nativeNodes == EXPECTED_NATIVE_OPERATOR_NODES,
-                "Expected " + EXPECTED_NATIVE_OPERATOR_NODES
-                        + " Native operator nodes, got " + nativeNodes);
+        // CSE 合并后：complex_distinct 分支 3 native（count/zip/find）+ 3 scalar（slice×3）；
+        // deep_numeric_bucket 分支 1 native（calc_delta_seq）+ 3 scalar（discrete/log_base/get_seq_length）
+        require(nativeNodes == 4,
+                "Expected 4 Native operator nodes, got " + nativeNodes);
+        require(scalarAdapterNodes == 6,
+                "Expected 6 scalar-adapter operator nodes, got " + scalarAdapterNodes);
     }
 
     private static void printReport(

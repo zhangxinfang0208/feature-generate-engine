@@ -96,7 +96,7 @@ Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表
 
 ## 7. 测试要求
 
-- 首期标准注册表中的 8 个算子全部使用 `SCALAR_ADAPTER`，当前没有标准 Native Batch 算子；
+- 首期 8 个算子中 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 Batch（批内按 identity 键复用）；`discrete`、`log_base`、`slice_by_indices`、`get_seq_length` 不提供原生 Batch（复用收益不足以覆盖批开销，实测劣化约 0.1x~0.3x），由 `SCALAR_ADAPTER` 逐行适配；
 - 每个标准 Native Batch 使用相同输入逐行对比 Single 结果；
 - `SCALAR_ADAPTER` 保持调用次数、顺序和异常语义；
 - 零行、单行、多行 Batch；

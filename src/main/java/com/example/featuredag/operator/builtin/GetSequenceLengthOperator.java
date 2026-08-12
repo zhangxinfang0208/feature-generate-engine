@@ -1,21 +1,22 @@
 package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
-import com.example.featuredag.operator.BatchOperatorCall;
-import com.example.featuredag.operator.BatchOperatorKernel;
-import com.example.featuredag.operator.BatchOperatorResult;
-import com.example.featuredag.operator.ListBatchColumn;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorSequence;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-public final class GetSequenceLengthOperator extends AbstractBuiltinOperator
-        implements BatchOperatorKernel {
+/**
+ * get_seq_length：取序列长度。
+ *
+ * <p>不提供原生 BatchOperatorKernel：该算子单行计算极轻（一次 size 读取），
+ * 原生 Batch 内核没有批内复用缓存，只会白付批开销（实测 batch 劣化约 0.2x），
+ * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
+ */
+public final class GetSequenceLengthOperator extends AbstractBuiltinOperator {
     public GetSequenceLengthOperator() {
         super("get_seq_length", 1, 1, true, false, false);
     }
@@ -28,19 +29,6 @@ public final class GetSequenceLengthOperator extends AbstractBuiltinOperator
     @Override
     public Object evaluate(List<Object> arguments) {
         return evaluateSequence(arguments.get(0));
-    }
-
-    @Override
-    public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> result = new ArrayList<Object>(call.rowCount());
-        for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
-            try {
-                result.add(evaluateSequence(call.arguments().get(0).valueAt(rowIndex)));
-            } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
-            }
-        }
-        return new BatchOperatorResult(new ListBatchColumn(result));
     }
 
     private static Object evaluateSequence(Object sequence) {

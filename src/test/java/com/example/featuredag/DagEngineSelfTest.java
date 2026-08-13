@@ -286,9 +286,9 @@ public final class DagEngineSelfTest {
                         DataType.INT, ValueShape.SCALAR),
                 new OperatorCase("count_distinct", "count_distinct(seq)",
                         DataType.INT, ValueShape.SCALAR),
-                new OperatorCase("zip_concat", "zip_concat(seq, seq2)",
+                new OperatorCase("zip_concat", "zip_concat(str_seq, str_seq)",
                         DataType.STRING, ValueShape.SEQUENCE),
-                new OperatorCase("calc_delta_seq", "calc_delta_seq(seq, a)",
+                new OperatorCase("calc_delta_seq", "calc_delta_seq(num_seq, a)",
                         DataType.DOUBLE, ValueShape.SEQUENCE));
 
         OperatorRegistry registry = OperatorRegistry.standard();
@@ -296,7 +296,22 @@ public final class DagEngineSelfTest {
         List<FeatureDefinition> definitions = new ArrayList<>(List.of(
                 FeatureDefinition.raw("a", DataType.DOUBLE, EntityScope.ITEM, 1.0),
                 FeatureDefinition.raw("seq", DataType.EVENT_SEQUENCE, EntityScope.USER, null),
-                FeatureDefinition.raw("seq2", DataType.EVENT_SEQUENCE, EntityScope.ITEM, null)));
+                FeatureDefinition.builder()
+                        .name("str_seq")
+                        .role(com.example.featuredag.definition.FeatureRole.RAW)
+                        .dataType(DataType.STRING)
+                        .addEntityScope(EntityScope.USER)
+                        .sourceBinding("str_seq")
+                        .declaredValueShape(ValueShape.SEQUENCE)
+                        .build(),
+                FeatureDefinition.builder()
+                        .name("num_seq")
+                        .role(com.example.featuredag.definition.FeatureRole.RAW)
+                        .dataType(DataType.DOUBLE)
+                        .addEntityScope(EntityScope.USER)
+                        .sourceBinding("num_seq")
+                        .declaredValueShape(ValueShape.SEQUENCE)
+                        .build()));
         Set<String> targets = new LinkedHashSet<>();
         Map<String, OperatorCase> casesByFeature = new LinkedHashMap<>();
 

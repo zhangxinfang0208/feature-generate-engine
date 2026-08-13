@@ -20,7 +20,7 @@ import java.util.Map;
 public final class CountDistinctOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public CountDistinctOperator() {
-        super("count_distinct", 1, 1, true, false);
+        super("count_distinct", 1, 1, true, true);
     }
 
     @Override

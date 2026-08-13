@@ -6,6 +6,7 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.BatchOperatorEvaluationException;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
+import com.example.featuredag.operator.OperatorSequence;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -73,6 +74,28 @@ final class OperatorSupport {
         if (value instanceof List<?>) return (List<?>) value;
         throw new IllegalArgumentException(
                 operator + " expects List for " + argument + ", got: " + typeName(value));
+    }
+
+    static int sequenceSize(Object value, String operator, String argument) {
+        if (value instanceof OperatorSequence) {
+            return ((OperatorSequence) value).size();
+        }
+        if (value instanceof List<?>) return ((List<?>) value).size();
+        throw new IllegalArgumentException(
+                operator + " expects a sequence for " + argument + ", got: " + typeName(value));
+    }
+
+    static Object sequenceElementAt(
+            Object value,
+            int index,
+            String operator,
+            String argument) {
+        if (value instanceof OperatorSequence) {
+            return ((OperatorSequence) value).elementAt(index);
+        }
+        if (value instanceof List<?>) return ((List<?>) value).get(index);
+        throw new IllegalArgumentException(
+                operator + " expects a sequence for " + argument + ", got: " + typeName(value));
     }
 
     static int asSequenceIndex(

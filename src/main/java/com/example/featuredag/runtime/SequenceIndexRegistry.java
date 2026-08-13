@@ -52,7 +52,7 @@ public final class SequenceIndexRegistry {
     public static SequenceIndexRegistry standard() {
         return new SequenceIndexRegistry().register(
                 SequenceKeyDomains.INDUSTRY,
-                SequenceBlock::industryAtBaseIndex,
+                (block, index) -> block.columnValueAt("industryId", index),
                 key -> String.valueOf(key));
     }
 }

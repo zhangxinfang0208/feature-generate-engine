@@ -48,16 +48,9 @@ public final class ExternalValueMaterializer {
 
     private List<Map<String, Object>> materializeSequence(SequenceValue sequence) {
         List<Map<String, Object>> events = new ArrayList<>(sequence.size());
-        SequenceBlock base = sequence.baseBlock();
         for (int index = 0; index < sequence.size(); index++) {
-            SequenceEvent event = base.eventAtBaseIndex(sequence.baseIndexAt(index));
-            Map<String, Object> values = new LinkedHashMap<>();
-            values.put("itemId", event.itemId());
-            values.put("industryId", event.industryId());
-            values.put("timestamp", event.timestamp());
-            values.put("eventType", event.eventType());
-            values.put("value", event.value());
-            events.add(Collections.unmodifiableMap(values));
+            // 事件行在 SequenceBlock 构造时已防御拷贝并不可变化，直接透传属性全集（兼容超集契约）。
+            events.add(sequence.baseBlock().rowAtBaseIndex(sequence.baseIndexAt(index)));
         }
         return List.copyOf(events);
     }

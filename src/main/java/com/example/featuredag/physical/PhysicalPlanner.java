@@ -8,6 +8,7 @@ import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.logical.SourceNode;
+import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.rewrite.PhysicalRewrite;
 import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
@@ -146,15 +147,20 @@ public final class PhysicalPlanner {
         } else if (node instanceof OperatorNode operator) {
             executorType = ExecutorType.GENERIC_OPERATOR;
             executorId = PhysicalExecutorIds.GENERIC_OPERATOR;
+            OperatorDefinition definition = operatorRegistry.require(operator.operatorName());
             config.put("operatorName", operator.operatorName());
             config.put("singleKernelId", operator.operatorName());
             config.put("batchKernelId", operator.operatorName());
-            config.put("batchKernelKind", operatorRegistry.find(operator.operatorName())
-                    .map(ignored -> operatorRegistry.batchKernelKind(operator.operatorName()).name())
-                    .orElse("SCALAR_ADAPTER"));
+            config.put("batchKernelKind", operatorRegistry.batchKernelKind(operator.operatorName()).name());
             config.put(
                     "invocationPolicy",
                     OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN);
+            // C10：把算子声明转换为物理输入策略，运行时不再按算子名决策。
+            config.put(
+                    "sequenceViewInputMode",
+                    definition.supportsSequenceView()
+                            ? SequenceViewInputMode.DIRECT
+                            : SequenceViewInputMode.MATERIALIZE);
         } else if (node instanceof FeatureOutputNode output) {
             executorType = ExecutorType.FEATURE_OUTPUT;
             executorId = PhysicalExecutorIds.FEATURE_OUTPUT;

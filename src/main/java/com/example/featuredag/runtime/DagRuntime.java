@@ -9,14 +9,17 @@ import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorEvaluationException;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.OperatorRegistry;
+import com.example.featuredag.operator.OperatorSequence;
 import com.example.featuredag.physical.ExecutorType;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutionStage;
 import com.example.featuredag.physical.OperatorInvocationPolicy;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
+import com.example.featuredag.physical.SequenceViewInputMode;
 
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -237,7 +240,13 @@ public final class DagRuntime {
         EvaluationDomain domain = evaluationDomain(inputHandles);
         if (domain == EvaluationDomain.NONE) {
             state.recordOperatorInvocation(OperatorInvocationKind.SINGLE, null, 0);
-            List<Object> args = inputHandles.stream().map(ValueHandle::raw).toList();
+            SequenceViewInputMode sequenceMode = sequenceViewInputMode(node);
+            IdentityHashMap<OperatorSequence, Object> materialized = new IdentityHashMap<>();
+            List<Object> args = new ArrayList<>(inputHandles.size());
+            for (ValueHandle inputHandle : inputHandles) {
+                args.add(SequenceViewArgumentAdapter.adapt(
+                        inputHandle.raw(), sequenceMode, materialized));
+            }
             String singleKernelId = String.valueOf(node.executorConfig().getOrDefault(
                     "singleKernelId", operatorName));
             return wrap(
@@ -283,6 +292,20 @@ public final class DagRuntime {
                         "batchKernelKind", BatchKernelKind.SCALAR_ADAPTER.name())));
     }
 
+    private static SequenceViewInputMode sequenceViewInputMode(PhysicalNode node) {
+        Object value = node.executorConfig().getOrDefault(
+                "sequenceViewInputMode", SequenceViewInputMode.MATERIALIZE);
+        if (value instanceof SequenceViewInputMode mode) return mode;
+        try {
+            return SequenceViewInputMode.valueOf(String.valueOf(value));
+        } catch (IllegalArgumentException error) {
+            throw new IllegalStateException(
+                    "Invalid sequence view input mode for " + node.physicalNodeId()
+                            + ": " + value,
+                    error);
+        }
+    }
+
     private static BatchDomain batchDomain(EvaluationDomain domain) {
         return switch (domain) {
             case SINGLE_CANDIDATE, ONLINE_CANDIDATE -> BatchDomain.ONLINE_CANDIDATE;
@@ -305,8 +328,15 @@ public final class DagRuntime {
             RuntimeNodeState state) {
         RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context);
         state.setBatchRowCount(layout.rowCount());
+        SequenceViewInputMode sequenceMode = sequenceViewInputMode(node);
+        Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup =
+                new LinkedHashMap<>();
         List<BatchColumn> arguments = inputHandles.stream()
-                .map(handle -> (BatchColumn) new InputBatchColumn(handle, layout, context))
+                .map(handle -> (BatchColumn) new SequenceAdaptingBatchColumn(
+                        new InputBatchColumn(handle, layout, context),
+                        layout,
+                        sequenceMode,
+                        materializedByGroup))
                 .toList();
         BatchOperatorResult result;
         try {
@@ -537,6 +567,43 @@ public final class DagRuntime {
                     layout.evaluationDomain,
                     layout.originalRowIndex(rowIndex),
                     context);
+        }
+    }
+
+    private static final class SequenceAdaptingBatchColumn implements BatchColumn {
+        private final BatchColumn delegate;
+        private final RuntimeBatchLayout layout;
+        private final SequenceViewInputMode mode;
+        private final Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup;
+
+        private SequenceAdaptingBatchColumn(
+                BatchColumn delegate,
+                RuntimeBatchLayout layout,
+                SequenceViewInputMode mode,
+                Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup) {
+            this.delegate = delegate;
+            this.layout = layout;
+            this.mode = mode;
+            this.materializedByGroup = materializedByGroup;
+        }
+
+        @Override
+        public int size() {
+            return delegate.size();
+        }
+
+        @Override
+        public Object valueAt(int rowIndex) {
+            Object value = delegate.valueAt(rowIndex);
+            if (mode == SequenceViewInputMode.DIRECT
+                    || !(value instanceof OperatorSequence sequence)) {
+                return value;
+            }
+            int groupIndex = layout.groupIndexAt(rowIndex);
+            IdentityHashMap<OperatorSequence, Object> groupValues =
+                    materializedByGroup.computeIfAbsent(
+                            groupIndex, ignored -> new IdentityHashMap<>());
+            return SequenceViewArgumentAdapter.adapt(sequence, mode, groupValues);
         }
     }
 

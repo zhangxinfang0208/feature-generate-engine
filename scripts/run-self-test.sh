@@ -30,3 +30,5 @@ mvn -q -DskipTests test-compile dependency:build-classpath \
   -Dmdep.outputFile=target/test-classpath.txt
 CP="target/test-classes${PATH_SEPARATOR}target/classes${PATH_SEPARATOR}$(cat target/test-classpath.txt)"
 java -ea -cp "$CP" com.example.featuredag.DagEngineSelfTest
+# 新增 UT（JUnit 4 独立文件）由 surefire 执行；失败时 mvn 非零退出，脚本随之失败。
+mvn -q test

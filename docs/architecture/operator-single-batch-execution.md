@@ -37,6 +37,7 @@ singleKernelId
 batchKernelId
 batchKernelKind = NATIVE | SCALAR_ADAPTER
 invocationPolicy = OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN
+sequenceViewInputMode = DIRECT | MATERIALIZE
 ```
 
 规划器只为未被 Rewrite 消费的逻辑算子生成上述配置。命中融合规则时仍生成
@@ -46,6 +47,12 @@ invocationPolicy = OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN
 运行时无批值输入时调用 Single Kernel；存在 `OfflineBatchValue`、`RequestBatchValue`、
 `CandidateVectorValue` 或 `CandidateBatchValue` 时调用计划声明的 Batch Kernel。这是对输入载体的
 固定分派，不是运行时物理改写。
+
+`sequenceViewInputMode` 由 `OperatorDefinition.supportsSequenceView()` 推导并固化。`DIRECT` 表示
+Single 与 Native Batch Kernel 可以直接消费 operator 层的 `OperatorSequence`；`MATERIALIZE`
+表示运行时在 Kernel 边界按视图逻辑范围转换为只读 `List`。Batch 的适配发生在 Native Kernel 与
+`SingleLoopBatchOperatorKernel` 的共同入口之前，同一 group 内重复的具体视图按对象身份只物化一次。
+完整契约见 `docs/architecture/sequence-view-operator-support.md`。
 
 ## 4. 缓存与批内复用
 
@@ -94,6 +101,8 @@ Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表
 - 首期 8 个算子中 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 Batch（批内按 identity 键复用）；`discrete`、`log_base`、`slice_by_indices`、`get_seq_length` 不提供原生 Batch（复用收益不足以覆盖批开销，实测劣化约 0.1x~0.3x），由 `SCALAR_ADAPTER` 逐行适配；
 - 每个标准 Native Batch 使用相同输入逐行对比 Single 结果；
 - `SCALAR_ADAPTER` 保持调用次数、顺序和异常语义；
+- `DIRECT` 保留具体 `OperatorSequence`，`MATERIALIZE` 只包含视图 selection 内的元素；
+- Single、Native Batch 与 `SCALAR_ADAPTER` 的视图输入逐行等价；
 - 零行、单行、多行 Batch；
 - request-to-candidate 广播及多 group 隔离；
 - Batch 错误映射到 offline row 或 online group/candidate；

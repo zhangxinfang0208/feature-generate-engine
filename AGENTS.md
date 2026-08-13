@@ -6,7 +6,7 @@
 
 首期标准注册表严格只提供以下 8 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护唯一的显式清单，`OperatorRegistry.standard()` 直接注册该清单，不再增加纯转发聚合层。
 
-仓库只提供基于这 8 个算子的公共 API Demo、共享配置和调测脚本，不得在 Demo 或对应 UT 中重新引入其他标准算子。自测试位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`，辅助脚本位于 `scripts/`，编译产物写入 `target/`。
+仓库只提供基于这 8 个算子的公共 API Demo、共享配置和调测脚本，不得在 Demo 或对应 UT 中重新引入其他标准算子。存量自测位于 `src/test/java/com/example/featuredag/DagEngineSelfTest.java`，新增 UT 为 `src/test/java` 下的 JUnit 4 `*Test.java` 独立文件（见「测试与提交」），辅助脚本位于 `scripts/`，编译产物写入 `target/`。
 
 ## 三层 DAG 构建约束
 
@@ -41,8 +41,8 @@
 
 ## 构建与测试
 
-- `mvn clean package`：使用 Java 21 编译，生成 thin JAR 和包含 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`；产物不包含 Demo `Main-Class`。
-- `./scripts/run-self-test.sh`：编译主代码和测试代码，并通过 `java -ea` 执行自测试。
+- `mvn clean package`：使用 Java 21 编译，生成 thin JAR 和包含 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`；产物不包含 Demo `Main-Class`。`mvn test`/`mvn package` 会自动执行 JUnit 4 新增 UT（`*Test.java`），但不会执行 `DagEngineSelfTest`。
+- `./scripts/run-self-test.sh`：编译主代码和测试代码，先以 `java -ea` 执行存量自测，再运行 `mvn test` 执行 JUnit 4 测试——提交前必须显式运行该脚本，两个环节都通过才算绿。
 - `./scripts/run-initial-operator-demos.sh [all|scalar|sequence|batch]`：在 Bash 中运行首期算子调测入口。
 - `./scripts/run-initial-operator-demos.ps1 [all|scalar|sequence|batch]`：在 PowerShell 中运行首期算子调测入口。
 
@@ -56,6 +56,6 @@
 
 ## 测试与提交
 
-测试使用 Java `assert` 而非 JUnit。首期算子测试只覆盖上述 8 个算子的注册、推断、执行、异常和 Batch 路由，不得在测试中保留或重新实现其他标准算子。
+存量自测（`DagEngineSelfTest`、`FeatureValueCodecSelfTest`、`ModelFeatureSetInitialOperatorsSelfTest` 等）使用 Java `assert`，由 `run-self-test.sh` 以 `java -ea` 显式运行，保持零依赖。**新增单元测试一律使用 JUnit 4**（`org.junit.Test` + `Assert`），写入 `src/test/java` 下独立的 `*Test.java` 文件（不得再并入 `DagEngineSelfTest`），由 surefire 在 `mvn test`/`mvn package` 自动执行。首期算子测试只覆盖上述 8 个算子的注册、推断、执行、异常和 Batch 路由，不得在测试中保留或重新实现其他标准算子。
 
 提交标题应简短并使用祈使语气。每次提交聚焦一个主题；拉取请求说明行为变化、受影响架构层和已运行的验证命令。

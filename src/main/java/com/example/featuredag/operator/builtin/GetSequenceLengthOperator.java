@@ -18,7 +18,7 @@ import java.util.List;
  */
 public final class GetSequenceLengthOperator extends AbstractBuiltinOperator {
     public GetSequenceLengthOperator() {
-        super("get_seq_length", 1, 1, true, false, false);
+        super("get_seq_length", 1, 1, true, false);
     }
 
     @Override

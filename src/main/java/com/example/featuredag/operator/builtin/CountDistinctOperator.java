@@ -20,7 +20,7 @@ import java.util.Map;
 public final class CountDistinctOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public CountDistinctOperator() {
-        super("count_distinct", 1, 1, true, false, false);
+        super("count_distinct", 1, 1, true, false);
     }
 
     @Override
@@ -65,6 +65,12 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator
             }
         } else if (sequence instanceof Collection<?>) {
             values.addAll((Collection<?>) sequence);
+        } else if (sequence != null && sequence.getClass().isArray()) {
+            // 与 get_seq_length 的数组口径对齐：数组序列同样按元素去重
+            int length = java.lang.reflect.Array.getLength(sequence);
+            for (int index = 0; index < length; index++) {
+                values.add(java.lang.reflect.Array.get(sequence, index));
+            }
         } else {
             throw new IllegalArgumentException(
                     "count_distinct expects a sequence, got: "

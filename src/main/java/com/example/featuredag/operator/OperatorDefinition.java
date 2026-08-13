@@ -7,11 +7,10 @@ public interface OperatorDefinition extends SingleOperatorKernel {
     int minArguments();
     int maxArguments();
     boolean deterministic();
-    boolean parameterized();
     boolean supportsSequenceView();
     default boolean supportsCurriedInvocation() { return false; }
-    default boolean sideEffectFree() { return true; }
-    default long estimatedCost() { return 1L; }
+    /** 默认 false：有副作用的算子必须显式声明，避免被误判为可缓存（AGENTS.md 缓存资格约束）。 */
+    default boolean sideEffectFree() { return false; }
     default List<OperatorSemantic> semantics() { return List.of(); }
     OperatorInference infer(List<OperatorInputMetadata> inputs);
     @Override

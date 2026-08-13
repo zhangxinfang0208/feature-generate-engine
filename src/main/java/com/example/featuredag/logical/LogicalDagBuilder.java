@@ -189,7 +189,7 @@ public final class LogicalDagBuilder {
             for (Map.Entry<String, AstNode> entry : objectLiteral.fields().entrySet()) {
                 value.put(entry.getKey(), toLiteralValue(entry.getValue()));
             }
-            return createLiteralNode(value, owner, context);
+            return createLiteralNode(immutableLiteralMap(value), owner, context);
         }
         if (ast instanceof AstCall call) {
             validateInvocationStyle(call, owner);
@@ -234,7 +234,7 @@ public final class LogicalDagBuilder {
             for (Map.Entry<String, AstNode> entry : objectLiteral.fields().entrySet()) {
                 map.put(entry.getKey(), toLiteralValue(entry.getValue()));
             }
-            return map;
+            return immutableLiteralMap(map);
         }
         throw new DagBuildException("Object literal values must be literals; found: " + node.getClass().getSimpleName());
     }
@@ -243,13 +243,21 @@ public final class LogicalDagBuilder {
         return Collections.unmodifiableList(new ArrayList<>(values));
     }
 
+    /** 对象字面量冻结为不可变 Map（C7）：嵌套 List/Map 已由 toLiteralValue 递归冻结。 */
+    private static Map<String, Object> immutableLiteralMap(Map<String, Object> values) {
+        return Collections.unmodifiableMap(new LinkedHashMap<>(values));
+    }
+
     /**
      * 字面量落点为 LiteralNode（C5）：按值类型推断 DataType 与值形状，
      * 相同的「类型 + 值」只保留一个节点，避免常量重复构建。
      */
     private String createLiteralNode(Object value, FeatureDefinition owner, BuildContext context) {
         DataType dataType = inferLiteralType(value);
-        ValueShape shape = dataType == DataType.OBJECT ? ValueShape.OBJECT : ValueShape.SCALAR;
+        // 数组字面量折叠为 List，属序列形状（C6）：按值本身而非 DataType 判定形状，避免规划层按标量估算
+        ValueShape shape = value instanceof List<?>
+                ? ValueShape.SEQUENCE
+                : dataType == DataType.OBJECT ? ValueShape.OBJECT : ValueShape.SCALAR;
         String signature = "literal|" + dataType + "|" + canonicalValue(value);
         String existing = context.canonicalNodeIds.get(signature);
         if (existing != null) return existing;
@@ -307,7 +315,6 @@ public final class LogicalDagBuilder {
                 inference.valueShape(),
                 Map.of(),
                 definition.deterministic(),
-                definition.parameterized(),
                 owner.name(),
                 owner.expressionContent());
         context.nodes.put(nodeId, node);

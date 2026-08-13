@@ -28,8 +28,6 @@ import java.util.Set;
  * 专用融合由注册的 PhysicalRewriteRule 描述；本类不按业务算子名称做判断（C10）。
  */
 public final class PhysicalPlanner {
-    private static final long CANDIDATE_CACHE_COST_THRESHOLD = 100L;
-
     private final OperatorRegistry operatorRegistry;
     private final PhysicalRewriteRegistry rewriteRegistry;
 
@@ -170,7 +168,7 @@ public final class PhysicalPlanner {
         ExecutionMode mode = environment == ExecutionEnvironment.OFFLINE
                 ? ExecutionMode.BATCH
                 : (stage == ExecutionStage.REQUEST_SHARED ? ExecutionMode.REQUEST : ExecutionMode.BATCH);
-        CachePolicy cache = cacheFor(node, metadata, environment, stage);
+        CachePolicy cache = cacheFor(metadata, environment, stage);
         MaterializationPolicy materialization = materializationFor(node);
 
         return new PhysicalNode(
@@ -198,20 +196,17 @@ public final class PhysicalPlanner {
                 : ExecutionStage.REQUEST_SHARED;
     }
 
+    /**
+     * C10：ONLINE 请求共享节点标记 REQUEST 预留缓存策略（运行时一期不消费，仅记录计划意图）；
+     * 缓存资格已由规划元数据按 deterministic && sideEffectFree 把关（C8），其余节点不缓存。
+     */
     private static CachePolicy cacheFor(
-            LogicalNode node,
             NodePlanningMetadata metadata,
             ExecutionEnvironment environment,
             ExecutionStage stage) {
         if (!metadata.cacheEligible()) return CachePolicy.NONE;
         if (environment == ExecutionEnvironment.ONLINE && stage == ExecutionStage.REQUEST_SHARED) {
             return CachePolicy.REQUEST;
-        }
-        if (environment == ExecutionEnvironment.ONLINE
-                && stage == ExecutionStage.CANDIDATE_BATCH
-                && node instanceof OperatorNode
-                && metadata.estimatedCost() >= CANDIDATE_CACHE_COST_THRESHOLD) {
-            return CachePolicy.CANDIDATE_KEY;
         }
         return CachePolicy.NONE;
     }

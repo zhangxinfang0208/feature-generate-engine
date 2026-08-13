@@ -17,7 +17,7 @@ import java.util.Map;
 public final class ZipConcatOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public ZipConcatOperator() {
-        super("zip_concat", 2, Integer.MAX_VALUE, true, true, true);
+        super("zip_concat", 2, Integer.MAX_VALUE, true, true);
     }
 
     @Override

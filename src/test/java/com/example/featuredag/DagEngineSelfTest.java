@@ -59,6 +59,7 @@ public final class DagEngineSelfTest {
 
     public static void main(String[] args) {
         FeatureValueCodecSelfTest.run();
+        ModelFeatureSetInitialOperatorsSelfTest.run();
         testInitialOperatorRegistry();
         testInitialOperatorEvaluation();
         testInitialOperatorNativeBatchEquivalence();

@@ -36,7 +36,7 @@ sequenceCardinality(上述结果)               // 统计过滤后的元素个�
  ┌────────────────────────────────────────────────┐
  │ LogicalDagOptimizer.analyze()        （C8）     │
  │  为每个逻辑节点计算只读规划事实：                │
- │  引用计数 / 可达根 / 依赖维度 / 缓存资格 / 成本   │
+ │  引用计数 / 可达根 / 缓存资格 / 大小估算          │
  └────────────────────────────────────────────────┘
                           │ NodePlanningMetadata
                           ▼
@@ -74,11 +74,10 @@ sequenceCardinality(上述结果)               // 统计过滤后的元素个�
 | `referenceCount` | 下游引用该节点的次数 | 被消费节点必须 == 1 |
 | `reachableRootNodeIds` | 从该节点可到达的逻辑根 | 被消费节点不得是根 |
 | `cacheEligible` | 是否可缓存 | 融合后要建索引/缓存，双方都必须可缓存 |
-| `estimatedCost` | 估算执行成本 | 冲突仲裁时比较收益 |
-| `dependencyDimensions` | 依赖的实体维度 | 判断 ONLINE 候选依赖 |
+| `estimatedSizeBytes` | 估算输出规模 | 物化/规模参考 |
 
 其中 `cacheEligible` 直接来自算子声明：`deterministic && sideEffectFree`
-（`LogicalDagOptimizer.java:60`）。因此非确定性算子天然不可能被融合。
+（`LogicalDagOptimizer.java:61`）。因此非确定性算子天然不可能被融合。
 
 ## 4. 规则层：匹配与改写描述
 
@@ -138,7 +137,7 @@ SequenceCardinality(              ← 根节点
    stage=CANDIDATE_BATCH、mode=CANDIDATE_KEY、cache=CANDIDATE_KEY，
    config 携带 `keyDomain`（第 89-108 行）。
 
-收益估算 = 过滤节点成本 + 聚合节点成本（第 94-95 行），用于多规则冲突仲裁。
+收益估算随 `estimatedCost` 一并移除，规则按固定收益参与冲突仲裁（`CountAfterKeyedSequenceFilterRule.java:94-99`）。
 
 ### 4.3 冲突仲裁（互不重叠）
 
@@ -253,7 +252,7 @@ feature:matching_count → slot:5
 |---|---|---|
 | 中间结果被别处使用，融合后丢了 | 被消费节点引用计数必须 == 1 | `safeToConsume` |
 | 中间结果是输出根，必须可观察 | 被消费节点不得是根 | `safeToConsume` |
-| 非确定性/副作用算子结果被缓存复用 | 双方必须 `cacheEligible`（deterministic + sideEffectFree） | `LogicalDagOptimizer.java:60` |
+| 非确定性/副作用算子结果被缓存复用 | 双方必须 `cacheEligible`（deterministic + sideEffectFree） | `LogicalDagOptimizer.java:61` |
 | 语义冒充（名字像但行为不同） | 只认注册的 `OperatorSemantic`，不认算子名 | `CountAfterKeyedSequenceFilterRule.java:44-73` |
 | 多条规则冲突、重复消费 | 仲裁排序 + 已消费集合排除 | `PhysicalRewriteRegistry.java:50-57` |
 | 索引/执行器缺失导致运行期才炸 | 计划执行前 `validate` fail-fast | `PhysicalExecutorRegistry.java:38-41` |
@@ -263,7 +262,7 @@ feature:matching_count → slot:5
 ## 8. 如何新增一条融合
 
 1. 为算子实现正确的类型推断与通用求值器，普通路径先能跑（`operator` 包）；
-2. 在 `OperatorDefinition` 声明确定性、无副作用、成本，并注册 `OperatorSemantic`
+2. 在 `OperatorDefinition` 声明确定性、无副作用，并注册 `OperatorSemantic`
    （如 `KeyedSequenceFilterSemantic`、`SequenceCardinalitySemantic`）；
 3. 先看现有规则能否匹配新模式，能匹配就不要新增规则；
 4. 确需新规则时实现 `PhysicalRewriteRule`，注册到 `PhysicalRewriteRegistry`，

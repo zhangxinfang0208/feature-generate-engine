@@ -17,7 +17,7 @@ import java.util.Map;
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public CalculateDeltaSequenceOperator() {
-        super("calc_delta_seq", 2, 2, true, false, true);
+        super("calc_delta_seq", 2, 2, true, true);
     }
 
     @Override

@@ -13,6 +13,7 @@ import java.util.Map;
  */
 public final class ExpressionParser {
     private static final int ERROR_EXCERPT_RADIUS = 80;
+    private static final int MAX_NESTING_DEPTH = 200;
 
     /**
      * L0 解析入口：表达式字符串 → AST，是逻辑层构建（C3）的第一步；
@@ -134,15 +135,16 @@ public final class ExpressionParser {
                 if (ch == '\\') {
                     if (index >= source.length()) throw error("Unterminated escape sequence", index);
                     char escaped = source.charAt(index++);
-                    value.append(switch (escaped) {
-                        case 'n' -> '\n';
-                        case 'r' -> '\r';
-                        case 't' -> '\t';
-                        case '\\' -> '\\';
-                        case '"' -> '"';
-                        case '\'' -> '\'';
-                        default -> escaped;
-                    });
+                    switch (escaped) {
+                        case 'n' -> value.append('\n');
+                        case 'r' -> value.append('\r');
+                        case 't' -> value.append('\t');
+                        case '\\' -> value.append('\\');
+                        case '"' -> value.append('"');
+                        case '\'' -> value.append('\'');
+                        default -> throw error(
+                                "Unknown escape sequence '\\" + escaped + "'", index - 1);
+                    }
                 } else {
                     value.append(ch);
                 }
@@ -168,6 +170,7 @@ public final class ExpressionParser {
         private final String source;
         private final Lexer lexer;
         private Token current;
+        private int depth;
 
         private Parser(String source) {
             this.source = source;
@@ -176,14 +179,24 @@ public final class ExpressionParser {
         }
 
         private AstNode parseExpression() {
-            return switch (current.type()) {
-                case IDENTIFIER -> parseIdentifierOrCall();
-                case NUMBER -> parseNumber();
-                case STRING -> parseString();
-                case LBRACE -> parseObject();
-                case LBRACKET -> parseArray();
-                default -> throw error("Expected expression but found " + current.type());
-            };
+            // 嵌套深度上限：深嵌套表达式在无限递归下会以 StackOverflowError（Error）
+            // 逃逸引擎的 RuntimeException 错误边界，改为显式深度限制并抛出可定位异常
+            if (depth >= MAX_NESTING_DEPTH) {
+                throw error("Expression nesting exceeds limit " + MAX_NESTING_DEPTH);
+            }
+            depth++;
+            try {
+                return switch (current.type()) {
+                    case IDENTIFIER -> parseIdentifierOrCall();
+                    case NUMBER -> parseNumber();
+                    case STRING -> parseString();
+                    case LBRACE -> parseObject();
+                    case LBRACKET -> parseArray();
+                    default -> throw error("Expected expression but found " + current.type());
+                };
+            } finally {
+                depth--;
+            }
         }
 
         private AstNode parseIdentifierOrCall() {
@@ -230,7 +243,7 @@ public final class ExpressionParser {
                     value = Integer.parseInt(token.text());
                 }
             } catch (NumberFormatException ex) {
-                throw error("Invalid numeric literal");
+                throw error("Invalid numeric literal '" + token.text() + "'", token.start());
             }
             return new AstLiteral(value, new SourceSpan(token.start(), token.end()));
         }
@@ -254,7 +267,10 @@ public final class ExpressionParser {
                         throw error("Expected object key");
                     }
                     consume(TokenType.COLON);
-                    fields.put(key.text(), parseExpression());
+                    AstNode fieldValue = parseExpression();
+                    if (fields.putIfAbsent(key.text(), fieldValue) != null) {
+                        throw error("Duplicate object key '" + key.text() + "'");
+                    }
                     if (current.type() != TokenType.COMMA) break;
                     consume(TokenType.COMMA);
                 } while (true);
@@ -293,9 +309,13 @@ public final class ExpressionParser {
         }
 
         private ExpressionParseException error(String message) {
+            return error(message, current.start());
+        }
+
+        private ExpressionParseException error(String message, int position) {
             return new ExpressionParseException(
-                    message + " at offset " + current.start()
-                            + " near: " + sourceExcerpt(source, current.start()));
+                    message + " at offset " + position
+                            + " near: " + sourceExcerpt(source, position));
         }
     }
 

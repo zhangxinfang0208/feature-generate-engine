@@ -12,13 +12,10 @@ public record MappedFeatureSet(
         String version,
         List<FeatureDefinition> definitions,
         Set<String> targetFeatures,
-        List<FeatureOutputDescriptor> outputs,
-        Set<String> unresolvedOnlineScopes) {
+        List<FeatureOutputDescriptor> outputs) {
     public MappedFeatureSet {
         definitions = List.copyOf(definitions);
         targetFeatures = Collections.unmodifiableSet(new LinkedHashSet<>(targetFeatures));
         outputs = List.copyOf(outputs);
-        unresolvedOnlineScopes = Collections.unmodifiableSet(
-                new LinkedHashSet<>(unresolvedOnlineScopes));
     }
 }

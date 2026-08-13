@@ -72,7 +72,7 @@ public final class RuntimeNodeState {
             this.cacheHit = true;
             this.cacheSource = switch (kind) {
                 case SEQUENCE_INDEX -> "REQUEST_INDEX";
-                case CANDIDATE_KEY, SEQUENCE_COUNT -> "CANDIDATE_KEY";
+                case SEQUENCE_COUNT -> "SEQUENCE_COUNT";
             };
         }
     }

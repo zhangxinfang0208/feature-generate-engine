@@ -34,6 +34,7 @@ public final class RuntimeCache {
             RuntimeNodeState nodeState) {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(value, "value");
         Objects.requireNonNull(nodeState, "nodeState");
         values.put(key, value);
         mutableStats(kind).recordPut();

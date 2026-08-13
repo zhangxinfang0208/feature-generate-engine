@@ -3,6 +3,7 @@ package com.example.featuredag.config;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,7 +22,9 @@ public final class FeatureSetConfig {
     private final Map<String, Object> additionalProperties = new LinkedHashMap<>();
 
     public List<FeatureConfig> features() {
-        return features == null ? List.of() : List.copyOf(features);
+        if (features == null) return List.of();
+        // 容忍 null 元素：由 FeatureConfigLoader 产出带下标定位的校验错误，而非 List.copyOf 的裸 NPE
+        return Collections.unmodifiableList(new ArrayList<>(features));
     }
 
     public String featureSetName() {

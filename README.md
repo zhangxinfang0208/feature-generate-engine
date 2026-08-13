@@ -21,7 +21,7 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的首期算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-这 8 个算子当前都使用框架提供的 `SCALAR_ADAPTER` 批执行适配器，没有额外的 Native Batch 实现。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；`discrete`、`log_base`、`slice_by_indices`、`get_seq_length` 实测批开销反噬（0.1~0.3x），不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
 ## 目录结构
 

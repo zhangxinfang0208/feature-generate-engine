@@ -4,6 +4,11 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.ValueShape;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -26,11 +31,30 @@ public final class SourceNode extends AbstractLogicalNode {
         super(nodeId, NodeType.SOURCE, java.util.List.of(), outputType, entityScopes,
                 valueShape, featureName, null);
         this.featureName = featureName;
-        this.defaultValue = defaultValue;
+        this.defaultValue = immutableValue(defaultValue);
         this.sourceBinding = sourceBinding;
     }
 
     public String featureName() { return featureName; }
     public Object defaultValue() { return defaultValue; }
     public String sourceBinding() { return sourceBinding; }
+
+    /** 默认值按值深拷贝后存入节点（C7），Map/List 递归拷贝并包装，标量按引用。 */
+    private static Object immutableValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                copy.put(entry.getKey(), immutableValue(entry.getValue()));
+            }
+            return Collections.unmodifiableMap(copy);
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            for (Object element : list) {
+                copy.add(immutableValue(element));
+            }
+            return Collections.unmodifiableList(copy);
+        }
+        return value;
+    }
 }

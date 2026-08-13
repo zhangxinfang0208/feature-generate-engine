@@ -1,6 +1,5 @@
 package com.example.featuredag.planning;
 
-import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.NodeInput;
@@ -22,11 +21,10 @@ import java.util.Set;
  * small and semantic; planner-only facts have their own lifecycle.
  *
  * 规划层（L1→L2 之间）：只读分析逻辑 DAG（C8），
- * 引用计数、可达根、依赖维度、缓存资格与成本等事实全部外置在 NodePlanningMetadata，
+ * 引用计数、可达根、缓存资格与规模估算等事实全部外置在 NodePlanningMetadata，
  * 绝不回写逻辑节点，保证逻辑模型保持小且语义化。
  */
 public final class LogicalDagOptimizer {
-    private static final long DEFAULT_NODE_COST = 1L;
     private static final long ESTIMATED_SEQUENCE_BYTES = 4_096L;
     private static final long ESTIMATED_INDEX_BYTES = 2_048L;
     private static final long ESTIMATED_SCALAR_BYTES = 8L;
@@ -48,7 +46,6 @@ public final class LogicalDagOptimizer {
 
         for (String nodeId : dag.topologicalOrder()) {
             LogicalNode node = dag.node(nodeId);
-            long estimatedCost = DEFAULT_NODE_COST;
             boolean cacheEligible = true;
             long estimatedSize = switch (node.valueShape()) {
                 case SEQUENCE -> ESTIMATED_SEQUENCE_BYTES;
@@ -61,7 +58,6 @@ public final class LogicalDagOptimizer {
                 if (definition == null) {
                     cacheEligible = false;
                 } else {
-                    estimatedCost = definition.estimatedCost();
                     cacheEligible = definition.deterministic() && definition.sideEffectFree();
                 }
             }
@@ -69,26 +65,11 @@ public final class LogicalDagOptimizer {
             result.put(nodeId, new NodePlanningMetadata(
                     referenceCounts.getOrDefault(nodeId, 0),
                     reachableRoots.getOrDefault(nodeId, Set.of()),
-                    dependencyDimensions(node),
                     cacheEligible,
-                    estimatedCost,
                     estimatedSize));
         }
         // C8：分析产物是按逻辑节点索引的只读元数据表，物理层据此做融合/缓存决策
         return new OptimizedLogicalPlan(dag, new PlannerMetadata(result));
-    }
-
-    private static Set<DependencyDimension> dependencyDimensions(LogicalNode node) {
-        Set<DependencyDimension> dimensions = new LinkedHashSet<>();
-        for (EntityScope scope : node.entityScopes()) {
-            dimensions.add(switch (scope) {
-                case USER -> DependencyDimension.USER;
-                case SCENE -> DependencyDimension.SCENE;
-                case ITEM -> DependencyDimension.ITEM;
-            });
-        }
-        if (dimensions.isEmpty()) dimensions.add(DependencyDimension.CONSTANT);
-        return dimensions;
     }
 
     /**

@@ -8,6 +8,8 @@ import com.example.featuredag.logical.SourceNode;
 import com.example.featuredag.runtime.SequenceBlock;
 import com.example.featuredag.runtime.SequenceEvent;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -144,9 +146,36 @@ final class FeatureInputDecoder {
         return new SequenceEvent(
                 stringField(event, "itemId", "item_id"),
                 stringField(event, "industryId", "industry_id"),
-                numberField(sourceBinding, index, event, "timestamp").longValue(),
+                longField(sourceBinding, index, event, "timestamp"),
                 stringField(event, "eventType", "event_type"),
                 numberField(sourceBinding, index, event, "value").doubleValue());
+    }
+
+    /**
+     * 时间戳必须为整数值：非整型或非有限浮点一律拒绝，
+     * 避免 longValue() 把 1.5/NaN 静默截断为错误时间戳。
+     */
+    private static long longField(
+            String sourceBinding,
+            int index,
+            Map<?, ?> event,
+            String name) {
+        Number value = numberField(sourceBinding, index, event, name);
+        try {
+            if (value instanceof BigDecimal decimal) return decimal.longValueExact();
+            if (value instanceof BigInteger integer) return integer.longValueExact();
+        } catch (ArithmeticException error) {
+            throw invalidEvent(
+                    sourceBinding, index, "field " + name + " is out of long range: " + value);
+        }
+        double doubleValue = value.doubleValue();
+        long longValue = value.longValue();
+        if (!Double.isFinite(doubleValue) || doubleValue != longValue) {
+            throw invalidEvent(
+                    sourceBinding, index,
+                    "field " + name + " must be an integral number, got " + value);
+        }
+        return longValue;
     }
 
     private static String stringField(Map<?, ?> event, String name, String alias) {

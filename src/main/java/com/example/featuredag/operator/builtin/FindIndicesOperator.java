@@ -19,7 +19,7 @@ import java.util.Objects;
 public final class FindIndicesOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public FindIndicesOperator() {
-        super("find_indices", 2, 2, true, false, true);
+        super("find_indices", 2, 2, true, true);
     }
 
     @Override

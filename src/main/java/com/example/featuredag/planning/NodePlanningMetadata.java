@@ -11,18 +11,10 @@ import java.util.Set;
 public record NodePlanningMetadata(
         int referenceCount,
         Set<String> reachableRootNodeIds,
-        Set<DependencyDimension> dependencyDimensions,
         boolean cacheEligible,
-        long estimatedCost,
         long estimatedSizeBytes) {
 
     public NodePlanningMetadata {
         reachableRootNodeIds = Collections.unmodifiableSet(new LinkedHashSet<>(reachableRootNodeIds));
-        dependencyDimensions = Collections.unmodifiableSet(new LinkedHashSet<>(dependencyDimensions));
-    }
-
-    public static NodePlanningMetadata basic(int referenceCount, Set<String> roots) {
-        return new NodePlanningMetadata(
-                referenceCount, roots, Set.of(DependencyDimension.CONSTANT), true, 1L, 8L);
     }
 }

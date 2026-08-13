@@ -16,7 +16,7 @@ import java.util.List;
  */
 public final class LogBaseOperator extends AbstractBuiltinOperator {
     public LogBaseOperator() {
-        super("log_base", 3, 3, true, false, false);
+        super("log_base", 3, 3, true, false);
     }
 
     @Override

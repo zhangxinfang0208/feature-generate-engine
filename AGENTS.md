@@ -17,9 +17,9 @@
 - C5 节点去重与命名：节点按 canonical 签名合并；ID 使用 `source:`、`literal:`、`operator:`、`feature:` 前缀。
 - C6 声明与推断一致：声明类型、值形状和实体域必须与推断结果一致；唯一例外是声明 DOUBLE 可接受推断 INT。
 - C7 逻辑节点不可变：依赖通过 `NodeInput` 的节点 ID 与端口引用。
-- C8 规划层只读：引用计数、可达根、依赖维度、缓存资格、成本和大小放在 `NodePlanningMetadata`，融合由注册的物理改写规则匹配。
+- C8 规划层只读：引用计数、可达根、缓存资格和大小估算放在 `NodePlanningMetadata`，融合由注册的物理改写规则匹配。
 - C9 物理转换：每个未融合逻辑节点只产生一个物理输出槽；融合节点记录全部 consumed logical node IDs，并遵守共享节点与根节点安全约束。
-- C10 环境决策：执行阶段、模式、缓存策略及 Single/Batch Kernel 只能由环境、实体域、算子语义、成本、shape 和注册能力推导；核心层禁止按业务算子名特判。
+- C10 环境决策：执行阶段、模式、缓存策略及 Single/Batch Kernel 只能由环境、实体域、算子语义、shape 和注册能力推导；核心层禁止按业务算子名特判。
 
 ## 算子实现与扩展
 
@@ -29,7 +29,8 @@
 - 首期 8 个算子中仅 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；`discrete`、`log_base`、`slice_by_indices`、`get_seq_length` 不提供——实测批开销反噬（复用收益不足以覆盖 key 分配与 map 查找），由 `SingleLoopBatchOperatorKernel` 逐行适配，不得重新引入其原生 Batch 实现。新增算子默认不提供原生 Batch，须按「每行可省计算量 × 批内重复度」成本模型评估后再实现。
 - Batch 必须逐行等价于 Single，保持行数和顺序；Kernel 实例必须无请求状态且可并发复用。
 - `planning`、`physical`、`runtime` 禁止按业务算子名增加分支；DAG 模式通过 `PhysicalRewriteRule` 注册，专用算法通过 `PhysicalExecutorRegistry` 注册。
-- 缓存只允许 deterministic 且 sideEffectFree 的算子；缓存 key 必须覆盖域、具体序列视图和所有变化输入。
+- 缓存只允许 deterministic 且 sideEffectFree 的算子（`sideEffectFree()` 默认 false，内置算子经 `AbstractBuiltinOperator` 显式声明 true；新算子必须显式声明纯度）；缓存 key 必须覆盖域、具体序列视图和所有变化输入。
+- 通用候选批去重路径（CANDIDATE_KEY）与算子估算成本（`estimatedCost`）已移除：批内复用由原生 Batch 的 identity 键承担；`CachePolicy.CANDIDATE_KEY`/`ExecutionMode.CANDIDATE_KEY` 仅保留供融合改写标注，`CachePolicy.REQUEST` 为规划期预留标记、运行时一期不消费。
 - 详细约束见 `docs/architecture/operator-optimization-extension.md` 和 `docs/architecture/operator-single-batch-execution.md`。
 
 ## Java 版本约束

@@ -91,12 +91,11 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
         consumedNodeIds.addAll(intermediateNodeIds);
         consumedNodeIds.add(aggregate.nodeId());
 
-        long benefit = optimized.metadata().node(filter.nodeId()).estimatedCost()
-                + optimized.metadata().node(aggregate.nodeId()).estimatedCost();
+        // 成本收益门随 estimatedCost 一并移除；该规则一期作为预留扩展点，收益按固定值参与排序
         return Optional.of(new PhysicalRewrite(
                 RULE_ID,
                 priority(),
-                benefit,
+                1L,
                 aggregate.nodeId(),
                 consumedNodeIds,
                 List.of(sequenceInput.nodeId(), keyInput.nodeId()),

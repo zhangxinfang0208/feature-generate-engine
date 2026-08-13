@@ -18,7 +18,7 @@ import java.util.List;
  */
 public final class DiscreteOperator extends AbstractBuiltinOperator {
     public DiscreteOperator() {
-        super("discrete", 2, 2, true, true, false);
+        super("discrete", 2, 2, true, false);
     }
 
     @Override

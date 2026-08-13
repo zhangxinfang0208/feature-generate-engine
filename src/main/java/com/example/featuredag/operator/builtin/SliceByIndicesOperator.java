@@ -15,7 +15,7 @@ import java.util.List;
  */
 public final class SliceByIndicesOperator extends AbstractBuiltinOperator {
     public SliceByIndicesOperator() {
-        super("slice_by_indices", 2, 2, true, true, true);
+        super("slice_by_indices", 2, 2, true, true);
     }
 
     @Override

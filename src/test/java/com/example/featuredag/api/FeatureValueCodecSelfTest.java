@@ -93,7 +93,8 @@ public final class FeatureValueCodecSelfTest {
         assert offline.get("events") instanceof SequenceBlock : offline;
         SequenceBlock events = (SequenceBlock) offline.get("events");
         assert events.size() == 1 : events.size();
-        assert events.eventAtBaseIndex(0).industryId().equals("industry-1") : events;
+        // 事件行 Map 访问；纯透传与深度不可变契约的详细断言见 EventPassthroughCodecTest。
+        assert events.rowAtBaseIndex(0).get("item_id").equals("item-1") : events;
 
         try {
             decoder.decodeOffline(Map.of("request_time", List.of()));

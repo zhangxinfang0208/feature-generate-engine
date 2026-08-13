@@ -7,5 +7,5 @@ package com.example.featuredag.operator;
 public interface OperatorSequence {
     int size();
     Object elementAt(int index);
-    OperatorSequence filterByIndustry(String industryId);
+    OperatorSequence filterByColumn(String column, Object value);
 }

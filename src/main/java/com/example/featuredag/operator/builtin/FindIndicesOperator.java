@@ -60,19 +60,24 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
     }
 
     private List<Integer> find(Object rawSequence, Object target) {
-        List<?> sequence = OperatorSupport.asList(rawSequence, name(), "sequence");
+        int sequenceSize = OperatorSupport.sequenceSize(rawSequence, name(), "sequence");
         List<Integer> result = new ArrayList<Integer>();
-        for (int index = 0; index < sequence.size(); index++) {
-            if (Objects.equals(sequence.get(index), target)) result.add(index);
+        for (int index = 0; index < sequenceSize; index++) {
+            if (Objects.equals(
+                    OperatorSupport.sequenceElementAt(rawSequence, index, name(), "sequence"),
+                    target)) {
+                result.add(index);
+            }
         }
         return OperatorSupport.immutableList(result);
     }
 
     private Map<Object, List<Integer>> buildIndex(Object rawSequence) {
-        List<?> sequence = OperatorSupport.asList(rawSequence, name(), "sequence");
+        int sequenceSize = OperatorSupport.sequenceSize(rawSequence, name(), "sequence");
         Map<Object, List<Integer>> mutable = new LinkedHashMap<Object, List<Integer>>();
-        for (int index = 0; index < sequence.size(); index++) {
-            Object element = sequence.get(index);
+        for (int index = 0; index < sequenceSize; index++) {
+            Object element = OperatorSupport.sequenceElementAt(
+                    rawSequence, index, name(), "sequence");
             List<Integer> positions = mutable.get(element);
             if (positions == null) {
                 positions = new ArrayList<Integer>();

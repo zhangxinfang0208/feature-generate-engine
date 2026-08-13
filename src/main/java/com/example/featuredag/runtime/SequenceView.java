@@ -20,11 +20,15 @@ public final class SequenceView implements SequenceValue {
         this.selection = Objects.requireNonNull(selection, "selection");
     }
 
-    public static SequenceView filterByIndustry(SequenceValue source, String industry) {
+    public static SequenceView filterByColumn(
+            SequenceValue source,
+            String column,
+            Object value) {
+        Objects.requireNonNull(column, "column");
         List<Integer> selected = new ArrayList<>();
         for (int i = 0; i < source.size(); i++) {
             int baseIndex = source.baseIndexAt(i);
-            if (Objects.equals(source.baseBlock().industryAtBaseIndex(baseIndex), industry)) {
+            if (Objects.equals(source.baseBlock().columnValueAt(column, baseIndex), value)) {
                 selected.add(baseIndex);
             }
         }

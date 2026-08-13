@@ -45,6 +45,7 @@ L0 的 `OperatorSemantic` 不得引用 `PhysicalNode`、`CachePolicy`、`Physica
 
 - `deterministic()`：相同输入是否产生相同输出；
 - `sideEffectFree()`：是否没有外部副作用（默认 false，内置算子经 `AbstractBuiltinOperator` 显式声明 true）；
+- `supportsSequenceView()`：Single 与 Native Batch Kernel 是否可直接消费 `OperatorSequence`；
 - `semantics()`：可被规则消费的逻辑语义列表。
 
 当前标准语义：
@@ -81,6 +82,11 @@ Batch 输入只依赖 operator 层的 `BatchColumn`、`BatchLayout` 等只读协
 `OperatorInvocationPolicy` 枚举。运行时必须读取该枚举，可按
 输入载体选择计划已声明的 Single 或 Batch Kernel，但不得在请求阶段匹配融合规则或改写节点
 （C10）。详细契约见 `docs/architecture/operator-single-batch-execution.md`。
+
+`supportsSequenceView()` 是正确性承诺。物理计划把它固化为
+`sequenceViewInputMode=DIRECT|MATERIALIZE`：支持时保留零拷贝视图，不支持时由运行时按逻辑 selection
+物化为只读 `List`。算子层只能依赖 `OperatorSequence`，不得引用 runtime 的 `SequenceView`；运行时
+也不得按业务算子名决定输入策略。详细设计见 `docs/architecture/sequence-view-operator-support.md`。
 
 ## 4. 注册物理改写规则
 
@@ -133,7 +139,7 @@ SequenceCardinality(
 等值序列索引统一使用：
 
 - `SequenceKeyDomain`：逻辑字段域，例如 `event.industry`；
-- `SequenceKeyExtractor`：从 `SequenceBlock + baseIndex` 提取 key；
+- `SequenceKeyExtractor`：从 `SequenceBlock + baseIndex` 提取 key（事件为不可变 Map，按名取列）；
 - `SequenceIndexProvider`：绑定 keyDomain、提取器和查询 key 归一化；
 - `SequenceIndexRegistry`：按 keyDomain 注册 Provider；
 - `SequenceKeyIndex`：通用构建 `key -> baseIndex[]`；
@@ -144,12 +150,18 @@ SequenceCardinality(
 ```java
 indexRegistry.register(
         new SequenceKeyDomain("event.category"),
-        SequenceBlock::categoryAtBaseIndex,
+        (block, index) -> block.columnValueAt("category", index),
         String::valueOf);
 ```
 
 不得新增与算法完全相同、仅字段不同的 `SequenceCategoryIndex`、`SequenceTagIndex` 等类。
 只有时间范围索引、倒排索引、空间索引等数据结构或查询语义明显不同的场景，才应新增独立 Provider 实现。
+
+索引 key 与查询 key 必须使用同一归一化器：`SequenceIndexProvider.build` 默认在构建索引时对
+extractor 结果应用 `normalizeQueryKey`，`SequenceKeyCountExecutor` 对查询 key 同样调用
+`normalizeQueryKey`，保证类型与 null 语义对称（例如标准 Provider 的 `String.valueOf` 会把
+字段缺失的 null 与查询 null 统一归一化为字符串 `"null"`；若需要区分缺失与 null，应由 Provider
+自定义归一化规则）。
 
 索引必须遍历 `SequenceValue` 的逻辑下标并调用 `baseIndexAt`，不得直接扫描整个 `baseBlock`，否则会破坏
 `SequenceView` 的选择边界。

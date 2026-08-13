@@ -6,10 +6,7 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.SourceNode;
 import com.example.featuredag.runtime.SequenceBlock;
-import com.example.featuredag.runtime.SequenceEvent;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -116,89 +113,37 @@ final class FeatureInputDecoder {
     }
 
     /**
-     * 公共输入边界：EVENT_SEQUENCE 的普通 List 转为列式 SequenceBlock，
+     * 公共输入边界：EVENT_SEQUENCE 的普通 List 转为行式 SequenceBlock（事件 = 不可变 Map），
      * 使通用算子与序列索引融合共享同一种运行时表示（C1/C10）。
+     * 纯透传契约：只验证每个事件是 String key 的 Map，不改写、不转换任何业务字段；
+     * 深度防御复制与不可变化由 SequenceBlock 统一完成。
      */
     private static SequenceBlock decodeEventSequence(String sourceBinding, List<?> values) {
-        List<SequenceEvent> events = new ArrayList<>(values.size());
+        List<Map<String, Object>> events = new ArrayList<>(values.size());
         for (int index = 0; index < values.size(); index++) {
             Object value = values.get(index);
-            if (value instanceof SequenceEvent event) {
-                events.add(event);
-            } else if (value instanceof Map<?, ?> event) {
-                events.add(decodeEvent(sourceBinding, index, event));
-            } else {
+            if (!(value instanceof Map<?, ?>)) {
                 throw invalidEvent(
                         sourceBinding,
                         index,
-                        "expected SequenceEvent or Map, got " + typeName(value));
+                        "expected Map, got " + typeName(value));
             }
+            Map<?, ?> event = (Map<?, ?>) value;
+            for (Object key : event.keySet()) {
+                if (!(key instanceof String)) {
+                    throw invalidEvent(
+                            sourceBinding,
+                            index,
+                            "event field names must be strings, got " + typeName(key));
+                }
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> stringKeyed = (Map<String, Object>) event;
+            events.add(stringKeyed);
         }
         String sequenceId = sourceBinding + "#"
                 + Integer.toUnsignedString(System.identityHashCode(values));
         return new SequenceBlock(sequenceId, 0L, events);
-    }
-
-    private static SequenceEvent decodeEvent(
-            String sourceBinding,
-            int index,
-            Map<?, ?> event) {
-        return new SequenceEvent(
-                stringField(event, "itemId", "item_id"),
-                stringField(event, "industryId", "industry_id"),
-                longField(sourceBinding, index, event, "timestamp"),
-                stringField(event, "eventType", "event_type"),
-                numberField(sourceBinding, index, event, "value").doubleValue());
-    }
-
-    /**
-     * 时间戳必须为整数值：非整型或非有限浮点一律拒绝，
-     * 避免 longValue() 把 1.5/NaN 静默截断为错误时间戳。
-     */
-    private static long longField(
-            String sourceBinding,
-            int index,
-            Map<?, ?> event,
-            String name) {
-        Number value = numberField(sourceBinding, index, event, name);
-        try {
-            if (value instanceof BigDecimal decimal) return decimal.longValueExact();
-            if (value instanceof BigInteger integer) return integer.longValueExact();
-        } catch (ArithmeticException error) {
-            throw invalidEvent(
-                    sourceBinding, index, "field " + name + " is out of long range: " + value);
-        }
-        double doubleValue = value.doubleValue();
-        long longValue = value.longValue();
-        if (!Double.isFinite(doubleValue) || doubleValue != longValue) {
-            throw invalidEvent(
-                    sourceBinding, index,
-                    "field " + name + " must be an integral number, got " + value);
-        }
-        return longValue;
-    }
-
-    private static String stringField(Map<?, ?> event, String name, String alias) {
-        Object value = field(event, name, alias);
-        return value == null ? null : String.valueOf(value);
-    }
-
-    private static Number numberField(
-            String sourceBinding,
-            int index,
-            Map<?, ?> event,
-            String name) {
-        Object value = field(event, name, name);
-        if (value instanceof Number number) return number;
-        throw invalidEvent(
-                sourceBinding,
-                index,
-                "field " + name + " must be numeric, got " + typeName(value));
-    }
-
-    private static Object field(Map<?, ?> event, String name, String alias) {
-        if (event.containsKey(name)) return event.get(name);
-        return event.get(alias);
     }
 
     private static IllegalArgumentException invalidEvent(

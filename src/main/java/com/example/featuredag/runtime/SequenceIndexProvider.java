@@ -12,6 +12,7 @@ public interface SequenceIndexProvider {
     }
 
     default IndexValue build(SequenceValue sequence) {
-        return SequenceKeyIndex.build(sequence, keyExtractor());
+        // 索引 key 与查询 key 共用同一归一化器，保证类型与 null 语义对称。
+        return SequenceKeyIndex.build(sequence, keyExtractor(), this::normalizeQueryKey);
     }
 }

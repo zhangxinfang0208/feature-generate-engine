@@ -16,11 +16,11 @@ public final class SingleLoopBatchOperatorKernel implements BatchOperatorKernel 
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         List<Object> result = new ArrayList<>(call.rowCount());
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
-            List<Object> arguments = new ArrayList<>(call.arguments().size());
-            for (BatchColumn argument : call.arguments()) {
-                arguments.add(argument.valueAt(rowIndex));
-            }
             try {
+                List<Object> arguments = new ArrayList<>(call.arguments().size());
+                for (BatchColumn argument : call.arguments()) {
+                    arguments.add(argument.valueAt(rowIndex));
+                }
                 result.add(singleKernel.evaluate(arguments));
             } catch (RuntimeException error) {
                 throw new BatchOperatorEvaluationException(rowIndex, error);

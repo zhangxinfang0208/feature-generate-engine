@@ -22,6 +22,13 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
 
     @Override
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+        // 事件元素无既定字符串契约：构图期即拒绝 EVENT_SEQUENCE，运行时元素检查为防御。
+        for (OperatorInputMetadata input : inputs) {
+            if (input.outputType() == DataType.EVENT_SEQUENCE) {
+                throw new IllegalArgumentException(
+                        "zip_concat does not support event sequence elements");
+            }
+        }
         return OperatorSupport.fixedInference(inputs, DataType.STRING, ValueShape.SEQUENCE);
     }
 
@@ -83,16 +90,17 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
             List<Object> arguments,
             int sequenceCount,
             String delimiter) {
-        List<List<?>> sequences = new ArrayList<List<?>>(sequenceCount);
+        List<Object> sequences = new ArrayList<Object>(sequenceCount);
         int size = -1;
         for (int index = 0; index < sequenceCount; index++) {
-            List<?> sequence = OperatorSupport.asList(
-                    arguments.get(index), name(), "sequence " + index);
-            if (size < 0) size = sequence.size();
-            if (sequence.size() != size) {
+            Object sequence = arguments.get(index);
+            int sequenceSize = OperatorSupport.sequenceSize(
+                    sequence, name(), "sequence " + index);
+            if (size < 0) size = sequenceSize;
+            if (sequenceSize != size) {
                 throw new IllegalArgumentException(
                         "zip_concat requires sequences of equal length; sequence " + index
-                                + " has length " + sequence.size() + ", expected " + size);
+                                + " has length " + sequenceSize + ", expected " + size);
             }
             sequences.add(sequence);
         }
@@ -100,8 +108,16 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
         for (int row = 0; row < size; row++) {
             StringBuilder joined = new StringBuilder();
             for (int column = 0; column < sequences.size(); column++) {
+                Object element = OperatorSupport.sequenceElementAt(
+                        sequences.get(column), row, name(), "sequence " + column);
+                if (element instanceof Map<?, ?>) {
+                    // 事件元素无既定字符串契约，拒绝拼接，避免把事件结构 dump 固化为特征值。
+                    throw new IllegalArgumentException(
+                            "zip_concat does not support event sequence elements"
+                                    + " (column " + column + ", row " + row + ")");
+                }
                 if (column > 0) joined.append(delimiter);
-                joined.append(String.valueOf(sequences.get(column).get(row)));
+                joined.append(String.valueOf(element));
             }
             result.add(joined.toString());
         }

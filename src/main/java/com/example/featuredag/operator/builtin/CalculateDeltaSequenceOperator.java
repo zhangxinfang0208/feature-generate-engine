@@ -13,15 +13,20 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public CalculateDeltaSequenceOperator() {
-        super("calc_delta_seq", 2, 2, true, true);
+        super("calc_delta_seq", 2, 2, true, false);
     }
 
     @Override
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+        // 事件序列不做隐式数值投影：构图期即拒绝 EVENT_SEQUENCE，运行时元素检查为防御。
+        if (inputs.get(0).outputType() == DataType.EVENT_SEQUENCE) {
+            throw new IllegalArgumentException(
+                    "calc_delta_seq requires numeric elements; event sequences are not"
+                            + " supported (no implicit value projection)");
+        }
         return OperatorSupport.fixedInference(inputs, DataType.DOUBLE, ValueShape.SEQUENCE);
     }
 
@@ -63,8 +68,15 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
         List<?> sequence = OperatorSupport.asList(rawSequence, name(), "sequence");
         List<Double> result = new ArrayList<Double>(sequence.size());
         for (int index = 0; index < sequence.size(); index++) {
+            Object element = sequence.get(index);
+            if (element instanceof Map<?, ?>) {
+                // 事件序列不做隐式数值投影：事件元素需先显式投影为数值列后才能参与差值计算。
+                throw new IllegalArgumentException(
+                        "calc_delta_seq requires numeric elements; event sequences are not"
+                                + " supported (no implicit value projection)");
+            }
             double value = OperatorSupport.finiteDouble(
-                    sequence.get(index), "calc_delta_seq element at index " + index);
+                    element, "calc_delta_seq element at index " + index);
             result.add(value - base);
         }
         return OperatorSupport.immutableList(result);

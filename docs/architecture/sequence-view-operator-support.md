@@ -1,12 +1,26 @@
 # SequenceView 算子支持落地方案
 
+## 0. 实施状态
+
+本方案已在通用算子链路落地：`PhysicalPlanner` 将能力固化为
+`SequenceViewInputMode.DIRECT/MATERIALIZE`，`DagRuntime` 在 Single 与 Batch Kernel 共同入口执行
+适配，内置算子通过 `OperatorSequence` 统一读取逻辑视图。当前直接支持视图的首期算子为
+`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`；
+`calc_delta_seq` 保持物化模式，并拒绝事件元素（不做隐式数值投影，见第 2.4 节）。
+
+事件模型已泛化（2026-08-13）：固定 5 字段的 `SequenceEvent` record 已删除，事件统一为不可变
+`Map<String, Object>`；`SequenceBlock` 改为行式存储；`OperatorSequence.filterByColumn(column,
+value)` 取代 `filterByIndustry`。输入输出采用纯透传契约：输入边界不改写、不转换任何业务字段，
+Map/List 深度防御复制为不可变容器，输出按输入字段名、值与顺序递归物化（见第 2.4 节）。
+
 ## 1. 背景与目标
 
-当前项目已经具备三项彼此相关但尚未闭环的能力：
+方案提出时，项目已经具备三项彼此相关但尚未闭环的能力：
 
 - `operator.OperatorSequence` 是算子层可见的最小序列读取协议；
-- `runtime.SequenceBlock` 与 `runtime.SequenceView` 是运行时列式序列及零拷贝视图实现；
-- `OperatorDefinition.supportsSequenceView()` 是算子注册元数据，但当前没有规划或运行时代码消费。
+- `runtime.SequenceBlock` 与 `runtime.SequenceView` 是运行时行式序列（事件 = 不可变 Map）及
+  零拷贝视图实现；
+- `OperatorDefinition.supportsSequenceView()` 当时只是算子注册元数据，没有规划或运行时代码消费。
 
 现状还存在声明与实现不一致：部分声明支持视图的算子仍只接受 `List`，而
 `get_seq_length`、`count_distinct` 已能通过 `OperatorSequence` 读取视图却声明为不支持。
@@ -23,14 +37,16 @@
 
 - 本方案不定义算子是否“产生” `SequenceView`；输出保留视图与输入消费能力是两个概念；
 - 不把所有普通 Java `List` 转换成 `SequenceBlock`；
-- 不改变 `SequenceBlock`、`SequenceView` 的公开物化格式；
+- 不为算子定义任何事件字段读取语义：算子不解析事件字段，事件属性只由输入输出边界透传
+  （等值/去重按元素对象完整内容，见第 2.4 节）；
 - 不为任何业务算子在 `planning`、`physical` 或 `runtime` 中增加名称分支。
 
 ## 2. 术语与契约
 
 ### 2.1 OperatorSequence
 
-`OperatorSequence` 位于 `operator` 层，暴露 `size()`、`elementAt(int)` 等最小能力。
+`OperatorSequence` 位于 `operator` 层，暴露 `size()`、`elementAt(int)`、
+`filterByColumn(String, Object)` 等最小能力，不固化任何业务字段。
 首期算子只能依赖该协议或 JDK 集合协议，不得引用 `runtime.SequenceView`、
 `runtime.SequenceBlock` 和 `runtime.SequenceValue`，以保持 L0 到 runtime 的单向依赖（C1）。
 
@@ -60,6 +76,37 @@
 第一版保留布尔值，是因为当前 8 个标准算子的序列参数可以统一采用同一策略。若未来出现
 同一算子只有部分序列参数、或只有某个 Kernel 能直接消费视图，须升级为按参数、按 Kernel
 声明的能力模型，见第 11 节。
+
+### 2.4 事件模型与纯透传契约
+
+事件元素不再使用固定字段的 `SequenceEvent` record，而是不可变 `Map<String, Object>`
+（属性全集）。`SequenceBlock` 按行存储这些 Map，构造时对 Map/List 做**递归防御复制**为
+不可变容器，其余类型按标量透传（调用方不得传入可变业务对象）；
+`SequenceValue.elementAt(i)` 返回对应行 Map；`filterByColumn` 经
+`SequenceBlock.columnValueAt` 按名取列，核心协议不固化任何业务字段。
+
+输入边界（`FeatureInputDecoder`）只验证：
+
+- 每个事件必须是 Map；
+- 每个 key 必须是 String；
+- 深度防御复制与不可变化由 `SequenceBlock` 统一完成。
+
+输入边界**不识别、不改写、不转换任何业务字段**：不做 `item_id→itemId` 之类别名归一化，不为
+名为 `timestamp` 的字段强制转换类型，字段名、字段值、迭代顺序与输入保持一致。字段提取、别名、
+类型校验和查询 key 归一化属于字段访问器/索引 Provider 职责，不属于通用事件输入边界。
+
+输出边界（`ExternalValueMaterializer`）直接透传事件行 Map（已深度不可变），公共 API 输出与
+输入结构对称：字段名、值与顺序不变。
+
+由此产生的算子语义：
+
+- 等值口径：`find_indices` 目标匹配与 `count_distinct` 去重按 Map 内容相等（全属性相等，
+  含嵌套容器；深度不可变保证哈希在执行期稳定）；
+- `calc_delta_seq` 与 `zip_concat` 在 **infer 构图期**拒绝 `EVENT_SEQUENCE` 输入（空序列也
+  失败），运行时元素检查保留为防御——不做隐式数值投影、不把事件结构 dump 固化为特征值；
+- 序列索引的索引 key 与查询 key 使用**同一归一化器**（见
+  `docs/architecture/operator-optimization-extension.md`），字段缺失与 null 的语义由 Provider
+  的归一化规则统一决定。
 
 ## 3. 分层设计
 
@@ -167,8 +214,9 @@ final class SequenceViewArgumentAdapter {
 这里必须判断 `OperatorSequence`，不能在通用执行器中判断具体 `SequenceView` 类型。这样既保持
 C1/C10，又保证完整 `SequenceBlock` 与局部 `SequenceView` 使用相同算子输入协议。
 
-不能复用 `ExternalValueMaterializer`：它面向公共 API，会把 `SequenceEvent` 转成 `Map`；Kernel
-边界适配必须保留原始元素对象。
+不能复用 `ExternalValueMaterializer`：它面向公共 API 的编码语义（不可变集合包装、递归物化），
+与 Kernel 边界适配不同。事件元素本身已是不可变 Map，Kernel 边界适配仍保留原始元素对象，
+不复制元素。
 
 ### 5.2 Single 路径
 
@@ -251,12 +299,13 @@ static Object sequenceElementAt(
 | `find_indices` | `true` | Single 扫描和 Native Batch 建索引都通过统一序列访问函数读取 |
 | `get_seq_length` | `true` | 已通过 `OperatorSequence.size()` 支持，修正声明 |
 | `count_distinct` | `true` | 已通过 `OperatorSequence` 遍历，修正声明并验证 Native Batch |
-| `zip_concat` | `true` | 每个序列参数都通过统一序列访问函数读取；尾部配置 Map 保持原语义 |
-| `calc_delta_seq` | 暂定 `false` | 当前 `SequenceView` 元素是 `SequenceEvent`，而算子要求数值元素；未定义事件数值投影前不得宣称直接支持 |
+| `zip_concat` | `true` | 每个序列参数都通过统一序列访问函数读取；尾部配置 Map 保持原语义；事件 Map 元素拒绝拼接并明确报错 |
+| `calc_delta_seq` | `false` | 元素必须是数值；事件 Map 元素保持拒绝并明确报错，不做隐式 value 投影 |
 
 `calc_delta_seq` 若未来需要支持事件视图，应先显式定义输入投影协议，例如增加专门的数值序列抽象或
-上游投影算子。不能在 `calc_delta_seq` 中隐式取 `SequenceEvent.value()`，否则普通数值序列与事件
-序列会产生隐藏的双重语义。
+上游投影算子。不能在 `calc_delta_seq` 中隐式取事件 Map 的 `value` 字段，否则普通数值序列与事件
+序列会产生隐藏的双重语义。同理，`zip_concat` 不隐式投影事件字段：事件无既定字符串契约，结构
+dump 会随字段集合变化静默漂移，故直接拒绝。
 
 声明为 `true` 的 Native Batch 实现还必须检查其批内复用 key：视图参数按对象身份区分，不能用
 `baseBlock` 身份替代具体视图身份。

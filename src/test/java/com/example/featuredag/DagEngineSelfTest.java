@@ -59,11 +59,13 @@ public final class DagEngineSelfTest {
 
     public static void main(String[] args) {
         FeatureValueCodecSelfTest.run();
+        ModelFeatureSetInitialOperatorsSelfTest.run();
         testInitialOperatorRegistry();
         testInitialOperatorEvaluation();
         testInitialOperatorNativeBatchEquivalence();
         testNativeBatchFailureRow();
-        testFindIndicesNativeBatchReusesSequenceScan();
+        testFindIndicesNativeBatchUsesIndexWhenProfitable();
+        testFindIndicesNativeBatchScansWhenIndexIsNotProfitable();
         testInitialOperatorValidation();
         testInitialOperatorExpressionsBuildAndInfer();
         testInitialOperatorPublicApiDemos();
@@ -212,28 +214,64 @@ public final class DagEngineSelfTest {
         assert failure.getMessage().contains("finite") : failure.getMessage();
     }
 
-    private static void testFindIndicesNativeBatchReusesSequenceScan() {
-        CountingList<String> sequence = new CountingList<>(List.of("a", "b", "a", "c"));
-        BatchOperatorCall call = batchCall(List.of(
-                batchRow(sequence, "a"),
-                batchRow(sequence, "b"),
-                batchRow(sequence, "a"),
-                batchRow(sequence, "c")), BatchDomain.ONLINE_CANDIDATE);
+    private static void testFindIndicesNativeBatchUsesIndexWhenProfitable() {
+        List<HashCountingValue> values = new ArrayList<>();
+        for (int index = 0; index < 200; index++) {
+            values.add(new HashCountingValue("value-" + (index % 16)));
+        }
+        CountingList<HashCountingValue> sequence = new CountingList<>(values);
+        List<List<Object>> rows = new ArrayList<>();
+        for (int row = 0; row < 64; row++) {
+            rows.add(batchRow(sequence, new HashCountingValue("value-" + (row % 16))));
+        }
+        BatchOperatorCall call = batchCall(
+                rows, new FixedBatchLayout(BatchDomain.ONLINE_CANDIDATE, rows.size(), rows.size()));
 
         BatchOperatorResult result = OperatorRegistry.standard().evaluateBatch(
                 "find_indices", call, BatchKernelKind.NATIVE);
-        List<List<Integer>> expected = List.of(
-                List.of(0, 2), List.of(1), List.of(0, 2), List.of(3));
-        for (int row = 0; row < expected.size(); row++) {
-            assert expected.get(row).equals(result.values().valueAt(row)) : row;
+        for (int row = 0; row < rows.size(); row++) {
+            @SuppressWarnings("unchecked")
+            List<Integer> positions = (List<Integer>) result.values().valueAt(row);
+            assert positions.size() == 13 || positions.size() == 12 : row;
         }
-        assert sequence.getCount() == sequence.size() * 2
-                : "Expected one scan per group, getCount=" + sequence.getCount();
+        assert sequence.getCount() == sequence.size()
+                : "Expected one index build, getCount=" + sequence.getCount();
+        assert HashCountingValue.hashCount() > 0
+                : "Expected profitable Batch path to build a hash index";
+    }
+
+    private static void testFindIndicesNativeBatchScansWhenIndexIsNotProfitable() {
+        HashCountingValue.resetHashCount();
+        List<HashCountingValue> values = new ArrayList<>();
+        for (int index = 0; index < 50; index++) {
+            values.add(new HashCountingValue("value-" + (index % 8)));
+        }
+        CountingList<HashCountingValue> sequence = new CountingList<>(values);
+        List<List<Object>> rows = new ArrayList<>();
+        for (int row = 0; row < 64; row++) {
+            rows.add(batchRow(sequence, new HashCountingValue("value-" + (row % 8))));
+        }
+        BatchOperatorCall call = batchCall(
+                rows, new FixedBatchLayout(BatchDomain.ONLINE_CANDIDATE, rows.size(), rows.size()));
+
+        BatchOperatorResult result = OperatorRegistry.standard().evaluateBatch(
+                "find_indices", call, BatchKernelKind.NATIVE);
+        assert result.values().size() == rows.size();
+        assert sequence.getCount() == sequence.size() * rows.size()
+                : "Expected scalar scans, getCount=" + sequence.getCount();
+        assert HashCountingValue.hashCount() == 0
+                : "Unprofitable Batch path must not build a hash index";
     }
 
     private static BatchOperatorCall batchCall(
             List<List<Object>> rows,
             BatchDomain domain) {
+        return batchCall(rows, new FixedBatchLayout(domain, rows.size(), 2));
+    }
+
+    private static BatchOperatorCall batchCall(
+            List<List<Object>> rows,
+            BatchLayout layout) {
         int argumentCount = rows.get(0).size();
         List<BatchColumn> columns = new ArrayList<>();
         for (int argument = 0; argument < argumentCount; argument++) {
@@ -241,8 +279,7 @@ public final class DagEngineSelfTest {
             for (List<Object> row : rows) values.add(row.get(argument));
             columns.add(new ListBatchColumn(values));
         }
-        return new BatchOperatorCall(
-                new FixedBatchLayout(domain, rows.size()), columns);
+        return new BatchOperatorCall(layout, columns);
     }
 
     private static List<Object> batchRow(Object... values) {
@@ -413,15 +450,48 @@ public final class DagEngineSelfTest {
 
     private record FixedBatchLayout(
             BatchDomain domain,
-            int rowCount) implements BatchLayout {
+            int rowCount,
+            int candidatesPerGroup) implements BatchLayout {
         @Override
         public int groupIndexAt(int rowIndex) {
-            return domain == BatchDomain.ONLINE_CANDIDATE ? rowIndex / 2 : -1;
+            return domain == BatchDomain.ONLINE_CANDIDATE
+                    ? rowIndex / candidatesPerGroup : -1;
         }
 
         @Override
         public int indexInGroupAt(int rowIndex) {
-            return domain == BatchDomain.ONLINE_CANDIDATE ? rowIndex % 2 : rowIndex;
+            return domain == BatchDomain.ONLINE_CANDIDATE
+                    ? rowIndex % candidatesPerGroup : rowIndex;
+        }
+    }
+
+    private static final class HashCountingValue {
+        private static int hashCount;
+        private final String value;
+
+        private HashCountingValue(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof HashCountingValue)) return false;
+            return value.equals(((HashCountingValue) other).value);
+        }
+
+        @Override
+        public int hashCode() {
+            hashCount++;
+            return value.hashCode();
+        }
+
+        private static int hashCount() {
+            return hashCount;
+        }
+
+        private static void resetHashCount() {
+            hashCount = 0;
         }
     }
 

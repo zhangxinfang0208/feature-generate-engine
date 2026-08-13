@@ -18,14 +18,6 @@ import java.util.Objects;
 
 public final class FindIndicesOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
-    /**
-     * 相对成本单位由性能报告校准：建索引比线性扫描重，单次查表还包含 key/Map 开销。
-     * 保留 20% 的收益余量，避免在临界点因为估算误差选择原生索引路径。
-     */
-    private static final long INDEX_BUILD_COST_PER_ELEMENT = 4L;
-    private static final long INDEX_LOOKUP_COST_PER_ROW = 64L;
-    private static final long INDEX_SETUP_COST = 4_096L;
-
     public FindIndicesOperator() {
         super("find_indices", 2, 2, true, true);
     }
@@ -42,48 +34,20 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
 
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> sequences = new ArrayList<Object>(call.rowCount());
-        List<OperatorSupport.IdentityBatchKey> rowKeys =
-                new ArrayList<OperatorSupport.IdentityBatchKey>(call.rowCount());
-        Map<OperatorSupport.IdentityBatchKey, Integer> occurrenceCounts =
-                new LinkedHashMap<OperatorSupport.IdentityBatchKey, Integer>();
-
-        // 先统计本批真实复用度；这里只选择 Native Kernel 内部算法，不改变物理计划路由（C10）。
-        for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
-            try {
-                Object sequence = call.arguments().get(0).valueAt(rowIndex);
-                OperatorSupport.IdentityBatchKey key = OperatorSupport.identityBatchKey(
-                        call.layout().groupIndexAt(rowIndex), sequence);
-                Integer occurrenceCount = occurrenceCounts.get(key);
-                occurrenceCounts.put(key, occurrenceCount == null ? 1 : occurrenceCount + 1);
-                sequences.add(sequence);
-                rowKeys.add(key);
-            } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
-            }
-        }
-
         List<Object> result = new ArrayList<Object>(call.rowCount());
         Map<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>> indexes =
                 new LinkedHashMap<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
             try {
-                Object sequence = sequences.get(rowIndex);
-                OperatorSupport.IdentityBatchKey key = rowKeys.get(rowIndex);
-                Object target = call.arguments().get(1).valueAt(rowIndex);
-                int sequenceSize = OperatorSupport.asList(
-                        sequence, name(), "sequence").size();
-
-                if (!shouldBuildIndex(occurrenceCounts.get(key), sequenceSize)) {
-                    result.add(find(sequence, target));
-                    continue;
-                }
-
+                Object sequence = call.arguments().get(0).valueAt(rowIndex);
+                OperatorSupport.IdentityBatchKey key = OperatorSupport.identityBatchKey(
+                        call.layout().groupIndexAt(rowIndex), sequence);
                 Map<Object, List<Integer>> index = indexes.get(key);
                 if (index == null) {
                     index = buildIndex(sequence);
                     indexes.put(key, index);
                 }
+                Object target = call.arguments().get(1).valueAt(rowIndex);
                 List<Integer> positions = index.get(target);
                 result.add(positions == null
                         ? Collections.<Integer>emptyList()
@@ -93,32 +57,6 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
             }
         }
         return new BatchOperatorResult(new ListBatchColumn(result));
-    }
-
-    private static boolean shouldBuildIndex(int occurrenceCount, int sequenceSize) {
-        if (occurrenceCount <= 1 || sequenceSize <= 0) return false;
-
-        long scalarCost = saturatedMultiply(occurrenceCount, sequenceSize);
-        long indexCost = saturatedAdd(
-                saturatedAdd(
-                        saturatedMultiply(INDEX_BUILD_COST_PER_ELEMENT, sequenceSize),
-                        saturatedMultiply(INDEX_LOOKUP_COST_PER_ROW, occurrenceCount)),
-                INDEX_SETUP_COST);
-
-        // indexCost <= scalarCost * 80%：预计至少节省 20% 才承担索引分配成本。
-        return saturatedMultiply(indexCost, 5L)
-                <= saturatedMultiply(scalarCost, 4L);
-    }
-
-    private static long saturatedMultiply(long left, long right) {
-        if (left == 0L || right == 0L) return 0L;
-        if (left > Long.MAX_VALUE / right) return Long.MAX_VALUE;
-        return left * right;
-    }
-
-    private static long saturatedAdd(long left, long right) {
-        if (left > Long.MAX_VALUE - right) return Long.MAX_VALUE;
-        return left + right;
     }
 
     private List<Integer> find(Object rawSequence, Object target) {

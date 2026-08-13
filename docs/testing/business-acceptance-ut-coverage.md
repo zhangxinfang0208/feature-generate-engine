@@ -7,11 +7,11 @@
 | `discrete` | 已覆盖 | 已覆盖 | 边界非递增 | INT / SCALAR | SCALAR_ADAPTER |
 | `log_base` | 已覆盖 | 已覆盖 | 非法底数 | DOUBLE / SCALAR | SCALAR_ADAPTER |
 | `slice_by_indices` | 已覆盖 | 已覆盖 | 实现内校验 | 保留输入序列类型 / SEQUENCE | SCALAR_ADAPTER |
-| `find_indices` | 已覆盖 | 已覆盖 | 实现内校验 | INT / SEQUENCE | SCALAR_ADAPTER |
+| `find_indices` | 已覆盖 | 已覆盖 | 实现内校验 | INT / SEQUENCE | NATIVE |
 | `get_seq_length` | 已覆盖 | 已覆盖 | 实现内校验 | INT / SCALAR | SCALAR_ADAPTER |
-| `count_distinct` | 已覆盖 | 已覆盖 | 实现内校验 | INT / SCALAR | SCALAR_ADAPTER |
-| `zip_concat` | 已覆盖 | 已覆盖 | 序列不等长 | STRING / SEQUENCE | SCALAR_ADAPTER |
-| `calc_delta_seq` | 已覆盖 | 已覆盖 | 实现内校验 | DOUBLE / SEQUENCE | SCALAR_ADAPTER |
+| `count_distinct` | 已覆盖 | 已覆盖 | 实现内校验 | INT / SCALAR | NATIVE |
+| `zip_concat` | 已覆盖 | 已覆盖 | 序列不等长 | STRING / SEQUENCE | NATIVE |
+| `calc_delta_seq` | 已覆盖 | 已覆盖 | 实现内校验 | DOUBLE / SEQUENCE | NATIVE |
 
 此外，`FeatureValueCodecSelfTest` 继续覆盖公共输入/输出值编解码。性能、业务平台接入、模型发布、容量和 SLA 不以本地 UT 冒充通过。
 

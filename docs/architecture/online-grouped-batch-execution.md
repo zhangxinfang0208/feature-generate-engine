@@ -94,7 +94,7 @@ ONLINE Batch 下：
 
 ## 缓存与专用执行器隔离
 
-`CANDIDATE_KEY` 的缓存键包含 `groupIndex`。即使不同 user 的参数值相同，也不会把一个 group 的候选缓存记录作为另一个 group 的命中。
+批内复用的身份键（原生 Batch 的 identity 键与融合执行器的缓存键）都包含 `groupIndex`。即使不同 user 的参数值相同，也不会把一个 group 的缓存记录作为另一个 group 的命中。
 
 `SequenceKeyCountExecutor` 按 group 执行：
 

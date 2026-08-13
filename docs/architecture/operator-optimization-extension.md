@@ -12,7 +12,7 @@
 
 1. 算子名称只用于表达式解析、注册表查找和通用算子执行，不得作为规划或物理优化条件。
 2. 算子在 L0 声明“它是什么”；物理规则声明“哪些 DAG 模式可以安全改写”；运行时执行器声明“具体怎么算”。
-3. `LogicalDagOptimizer` 只读计算引用数、可达根、依赖维度、缓存资格和成本，不得修改逻辑 DAG（C8）。
+3. `LogicalDagOptimizer` 只读计算引用数、可达根、缓存资格和大小估算，不得修改逻辑 DAG（C8）。
 4. 融合只能消费非根、单引用的中间节点；规则必须显式列出所有被消费节点和外部输入（C9）。
 5. 执行阶段、模式、缓存和物化策略必须在物理计划构建期确定，运行时只执行计划（C10）。
 6. 注册失败、执行器缺失或索引 Provider 缺失必须 fail-fast，不得静默回退为不同语义。
@@ -21,7 +21,7 @@
 
 ```text
 OperatorDefinition + OperatorSemantic
-    描述算子行为、纯度、成本和逻辑语义
+    描述算子行为、纯度和逻辑语义
                     ↓
 LogicalDagOptimizer + NodePlanningMetadata
     计算与业务名称无关的规划事实
@@ -44,8 +44,7 @@ L0 的 `OperatorSemantic` 不得引用 `PhysicalNode`、`CachePolicy`、`Physica
 `OperatorDefinition` 除了名称、参数数量、推断和求值函数，还提供：
 
 - `deterministic()`：相同输入是否产生相同输出；
-- `sideEffectFree()`：是否没有外部副作用；
-- `estimatedCost()`：规划期使用的相对成本；
+- `sideEffectFree()`：是否没有外部副作用（默认 false，内置算子经 `AbstractBuiltinOperator` 显式声明 true）；
 - `semantics()`：可被规则消费的逻辑语义列表。
 
 当前标准语义：
@@ -161,20 +160,15 @@ indexRegistry.register(
 
 逻辑 canonical 去重和物理 slot 已保证同一个节点只计算一次。`referenceCount > 1` 用于判断共享和融合安全，
 不代表应再次添加节点结果缓存。ONLINE 的 `REQUEST_SHARED` 节点只执行一次，结果保存在请求级
-`ExecutionContext.resultSlots` 中；这就是当前 `CachePolicy.REQUEST` 的执行实现。它不产生真实缓存 lookup，
-因此不计入 `RuntimeCache` 的命中率。
+`ExecutionContext.resultSlots` 中；规划器为其标记 `CachePolicy.REQUEST`（预留语义），运行时通过共享
+slot 自然复用，不产生真实缓存 lookup，因此不计入 `RuntimeCache` 的命中率。
 
-### 7.2 候选 key 缓存
+### 7.2 候选批内复用
 
-ONLINE 候选批节点满足以下条件时，可由 Planner 自动选择 `CANDIDATE_KEY`：
-
-- 算子确定性且无副作用；
-- 节点依赖 ITEM；
-- 估算成本达到阈值；
-- 运行时参数能够形成稳定缓存 key。
-
-`DagRuntime` 对通用算子按实际参数元组去重，只计算唯一参数组合，再映射回原候选顺序。
-非确定性或有副作用算子必须使用 `CachePolicy.NONE`。
+通用候选批去重路径（`CANDIDATE_KEY`）已移除：批内重复计算由原生 Batch 的 identity 键复用消除，
+未提供原生 Batch 的算子逐行计算。`CachePolicy.CANDIDATE_KEY`/`ExecutionMode.CANDIDATE_KEY`
+仅保留供融合改写（`CountAfterKeyedSequenceFilterRule`）标注融合执行器节点，不再由 Planner 授予
+普通算子。非确定性或有副作用算子仍必须使用 `CachePolicy.NONE`。
 
 ### 7.3 索引缓存
 
@@ -197,7 +191,7 @@ keyDomain + concrete SequenceValue + normalizedKey
 
 当前 `ExecutionContext` 生命周期等于一次 `generate`：
 
-- `REQUEST` 与 `CANDIDATE_KEY` 仅在当前请求内有效；
+- `REQUEST` 为规划期预留标记，运行时一期不消费；融合改写节点保留 `CANDIDATE_KEY` 标注；
 - 不允许跨请求持有 `SequenceValue`；
 - `USER_GROUP` 需要单独的离线批上下文和明确清理边界，未实现前不得声称具有跨行缓存能力。
 
@@ -207,7 +201,7 @@ keyDomain + concrete SequenceValue + normalizedKey
 ## 8. 新增优化的标准流程
 
 1. 为算子实现正确的推断和普通 Runtime evaluator；普通路径必须先可执行。
-2. 注册确定性、纯度、成本和逻辑语义。
+2. 注册确定性、纯度和逻辑语义。
 3. 判断现有通用改写规则能否匹配；能匹配时不要新增规则。
 4. 若算法等价关系不同，新增独立 `PhysicalRewriteRule`。
 5. 优先复用现有专用执行器；确需新算法时注册新的 `PhysicalExecutor`。
@@ -236,6 +230,6 @@ keyDomain + concrete SequenceValue + normalizedKey
 - 禁止在 `LogicalDagOptimizer`、`PhysicalPlanner`、`DagRuntime` 中新增业务算子名判断。
 - 禁止让 `OperatorSemantic` 引用物理或运行时类型。
 - 禁止规则直接修改逻辑节点或逻辑拓扑。
-- 禁止创建计划声明了缓存、运行时却完全不消费的缓存策略。
-- 禁止以候选下标代替业务输入值作为 `CANDIDATE_KEY`，否则重复 key 无法复用。
+- 禁止创建计划声明了缓存、运行时却完全不消费且未标注为预留的缓存策略。
+- 禁止以候选下标代替业务输入值构造任何缓存 key，否则重复 key 无法复用。
 - 禁止让索引缓存跨越其声明的请求或批次生命周期。

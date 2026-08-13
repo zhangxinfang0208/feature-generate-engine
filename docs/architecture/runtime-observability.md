@@ -109,13 +109,13 @@ export failure。应把 `AsyncObserverStats.dropped`、`pending` 和 `exportFail
 
 `RuntimeCache` 是一次 `ExecutionContext` 内的可观测缓存，缓存数据不会跨 `generate`。当前真实查找分为：
 
-- `CANDIDATE_KEY`：通用候选算子的参数元组缓存；
 - `SEQUENCE_INDEX`：具体 `SequenceValue` 的索引缓存；
 - `SEQUENCE_COUNT`：具体序列视图和归一化 key 的计数缓存。
 
 每次 `lookup` 必须且只能增加一次 hit 或 miss；计算后写入增加一次 put。`REQUEST` 表示逻辑 canonical
 去重和物理 slot 的单次执行复用，不执行缓存查找，因此不计入 cache hit。`dedupInputCount - uniqueInputCount`
-表示候选参数去重减少的求值次数，与跨节点缓存命中是两个不同指标。
+表示融合执行器（`SequenceKeyCountExecutor`）内候选 key 去重减少的求值次数，与跨节点缓存命中是两个
+不同指标。
 
 旧的 `ExecutionContext.cacheRegistry()` 仅为源兼容保留，直接操作它不会产生统计；新增执行器必须使用
 `runtimeCache().lookup/put`。

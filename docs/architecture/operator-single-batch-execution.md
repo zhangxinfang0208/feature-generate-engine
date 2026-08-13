@@ -22,8 +22,7 @@ batch(arguments)[i] == single(arguments[i])
 - 输出行数等于输入行数，零行 Batch 返回零行结果；
 - 不改变行顺序，不把运行时 Batch 维度混入逻辑 `ValueShape`；
 - `BatchOperatorEvaluationException` 携带 Batch 内行号；
-- Kernel 实例无请求状态并可被并发复用；
-- 只有确定且无副作用的算子才允许通过 `CANDIDATE_KEY` 去重调用。
+- Kernel 实例无请求状态并可被并发复用。
 
 `BatchLayout` 描述 `OFFLINE_ROW`、`ONLINE_REQUEST`、`ONLINE_CANDIDATE` 三种批域，在线候选行
 可以映射回 group 和组内 candidate 下标。输入通过只读 `BatchColumn` 暴露；标量广播以及
@@ -48,18 +47,15 @@ invocationPolicy = OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN
 `CandidateVectorValue` 或 `CandidateBatchValue` 时调用计划声明的 Batch Kernel。这是对输入载体的
 固定分派，不是运行时物理改写。
 
-## 4. 缓存与批内去重
+## 4. 缓存与批内复用
 
-通用 `CANDIDATE_KEY` 缓存由 `DagRuntime` 包裹 Kernel：
-
-1. 以 `physicalNodeId + groupIndex + arguments` 形成逐行 key；
-2. 合并同一批中的相同 miss；pending 重复只计入 dedup reuse，不计为 cache lookup/hit；
-3. 把唯一 miss 形成紧凑 Batch；
-4. 一次调用 Batch Kernel；
-5. 写缓存并 scatter 回原始顺序。
+通用候选批去重路径（CANDIDATE_KEY）已移除：批内重复计算由原生 Batch 的 identity 键复用消除
+（`find_indices`/`count_distinct`/`zip_concat`/`calc_delta_seq` 在 Kernel 内部按
+`(group, sequence, 参数)` 身份键缓存）；未提供原生 Batch 的算子由 `SCALAR_ADAPTER` 逐行计算。
+缓存资格仍以 deterministic 且 sideEffectFree 为准（C8 元数据）。
 
 专用序列索引缓存仍由注册式 `PhysicalExecutor` 管理。跨 group 不得共享请求级序列、索引或
-候选缓存。
+计数缓存。
 
 ## 5. 与融合的关系
 
@@ -70,7 +66,7 @@ invocationPolicy = OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN
 
 逐行 Native Batch 使用同一个 `RowEvaluator` 同时生成 Single 与 Batch 路径，Batch 侧通过可移动
 行视图访问列值，不创建逐行参数 List。它减少逐行调度和参数对象，但不自动减少逐行业务计算；
-批内重复计算由紧凑 miss Batch 消除。Rewrite 仍负责跨节点消除中间物化和改变算法复杂度，例如
+批内重复计算由 Native Batch 的身份键复用消除。Rewrite 仍负责跨节点消除中间物化和改变算法复杂度，例如
 把“按 key 过滤序列后 count”转换为“一次建索引后按 key 查询”。两者是互补能力。
 
 直接实现 `BatchOperatorKernel` 的扩展算子必须把行级失败包装为
@@ -90,9 +86,8 @@ SPECIALIZED
 ```
 
 Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表示真正提交给 Batch Kernel 的
-行数：普通 Batch 等于运行域行数，`CANDIDATE_KEY` 紧凑 miss Batch 等于唯一 miss 数量，全部命中时为
-零。Single、SPECIALIZED 和非算子节点不携带 Batch 域，行数为零。失败节点保留失败前已经确定的调用
-路径，便于判断问题发生在 Single、Native Batch、Adapter 还是融合执行器。
+行数：普通 Batch 等于运行域行数。Single、SPECIALIZED 和非算子节点不携带 Batch 域，行数为零。
+失败节点保留失败前已经确定的调用路径，便于判断问题发生在 Single、Native Batch、Adapter 还是融合执行器。
 
 ## 7. 测试要求
 
@@ -102,6 +97,6 @@ Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表
 - 零行、单行、多行 Batch；
 - request-to-candidate 广播及多 group 隔离；
 - Batch 错误映射到 offline row 或 online group/candidate；
-- `CANDIDATE_KEY` 唯一 miss 批量执行、结果 scatter 顺序以及真实 cache/dedup 指标分离；
+- 原生 Batch 按 identity 键复用与 Single 逐行结果一致；
 - 命中 Rewrite 时仍执行 SPECIALIZED 物理节点，未命中时才走普通 Batch Kernel；
-- 节点诊断准确区分 Single、Native Batch、Adapter Batch 和 SPECIALIZED，并记录紧凑批实际行数。
+- 节点诊断准确区分 Single、Native Batch、Adapter Batch 和 SPECIALIZED，并记录批实际行数。

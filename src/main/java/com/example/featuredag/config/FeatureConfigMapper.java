@@ -12,7 +12,6 @@ import com.example.featuredag.expression.AstFeatureRef;
 import com.example.featuredag.expression.AstNode;
 import com.example.featuredag.expression.AstObjectLiteral;
 import com.example.featuredag.expression.ExpressionParser;
-import com.example.featuredag.physical.ExecutionEnvironment;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -30,12 +29,10 @@ public final class FeatureConfigMapper {
 
     public static MappedFeatureSet map(
             FeatureSetConfig config,
-            ExecutionEnvironment environment,
             Set<String> requestedTargets,
             Map<String, Set<EntityScope>> scopeOverrides) {
         return map(
                 config,
-                environment,
                 requestedTargets,
                 scopeOverrides,
                 Set.of(EntityScope.USER));
@@ -43,12 +40,10 @@ public final class FeatureConfigMapper {
 
     public static MappedFeatureSet map(
             FeatureSetConfig config,
-            ExecutionEnvironment environment,
             Set<String> requestedTargets,
             Map<String, Set<EntityScope>> scopeOverrides,
             Set<EntityScope> defaultBaseScopes) {
         Objects.requireNonNull(config, "config");
-        Objects.requireNonNull(environment, "environment");
         requestedTargets = requestedTargets == null ? Set.of() : requestedTargets;
         scopeOverrides = scopeOverrides == null ? Map.of() : scopeOverrides;
         defaultBaseScopes = immutableNonEmptyScopes(defaultBaseScopes, "defaultBaseScopes");
@@ -65,6 +60,12 @@ public final class FeatureConfigMapper {
             boolean enabled = isEnabled(feature.toUse());
             OutputPolicy configuredOutputPolicy = parseOutputPolicy(feature.outputPolicy(), name);
             ValueShape declaredValueShape = parseValueShape(feature.valueShape(), name);
+            if (definitionType == DefinitionType.BASE
+                    && feature.outputPolicy() != null && !feature.outputPolicy().isBlank()
+                    && configuredOutputPolicy != OutputPolicy.OUTPUT) {
+                throw new IllegalArgumentException(
+                        "output_policy for BASE feature " + name + " must be OUTPUT");
+            }
             OutputPolicy outputPolicy = definitionType == DefinitionType.BASE
                     ? OutputPolicy.OUTPUT : configuredOutputPolicy;
             putUnique(entries, name, new DefinitionEntry(
@@ -135,8 +136,7 @@ public final class FeatureConfigMapper {
                 version,
                 definitions,
                 orderedTargets,
-                outputs,
-                Set.of());
+                outputs);
     }
 
     private static DefinitionType parseDefinitionType(String value, String featureName) {

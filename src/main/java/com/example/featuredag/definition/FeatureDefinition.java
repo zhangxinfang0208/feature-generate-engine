@@ -1,7 +1,11 @@
 package com.example.featuredag.definition;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -31,7 +35,7 @@ public final class FeatureDefinition {
         this.dataType = Objects.requireNonNull(builder.dataType, "dataType");
         this.entityScopes = Collections.unmodifiableSet(new LinkedHashSet<>(builder.entityScopes));
         this.expressionContent = blankToNull(builder.expressionContent);
-        this.defaultValue = builder.defaultValue;
+        this.defaultValue = immutableValue(builder.defaultValue);
         this.sourceBinding = blankToNull(builder.sourceBinding);
         this.outputPolicy = Objects.requireNonNull(builder.outputPolicy, "outputPolicy");
         this.declaredValueShape = builder.declaredValueShape;
@@ -114,6 +118,25 @@ public final class FeatureDefinition {
         if (value == null) return null;
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** 默认值深拷贝为不可变结构（C2）：Map/List 递归拷贝并包装，标量按引用。 */
+    private static Object immutableValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                copy.put(entry.getKey(), immutableValue(entry.getValue()));
+            }
+            return Collections.unmodifiableMap(copy);
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            for (Object element : list) {
+                copy.add(immutableValue(element));
+            }
+            return Collections.unmodifiableList(copy);
+        }
+        return value;
     }
 
     public static final class Builder {

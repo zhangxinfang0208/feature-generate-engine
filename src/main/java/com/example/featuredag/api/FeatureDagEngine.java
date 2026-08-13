@@ -510,7 +510,6 @@ public final class FeatureDagEngine {
         try {
             MappedFeatureSet mapped = FeatureConfigMapper.map(
                     config,
-                    options.environment(),
                     options.targetFeatures(),
                     options.rawFeatureScopes(),
                     options.defaultRawFeatureScopes());

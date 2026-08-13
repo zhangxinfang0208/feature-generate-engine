@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -71,7 +72,9 @@ public final class FeatureConfig {
     public Integer order() { return order; }
     public Boolean isFeedback() { return isFeedback; }
     public List<String> entityScopes() {
-        return entityScopes == null ? List.of() : List.copyOf(entityScopes);
+        if (entityScopes == null) return List.of();
+        // 容忍 null 元素：由 FeatureConfigLoader 产出带下标定位的校验错误
+        return Collections.unmodifiableList(new ArrayList<>(entityScopes));
     }
     public String valueShape() { return valueShape; }
     public Integer sequenceMaxLength() { return sequenceMaxLength; }

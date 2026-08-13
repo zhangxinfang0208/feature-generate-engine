@@ -128,22 +128,26 @@ public final class AsyncRuntimeObserver implements RuntimeObserver, AutoCloseabl
 
     private void runWorker() {
         List<ExecutionDiagnostics> batch = new ArrayList<>(batchSize);
-        while (!closed.get() || !queue.isEmpty()) {
-            try {
-                Entry first = queue.poll(pollIntervalNanos, TimeUnit.NANOSECONDS);
-                if (first == null) continue;
-                batch.add(first.diagnostics);
-                while (batch.size() < batchSize) {
-                    Entry next = queue.poll();
-                    if (next == null) break;
-                    batch.add(next.diagnostics);
+        try {
+            while (!closed.get() || !queue.isEmpty()) {
+                try {
+                    Entry first = queue.poll(pollIntervalNanos, TimeUnit.NANOSECONDS);
+                    if (first == null) continue;
+                    batch.add(first.diagnostics);
+                    while (batch.size() < batchSize) {
+                        Entry next = queue.poll();
+                        if (next == null) break;
+                        batch.add(next.diagnostics);
+                    }
+                    export(batch);
+                } catch (InterruptedException ignored) {
+                    // close 通过中断唤醒空闲 worker；循环会继续排空已接受的数据。
                 }
-                export(batch);
-            } catch (InterruptedException ignored) {
-                // close 通过中断唤醒空闲 worker；循环会继续排空已接受的数据。
             }
+        } finally {
+            // 无论正常退出还是异常终止，都要唤醒等待排空的调用方
+            signalDrainWaiters();
         }
-        signalDrainWaiters();
     }
 
     private void export(List<ExecutionDiagnostics> batch) {
@@ -151,7 +155,9 @@ public final class AsyncRuntimeObserver implements RuntimeObserver, AutoCloseabl
         try {
             sink.accept(List.copyOf(batch));
             exported.addAndGet(size);
-        } catch (RuntimeException ignored) {
+        } catch (Throwable ignored) {
+            // 含 Error：sink 的 NoClassDefFoundError/OOM 等不得杀死唯一 worker 线程，
+            // 否则队列满后所有数据静默丢弃且 awaitDrained 空等
             exportFailures.addAndGet(size);
         } finally {
             batch.clear();

@@ -52,12 +52,21 @@ public final class FeatureConfigLoader {
                     config.additionalProperties(), TOP_LEVEL_PROPERTIES, "top-level");
             for (int index = 0; index < config.features().size(); index++) {
                 FeatureConfig feature = config.features().get(index);
-                if (feature != null) {
-                    rejectLikelyTypos(
-                            feature.additionalProperties(),
-                            FEATURE_PROPERTIES,
-                            "feature at index " + index);
+                if (feature == null) {
+                    throw new IllegalArgumentException(
+                            "features[" + index + "] must not be null");
                 }
+                for (int scopeIndex = 0; scopeIndex < feature.entityScopes().size(); scopeIndex++) {
+                    if (feature.entityScopes().get(scopeIndex) == null) {
+                        throw new IllegalArgumentException(
+                                "features[" + index + "].entity_scopes[" + scopeIndex
+                                        + "] must not be null");
+                    }
+                }
+                rejectLikelyTypos(
+                        feature.additionalProperties(),
+                        FEATURE_PROPERTIES,
+                        "feature at index " + index);
             }
             return config;
         } catch (JsonProcessingException error) {

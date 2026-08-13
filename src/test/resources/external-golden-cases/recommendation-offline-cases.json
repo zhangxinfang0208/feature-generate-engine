@@ -1,0 +1,170 @@
+{
+  "suite_name": "recommendation_context_offline_golden_cases",
+  "schema_version": 1,
+  "feature_set_file": "recommendation-model-feature-set.json",
+  "environment": "OFFLINE",
+  "comparison": {
+    "array_order_sensitive": true,
+    "numeric_absolute_tolerance": 1.0e-9
+  },
+  "target_features": [
+    "matched_positions",
+    "matched_categories",
+    "matched_actions",
+    "matched_category_actions",
+    "distinct_matched_context_count",
+    "matched_event_count",
+    "matched_event_bucket",
+    "matched_event_log2",
+    "normalized_score_seq"
+  ],
+  "cases": [
+    {
+      "case_id": "cold_start_empty_history",
+      "business_scenario": "冷启动用户没有任何历史行为，所有序列输出应为空，统计特征仍应返回稳定数值。",
+      "input": {
+        "execution_id": "golden-cold-start",
+        "row_values": {
+          "current_category": ["travel"],
+          "history_category_seq": [],
+          "history_action_seq": [],
+          "history_score_seq": []
+        }
+      },
+      "expected_output": {
+        "execution_id": "golden-cold-start",
+        "feature_values": {
+          "matched_positions": [],
+          "matched_categories": [],
+          "matched_actions": [],
+          "matched_category_actions": [],
+          "distinct_matched_context_count": [0],
+          "matched_event_count": [0],
+          "matched_event_bucket": [1],
+          "matched_event_log2": [0.0],
+          "normalized_score_seq": []
+        }
+      }
+    },
+    {
+      "case_id": "no_matching_history",
+      "business_scenario": "当前类目从未在用户历史中出现，匹配相关序列应为空，但分数序列仍可正常处理。",
+      "input": {
+        "execution_id": "golden-no-match",
+        "row_values": {
+          "current_category": ["travel"],
+          "history_category_seq": ["sports", "news"],
+          "history_action_seq": ["view", "click"],
+          "history_score_seq": [-2.0, 0.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "golden-no-match",
+        "feature_values": {
+          "matched_positions": [],
+          "matched_categories": [],
+          "matched_actions": [],
+          "matched_category_actions": [],
+          "distinct_matched_context_count": [0],
+          "matched_event_count": [0],
+          "matched_event_bucket": [1],
+          "matched_event_log2": [0.0],
+          "normalized_score_seq": [-2.0, 0.0]
+        }
+      }
+    },
+    {
+      "case_id": "single_matching_history",
+      "business_scenario": "当前类目只出现一次，验证单次匹配以及离散边界 1。",
+      "input": {
+        "execution_id": "golden-single-match",
+        "row_values": {
+          "current_category": ["sports"],
+          "history_category_seq": ["sports", "news", "music"],
+          "history_action_seq": ["click", "view", "purchase"],
+          "history_score_seq": [1.0, 4.0, 8.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "golden-single-match",
+        "feature_values": {
+          "matched_positions": [0],
+          "matched_categories": ["sports"],
+          "matched_actions": ["click"],
+          "matched_category_actions": ["sports|click"],
+          "distinct_matched_context_count": [1],
+          "matched_event_count": [1],
+          "matched_event_bucket": [2],
+          "matched_event_log2": [1.0],
+          "normalized_score_seq": [0.0, 3.0, 7.0]
+        }
+      }
+    },
+    {
+      "case_id": "three_matches_with_duplicate_context",
+      "business_scenario": "当前类目出现三次，其中类目行为组合有重复，验证位置顺序、去重和离散边界 3。",
+      "input": {
+        "execution_id": "golden-three-matches",
+        "row_values": {
+          "current_category": ["sports"],
+          "history_category_seq": ["sports", "news", "sports", "sports", "music"],
+          "history_action_seq": ["click", "view", "purchase", "click", "view"],
+          "history_score_seq": [2.0, 4.5, 8.0, 10.0, 12.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "golden-three-matches",
+        "feature_values": {
+          "matched_positions": [0, 2, 3],
+          "matched_categories": ["sports", "sports", "sports"],
+          "matched_actions": ["click", "purchase", "click"],
+          "matched_category_actions": ["sports|click", "sports|purchase", "sports|click"],
+          "distinct_matched_context_count": [2],
+          "matched_event_count": [3],
+          "matched_event_bucket": [3],
+          "matched_event_log2": [1.5849625007211563],
+          "normalized_score_seq": [
+            0.4150374992788437,
+            2.915037499278844,
+            6.415037499278844,
+            8.415037499278844,
+            10.415037499278844
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "five_matches_at_upper_boundary",
+      "business_scenario": "当前类目出现五次，验证离散边界 5、重复上下文去重及负数归一化输出。",
+      "input": {
+        "execution_id": "golden-five-matches",
+        "row_values": {
+          "current_category": ["fashion"],
+          "history_category_seq": ["fashion", "news", "fashion", "fashion", "fashion", "fashion"],
+          "history_action_seq": ["view", "view", "click", "cart", "buy", "click"],
+          "history_score_seq": [-1.0, 2.0, 10.0, 3.0, 5.0, 7.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "golden-five-matches",
+        "feature_values": {
+          "matched_positions": [0, 2, 3, 4, 5],
+          "matched_categories": ["fashion", "fashion", "fashion", "fashion", "fashion"],
+          "matched_actions": ["view", "click", "cart", "buy", "click"],
+          "matched_category_actions": [
+            "fashion|view",
+            "fashion|click",
+            "fashion|cart",
+            "fashion|buy",
+            "fashion|click"
+          ],
+          "distinct_matched_context_count": [4],
+          "matched_event_count": [5],
+          "matched_event_bucket": [4],
+          "matched_event_log2": [2.0],
+          "normalized_score_seq": [-3.0, 0.0, 8.0, 1.0, 3.0, 5.0]
+        }
+      }
+    }
+  ]
+}

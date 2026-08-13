@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Package-local value and inference helpers shared by built-in operators. */
+/** 首期内置算子共享的包内辅助方法：集中处理推断、数值校验、序列下标和批内身份键。 */
 final class OperatorSupport {
     private OperatorSupport() {}
 
@@ -25,6 +25,7 @@ final class OperatorSupport {
             List<OperatorInputMetadata> inputs,
             DataType outputType,
             ValueShape valueShape) {
+        // 输出类型/形状由算子固定，实体域仍取全部输入并集，使执行阶段能反映任一变化维度（C6/C10）。
         return new OperatorInference(outputType, unionScopes(inputs), valueShape);
     }
 
@@ -32,6 +33,7 @@ final class OperatorSupport {
             List<OperatorInputMetadata> inputs,
             int inputIndex) {
         OperatorInputMetadata input = inputs.get(inputIndex);
+        // 透传算子继承主输入的类型和形状，但实体域仍需包含其他参数的依赖域。
         return new OperatorInference(input.outputType(), unionScopes(inputs), input.valueShape());
     }
 
@@ -47,6 +49,7 @@ final class OperatorSupport {
     }
 
     static BigDecimal asPreciseDecimal(Number number, String errorMessage) {
+        // 整数精确转换；浮点数先验证有限性并采用十进制字符串语义，避免 new BigDecimal(double) 的二进制尾差。
         if (number instanceof BigDecimal) return (BigDecimal) number;
         if (number instanceof BigInteger) return new BigDecimal((BigInteger) number);
         if (number instanceof Byte || number instanceof Short
@@ -103,6 +106,7 @@ final class OperatorSupport {
             int position,
             int sequenceSize,
             String operator) {
+        // 下标必须是可精确表示的非负整数，拒绝小数、非有限值、溢出和越界。
         if (!(value instanceof Number)) {
             throw new IllegalArgumentException(
                     operator + " index at position " + position + " is not numeric: " + value);
@@ -159,6 +163,7 @@ final class OperatorSupport {
     static BatchOperatorEvaluationException batchFailure(
             int rowIndex,
             RuntimeException error) {
+        // Native Batch Kernel 统一携带紧凑批行号，由 DagRuntime 再映射回原请求/候选位置。
         return new BatchOperatorEvaluationException(rowIndex, error);
     }
 
@@ -173,6 +178,7 @@ final class OperatorSupport {
 
         private IdentityBatchKey(int groupIndex, Object[] identities) {
             this.groupIndex = groupIndex;
+            // 只按对象身份比较批内广播值，避免对序列或配置集合执行昂贵且语义不安全的深比较。
             this.identities = identities.clone();
             int hash = groupIndex;
             for (Object identity : identities) {

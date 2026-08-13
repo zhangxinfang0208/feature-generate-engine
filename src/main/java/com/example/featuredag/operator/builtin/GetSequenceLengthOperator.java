@@ -32,6 +32,7 @@ public final class GetSequenceLengthOperator extends AbstractBuiltinOperator {
     }
 
     private static Object evaluateSequence(Object sequence) {
+        // 优先使用最小序列协议，SequenceView 无需物化为 List 即可返回逻辑选择范围的长度。
         if (sequence instanceof OperatorSequence) return ((OperatorSequence) sequence).size();
         if (sequence instanceof Collection<?>) return ((Collection<?>) sequence).size();
         if (sequence != null && sequence.getClass().isArray()) {

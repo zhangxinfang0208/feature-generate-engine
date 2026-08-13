@@ -72,6 +72,7 @@ public final class DagRuntime {
 
     private void executeNode(PhysicalNode node, ExecutionContext context) {
         RuntimeNodeState state = context.state(node.physicalNodeId());
+        // 状态更新与槽写入包在同一异常边界内：成功节点一定有结果，失败节点保留耗时和原始异常。
         state.markRunning();
         long start = System.nanoTime();
         try {
@@ -128,6 +129,7 @@ public final class DagRuntime {
 
         if (context.isOnlineBatch()) {
             if (itemScoped) {
+                // ITEM 域按展平后的候选顺序绑定，结果句柄长度必须等于全批候选数。
                 List<Object> values = new ArrayList<>(context.candidateCount());
                 for (int candidateIndex = 0;
                         candidateIndex < context.candidates().size();
@@ -149,6 +151,7 @@ public final class DagRuntime {
                 }
                 return new CandidateBatchValue(values, node.logicalValueShape());
             }
+            // USER/SCENE 等非 ITEM 源值每组一份，形成 RequestBatchValue，后续可广播到组内候选。
             List<Object> values = new ArrayList<>(context.onlineGroupCount());
             for (int groupIndex = 0;
                     groupIndex < context.onlineSharedGroups().size();
@@ -329,6 +332,7 @@ public final class DagRuntime {
         RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context);
         state.setBatchRowCount(layout.rowCount());
         SequenceViewInputMode sequenceMode = sequenceViewInputMode(node);
+        // 不支持视图的算子按组复用物化结果；支持视图的算子则直接读取零拷贝序列协议。
         Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup =
                 new LinkedHashMap<>();
         List<BatchColumn> arguments = inputHandles.stream()
@@ -385,6 +389,7 @@ public final class DagRuntime {
     }
 
     private static EvaluationDomain evaluationDomain(List<ValueHandle> handles) {
+        // 批域由输入句柄携带；在线请求值可向候选域广播，但离线行、在线候选等域禁止混用（C10）。
         boolean singleCandidate = handles.stream().anyMatch(CandidateVectorValue.class::isInstance);
         boolean offlineRow = handles.stream().anyMatch(OfflineBatchValue.class::isInstance);
         boolean onlineRequest = handles.stream().anyMatch(RequestBatchValue.class::isInstance);
@@ -418,6 +423,7 @@ public final class DagRuntime {
             int evaluationSize,
             ExecutionContext context,
             String operatorName) {
+        // 在调用 Kernel 前统一检查列长，避免越界被误报为某个算子的业务异常。
         if (handle instanceof CandidateVectorValue value) {
             requireVectorSize(value.size(), evaluationSize, operatorName);
         } else if (handle instanceof OfflineBatchValue value) {
@@ -442,6 +448,7 @@ public final class DagRuntime {
         if (handle instanceof OfflineBatchValue value) return value.valueAt(index);
         if (handle instanceof CandidateBatchValue value) return value.valueAt(index);
         if (handle instanceof RequestBatchValue value) {
+            // 在线候选批中，共享请求值按 candidate → group 映射广播到所属候选行。
             int groupIndex = domain == EvaluationDomain.ONLINE_CANDIDATE
                     ? context.candidateGroupIndex(index)
                     : index;
@@ -454,6 +461,7 @@ public final class DagRuntime {
             EvaluationDomain domain,
             int index,
             ExecutionContext context) {
+        // groupIndex 同时参与序列物化复用和错误定位；离线行没有请求组，因此使用 -1。
         return switch (domain) {
             case ONLINE_CANDIDATE -> context.candidateGroupIndex(index);
             case ONLINE_REQUEST -> index;

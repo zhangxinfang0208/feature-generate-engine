@@ -21,6 +21,7 @@ public final class RuntimeCache {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(nodeState, "nodeState");
+        // 必须用 containsKey 区分“命中且值为 null”和“未命中”，两者的统计与执行语义不同。
         boolean hit = values.containsKey(key);
         mutableStats(kind).recordLookup(hit);
         nodeState.recordCacheLookup(kind, hit);
@@ -36,6 +37,7 @@ public final class RuntimeCache {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(value, "value");
         Objects.requireNonNull(nodeState, "nodeState");
+        // 所有缓存类别共享请求级存储，但 key 自身携带节点、域、序列视图和变化输入以隔离语义。
         values.put(key, value);
         mutableStats(kind).recordPut();
         nodeState.recordCachePut(kind);
@@ -46,6 +48,7 @@ public final class RuntimeCache {
     }
 
     public Map<CacheKind, CacheStats> snapshot() {
+        // 执行结束时才冻结统计，避免对外暴露内部可变计数器。
         if (stats.isEmpty()) return Map.of();
         EnumMap<CacheKind, CacheStats> result = new EnumMap<>(CacheKind.class);
         for (Map.Entry<CacheKind, MutableCacheStats> entry : stats.entrySet()) {

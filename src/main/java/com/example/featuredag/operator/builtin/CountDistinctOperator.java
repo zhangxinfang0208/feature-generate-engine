@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
+/** 对序列元素按 equals/hashCode 去重并返回基数，兼容普通集合和零拷贝 OperatorSequence 视图。 */
 public final class CountDistinctOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public CountDistinctOperator() {
@@ -36,6 +37,7 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         List<Object> result = new ArrayList<Object>(call.rowCount());
+        // 请求组和序列身份共同构成批内复用键；同一序列只扫描一次，输出仍逐行追加。
         Map<OperatorSupport.IdentityBatchKey, Integer> counts =
                 new LinkedHashMap<OperatorSupport.IdentityBatchKey, Integer>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
@@ -57,6 +59,7 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator
     }
 
     private static int count(Object sequence) {
+        // LinkedHashSet 的顺序不影响最终计数，但使行为和调试过程保持确定。
         LinkedHashSet<Object> values = new LinkedHashSet<Object>();
         if (sequence instanceof OperatorSequence) {
             OperatorSequence value = (OperatorSequence) sequence;

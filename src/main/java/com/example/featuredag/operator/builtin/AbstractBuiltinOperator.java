@@ -8,7 +8,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-/** Shared immutable metadata for one built-in operator definition. */
+/**
+ * 首期内置算子的不可变元数据基类。
+ * 注册类只负责装配具体实例；参数范围、确定性、序列视图能力和成本均由各算子构造器显式声明。
+ */
 public abstract class AbstractBuiltinOperator implements OperatorDefinition {
     private final String name;
     private final int minArguments;
@@ -35,6 +38,7 @@ public abstract class AbstractBuiltinOperator implements OperatorDefinition {
             boolean supportsSequenceView,
             List<OperatorSemantic> semantics) {
         this.name = Objects.requireNonNull(name, "name");
+        // 在算子实例创建时一次性校验元数据，避免非法定义进入全局注册表。
         if (name.trim().isEmpty()) throw new IllegalArgumentException("name must not be blank");
         if (minArguments < 0 || maxArguments < minArguments) {
             throw new IllegalArgumentException("invalid argument range for operator " + name);

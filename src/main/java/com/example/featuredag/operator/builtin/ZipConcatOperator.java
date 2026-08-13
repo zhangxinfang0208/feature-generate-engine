@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/** 逐位置拼接两个或更多等长序列，可用末尾对象字面量覆盖分隔符。 */
 public final class ZipConcatOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public ZipConcatOperator() {
@@ -37,6 +38,7 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
         int sequenceCount = arguments.size();
         String delimiter = "#";
         Object last = arguments.get(arguments.size() - 1);
+        // 最后一个参数只有在 OBJECT/Map 时才解释为配置；否则它仍是一条待拼接序列。
         if (last instanceof Map<?, ?>) {
             sequenceCount--;
             Map<?, ?> config = (Map<?, ?>) last;
@@ -52,6 +54,7 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         List<Object> result = new ArrayList<Object>(call.rowCount());
+        // 同组、同序列身份、同分隔符的组合只拼接一次，随后按 Batch 原行序复用结果。
         Map<ZipBatchKey, Object> values = new LinkedHashMap<ZipBatchKey, Object>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
             try {
@@ -92,6 +95,7 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
             String delimiter) {
         List<Object> sequences = new ArrayList<Object>(sequenceCount);
         int size = -1;
+        // 先统一验证所有序列等长，再进入按行拼接，避免生成一半结果后才发现形状错误。
         for (int index = 0; index < sequenceCount; index++) {
             Object sequence = arguments.get(index);
             int sequenceSize = OperatorSupport.sequenceSize(
@@ -105,6 +109,7 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
             sequences.add(sequence);
         }
         List<String> result = new ArrayList<String>(size);
+        // 外层按逻辑位置、内层按输入序列，形成真正的 zip，而不是先串联各序列。
         for (int row = 0; row < size; row++) {
             StringBuilder joined = new StringBuilder();
             for (int column = 0; column < sequences.size(); column++) {
@@ -132,6 +137,7 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
 
         private ZipBatchKey(int groupIndex, List<Object> sequences, String delimiter) {
             this.groupIndex = groupIndex;
+            // 序列用身份比较，既避免深比较成本，也使不同 SequenceView 的选择语义保持隔离。
             this.sequences = sequences.toArray(new Object[sequences.size()]);
             this.delimiter = delimiter;
             int hash = 31 * groupIndex + delimiter.hashCode();

@@ -10,6 +10,7 @@ import com.example.featuredag.operator.OperatorSequence;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -35,6 +36,28 @@ final class OperatorSupport {
         OperatorInputMetadata input = inputs.get(inputIndex);
         // 透传算子继承主输入的类型和形状，但实体域仍需包含其他参数的依赖域。
         return new OperatorInference(input.outputType(), unionScopes(inputs), input.valueShape());
+    }
+
+    static void rejectEventSequence(String operator, List<OperatorInputMetadata> inputs) {
+        // 事件序列不做隐式数值投影：构图期即拒绝（C6），运行时的数值检查为防御。
+        for (OperatorInputMetadata input : inputs) {
+            if (input.outputType() == DataType.EVENT_SEQUENCE) {
+                throw new IllegalArgumentException(
+                        operator + " requires numeric scalar input; event sequences are not"
+                                + " supported (no implicit value projection)");
+            }
+        }
+    }
+
+    static DataType numericResultType(List<OperatorInputMetadata> inputs) {
+        // 数值运算结果的宽度上界：任一 DOUBLE 输入即提升为 DOUBLE，否则保持 INT，
+        // 与 C6「声明 DOUBLE 可接受推断 INT」的放宽方向保持一致。
+        for (OperatorInputMetadata input : inputs) {
+            if (input.outputType() == DataType.DOUBLE) {
+                return DataType.DOUBLE;
+            }
+        }
+        return DataType.INT;
     }
 
     private static Set<EntityScope> unionScopes(List<OperatorInputMetadata> inputs) {
@@ -150,6 +173,48 @@ final class OperatorSupport {
             throw new IllegalArgumentException(argument + " must be finite");
         }
         return result;
+    }
+
+    static int truncatedInt(Object value, String operator) {
+        try {
+            return truncatedDecimal(value, operator).intValueExact();
+        } catch (ArithmeticException error) {
+            throw new IllegalArgumentException(operator + " overflow for value: " + value);
+        }
+    }
+
+    static long truncatedLong(Object value, String operator) {
+        try {
+            return truncatedDecimal(value, operator).longValueExact();
+        } catch (ArithmeticException error) {
+            throw new IllegalArgumentException(operator + " overflow for value: " + value);
+        }
+    }
+
+    private static BigDecimal truncatedDecimal(Object value, String operator) {
+        // 先经精确十进制校验有限性，再把小数部分向零截断（与 SQL CAST 语义一致），不做四舍五入。
+        BigDecimal decimal = asPreciseDecimal(
+                asNumber(value), operator + " requires a finite numeric value");
+        return decimal.setScale(0, RoundingMode.DOWN);
+    }
+
+    static Object selectExtreme(List<Object> values, boolean minimum, String operator) {
+        // 精确十进制比较消除 Integer/Long/Double 混比时的精度歧义；
+        // 相等时保留最左输入，并返回胜出参数的原数值载体。
+        BigDecimal extreme = null;
+        Object winner = null;
+        for (Object value : values) {
+            BigDecimal decimal = asPreciseDecimal(
+                    asNumber(value), operator + " requires finite numeric values");
+            if (extreme == null
+                    || (minimum
+                            ? decimal.compareTo(extreme) < 0
+                            : decimal.compareTo(extreme) > 0)) {
+                extreme = decimal;
+                winner = value;
+            }
+        }
+        return winner;
     }
 
     static String typeName(Object value) {

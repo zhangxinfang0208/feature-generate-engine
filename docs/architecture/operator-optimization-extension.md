@@ -3,8 +3,9 @@
 本文规定特征 DAG 引擎新增算子优化、专用执行器、序列索引和缓存策略时必须遵守的扩展方式。
 目标是让核心 `planning`、`physical`、`runtime` 只依赖稳定协议，不再按业务算子名称增加分支。
 
-当前首期标准注册表只包含 `discrete`、`log_base`、`slice_by_indices`、`find_indices`、
-`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`。每个算子必须拥有独立实现类；
+当前标准注册表包含首期的 `discrete`、`log_base`、`slice_by_indices`、`find_indices`、
+`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`，以及数值转换/极值算子
+`to_int`、`to_bigint`、`min`、`max`。每个算子必须拥有独立实现类；
 注册清单不得承载推断或求值逻辑。首期 `operator.builtin` 源码还必须保持 JDK 1.8 语法/API 兼容，
 但项目整体构建基线仍为 Java 21。
 

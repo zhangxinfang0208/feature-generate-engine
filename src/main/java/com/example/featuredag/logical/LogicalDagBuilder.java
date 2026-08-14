@@ -119,13 +119,18 @@ public final class LogicalDagBuilder {
                 default -> definition.outputPolicy() == OutputPolicy.OUTPUT
                         ? OutputRole.TRANSFORM_OUTPUT : OutputRole.INTERNAL;
             };
+            // 边界类型优先取声明类型：C6 唯一放宽的声明 DOUBLE / 推断 INT 场景下，
+            // 特征输出节点仍需对外承诺 DOUBLE（供运行时定宽、下游算子按声明类型推断）。
+            DataType boundaryType = definition.dataType() != DataType.UNKNOWN
+                    ? definition.dataType()
+                    : producer.outputType();
             // C3/C5：每个特征对应唯一 FEATURE_OUTPUT 边界节点（ID 前缀 feature:）
             String outputId = "feature:" + featureName;
             FeatureOutputNode outputNode = new FeatureOutputNode(
                     outputId,
                     featureName,
                     producerId,
-                    producer.outputType(),
+                    boundaryType,
                     producer.entityScopes(),
                     producer.valueShape(),
                     role,

@@ -19,6 +19,7 @@ import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.SequenceViewInputMode;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -82,7 +83,9 @@ public final class DagRuntime {
                         node.executorConfig().get("value"),
                         node.logicalValueShape(),
                         context.executionId());
-                case FEATURE_OUTPUT -> requireSingleInput(node, context);
+                case FEATURE_OUTPUT -> widenIntegralFeatureOutput(
+                        requireSingleInput(node, context),
+                        node.executorConfig().get("widenIntegralToDouble"));
                 case GENERIC_OPERATOR -> executeGenericOperator(node, context, state);
                 case SPECIALIZED -> {
                     state.recordOperatorInvocation(
@@ -628,6 +631,121 @@ public final class DagRuntime {
             throw new IllegalStateException("Feature output must have exactly one input");
         }
         return requireSlot(context, node.inputSlots().get(0));
+    }
+
+    /**
+     * DOUBLE 边界定宽：覆盖 C6 声明 DOUBLE/推断 INT，以及推断为 DOUBLE 但算子保留
+     * 胜出整数载体的场景；仅把整型载体统一为 Double，不按算子名特判（C10）。
+     * 容器采用 copy-on-write，未发现整型载体时直接复用原句柄。
+     */
+    private static ValueHandle widenIntegralFeatureOutput(ValueHandle handle, Object enabled) {
+        if (!Boolean.TRUE.equals(enabled)) return handle;
+
+        return switch (handle) {
+            case ScalarValue scalar -> {
+                Object widened = widenIntegralToDouble(scalar.value());
+                yield widened == scalar.value() ? handle : new ScalarValue(widened);
+            }
+            case ListSequenceValue sequence -> {
+                List<?> widened = widenScalars(sequence.values());
+                yield widened != sequence.values()
+                        ? new ListSequenceValue(sequence.alignmentId(), widened)
+                        : handle;
+            }
+            case CandidateVectorValue vector -> {
+                List<?> widened = widenScalars(vector.values());
+                yield widened != vector.values()
+                        ? new CandidateVectorValue(new ArrayList<Object>(widened))
+                        : handle;
+            }
+            case OfflineBatchValue batch -> {
+                List<?> widened = widenBatchValues(
+                        batch.values(), batch.elementShape());
+                yield widened != batch.values()
+                        ? new OfflineBatchValue(widened, batch.elementShape())
+                        : handle;
+            }
+            case RequestBatchValue batch -> {
+                List<?> widened = widenBatchValues(
+                        batch.values(), batch.elementShape());
+                yield widened != batch.values()
+                        ? new RequestBatchValue(widened, batch.elementShape())
+                        : handle;
+            }
+            case CandidateBatchValue batch -> {
+                List<?> widened = widenBatchValues(
+                        batch.values(), batch.elementShape());
+                yield widened != batch.values()
+                        ? new CandidateBatchValue(widened, batch.elementShape())
+                        : handle;
+            }
+            default -> handle;
+        };
+    }
+
+    /** Copy-on-write：没有整型载体时沿用原列表；首次发现后才复制已扫描前缀。 */
+    private static List<?> widenScalars(List<?> values) {
+        List<Object> widened = null;
+        for (int index = 0; index < values.size(); index++) {
+            Object value = values.get(index);
+            Object normalized = widenIntegralToDouble(value);
+            if (widened == null && normalized != value) {
+                widened = new ArrayList<>(values.size());
+                for (int prefix = 0; prefix < index; prefix++) {
+                    widened.add(values.get(prefix));
+                }
+            }
+            if (widened != null) widened.add(normalized);
+        }
+        if (widened == null) return values;
+        return Collections.unmodifiableList(widened);
+    }
+
+    private static List<?> widenBatchValues(
+            List<?> values,
+            ValueShape elementShape) {
+        if (elementShape != ValueShape.SEQUENCE) return widenScalars(values);
+
+        IdentityHashMap<List<?>, List<?>> widenedSequences = null;
+        List<Object> widened = null;
+        for (int index = 0; index < values.size(); index++) {
+            Object value = values.get(index);
+            Object normalized;
+            if (value instanceof List<?> sequence) {
+                List<?> cached = widenedSequences == null
+                        ? null : widenedSequences.get(sequence);
+                if (cached != null) {
+                    normalized = cached;
+                } else {
+                    List<?> sequenceResult = widenScalars(sequence);
+                    normalized = sequenceResult;
+                    if (sequenceResult != sequence) {
+                        if (widenedSequences == null) widenedSequences = new IdentityHashMap<>();
+                        widenedSequences.put(sequence, sequenceResult);
+                    }
+                }
+            } else {
+                normalized = widenIntegralToDouble(value);
+            }
+            if (widened == null && normalized != value) {
+                widened = new ArrayList<>(values.size());
+                for (int prefix = 0; prefix < index; prefix++) {
+                    widened.add(values.get(prefix));
+                }
+            }
+            if (widened != null) widened.add(normalized);
+        }
+        if (widened == null) return values;
+        return Collections.unmodifiableList(widened);
+    }
+
+    private static Object widenIntegralToDouble(Object value) {
+        if (value instanceof Byte || value instanceof Short
+                || value instanceof Integer || value instanceof Long
+                || value instanceof java.math.BigInteger) {
+            return Double.valueOf(((Number) value).doubleValue());
+        }
+        return value;
     }
 
     /**

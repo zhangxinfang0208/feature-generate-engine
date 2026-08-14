@@ -11,8 +11,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** “按 key 过滤序列后计数”的通用融合执行器。 */
+/**
+ * “按 key 过滤序列后计数”的通用融合执行器。
+ *
+ * <p>它把原本需要为每个候选创建序列视图再聚合的两步计算，转换为“每个请求序列建一次索引，
+ * 每个唯一候选 key 查一次计数”。执行器只认识 {@link SequenceKeyDomain} 和注册的索引提供者，
+ * 不依赖触发融合的业务算子名称，符合 C10 的注册式扩展约束。</p>
+ */
 public final class SequenceKeyCountExecutor implements PhysicalExecutor {
+    // groupIndex 与具体 SequenceValue 一起进入 key，防止在线批中不同请求或不同序列视图互相污染。
     private record SequenceIndexCacheKey(
             int groupIndex,
             SequenceKeyDomain keyDomain,
@@ -32,6 +39,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
 
     @Override
     public void validate(PhysicalNode node) {
+        // 初始化阶段提前验证 key 域已有索引实现，避免请求执行到一半才发现专用执行器不可用。
         indexRegistry.require(keyDomain(node));
     }
 
@@ -47,6 +55,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         SequenceIndexProvider provider = indexRegistry.require(keyDomain);
         ValueHandle sequenceHandle = requireSlot(context, node.inputSlots().get(0));
         ValueHandle keyHandle = requireSlot(context, node.inputSlots().get(1));
+        // 在线分组批的序列按请求组变化，需要逐组建索引；单请求则可直接复用下面的统一候选向量路径。
         if (context.isOnlineBatch()) {
             return executeOnlineBatch(
                     node, context, state, keyDomain, provider, sequenceHandle, keyHandle);
@@ -62,11 +71,13 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
                 .map(provider::normalizeQueryKey)
                 .toList();
 
+        // 候选 key 先规范化再去重，保证语义等价的输入只做一次索引查询。
         Set<Object> uniqueKeys = new LinkedHashSet<>(normalizedKeys);
         state.setDedupCounts(normalizedKeys.size(), uniqueKeys.size());
 
         SequenceIndexCacheKey indexCacheKey = new SequenceIndexCacheKey(0, keyDomain, sequence);
         IndexValue index;
+        // 一级缓存复用序列索引，避免同一请求的多个融合节点重复扫描相同序列视图。
         RuntimeCache.CacheLookup cachedIndex = context.runtimeCache().lookup(
                 CacheKind.SEQUENCE_INDEX, indexCacheKey, state);
         if (cachedIndex.hit()) {
@@ -81,6 +92,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         }
 
         Map<Object, Integer> countsByKey = new LinkedHashMap<>();
+        // 二级缓存保存具体 key 的聚合结果；即使索引实现昂贵查询，也只为唯一 key 计算一次。
         for (Object key : uniqueKeys) {
             SequenceKeyCountCacheKey countCacheKey =
                     new SequenceKeyCountCacheKey(0, keyDomain, sequence, key);
@@ -97,6 +109,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         }
 
         List<Object> result = new ArrayList<>(normalizedKeys.size());
+        // 按原候选 key 顺序 scatter，恢复与输入候选一一对应的输出向量。
         for (Object key : normalizedKeys) result.add(countsByKey.get(key));
         return new CandidateVectorValue(result);
     }
@@ -111,6 +124,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             ValueHandle keyHandle) {
         List<Object> result = new ArrayList<>(context.candidateCount());
         int totalUniqueKeys = 0;
+        // 每个组拥有独立共享序列和候选区间，缓存 key 也带 groupIndex，组间不会错误复用。
         for (int groupIndex = 0; groupIndex < context.onlineGroupCount(); groupIndex++) {
             Object sequenceRaw = requestValue(sequenceHandle, groupIndex);
             if (!(sequenceRaw instanceof SequenceValue sequence)) {
@@ -121,6 +135,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             }
             int start = context.candidateGroupStart(groupIndex);
             int end = context.candidateGroupEnd(groupIndex);
+            // 零候选组不产生输出元素，但仍保持 offsets 对后续组的正确定位。
             if (start == end) continue;
             List<Object> normalizedKeys = new ArrayList<>(end - start);
             for (int candidateIndex = start; candidateIndex < end; candidateIndex++) {
@@ -140,6 +155,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             Set<Object> uniqueKeys = new LinkedHashSet<>(normalizedKeys);
             totalUniqueKeys += uniqueKeys.size();
 
+            // 同一组只构建一次序列索引；sequence 对象包含具体选择视图，缓存不会跨视图误命中。
             SequenceIndexCacheKey indexCacheKey =
                     new SequenceIndexCacheKey(groupIndex, keyDomain, sequence);
             IndexValue index;
@@ -158,6 +174,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             }
 
             Map<Object, Integer> countsByKey = new LinkedHashMap<>();
+            // 查询结果先按唯一 key 收集，随后按 normalizedKeys 顺序追加，保持组内候选顺序不变。
             for (Object key : uniqueKeys) {
                 SequenceKeyCountCacheKey countCacheKey = new SequenceKeyCountCacheKey(
                         groupIndex, keyDomain, sequence, key);
@@ -179,6 +196,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
     }
 
     private static Object requestValue(ValueHandle handle, int groupIndex) {
+        // 序列输入允许请求批或全批广播值，禁止误用候选/离线句柄破坏“一组一序列”的前提。
         if (handle instanceof RequestBatchValue batch) return batch.valueAt(groupIndex);
         if (handle instanceof CandidateBatchValue || handle instanceof CandidateVectorValue
                 || handle instanceof OfflineBatchValue) {
@@ -192,6 +210,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             ValueHandle handle,
             int candidateIndex,
             int groupIndex) {
+        // key 通常来自 CandidateBatchValue；请求级或标量 key 也可按组/全批广播。
         if (handle instanceof CandidateBatchValue batch) return batch.valueAt(candidateIndex);
         if (handle instanceof RequestBatchValue batch) return batch.valueAt(groupIndex);
         if (handle instanceof CandidateVectorValue || handle instanceof OfflineBatchValue) {
@@ -217,6 +236,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
 
     private static List<Object> toCandidateValues(ValueHandle handle, int candidateCount) {
         if (handle instanceof CandidateVectorValue vector) return vector.values();
+        // 非候选句柄按候选数广播，兼容常量或请求级 key，同时保持输出行数不变。
         List<Object> result = new ArrayList<>(candidateCount);
         for (int index = 0; index < candidateCount; index++) result.add(handle.raw());
         return result;

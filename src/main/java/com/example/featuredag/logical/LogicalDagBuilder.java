@@ -203,6 +203,7 @@ public final class LogicalDagBuilder {
     }
 
     private void validateInvocationStyle(AstCall call, FeatureDefinition owner) {
+        // 普通调用只需一次括号；链式/柯里化语法必须由算子元数据显式声明支持。
         if (call.invocationCount() == 1) return;
         OperatorDefinition definition;
         try {
@@ -221,6 +222,7 @@ public final class LogicalDagBuilder {
     }
 
     private Object toLiteralValue(AstNode node) {
+        // 复合字面量在构图期折叠为普通不可变值，不为数组/对象内部元素创建额外逻辑节点。
         if (node instanceof AstLiteral literal) return literal.value();
         if (node instanceof AstArrayLiteral arrayLiteral) {
             List<Object> values = new ArrayList<>();
@@ -339,6 +341,7 @@ public final class LogicalDagBuilder {
     private static void validateDeclaredShapeAndScopes(
             FeatureDefinition definition, LogicalNode producer) {
         if (definition.isRaw()) return;
+        // C6：只有显式声明才参与比对；未声明的形状和实体域完全采用算子链推断结果。
         if (definition.declaredValueShape() != null
                 && definition.declaredValueShape() != producer.valueShape()) {
             throw new DagBuildException(
@@ -402,6 +405,7 @@ public final class LogicalDagBuilder {
     }
 
     private static DataType inferLiteralType(Object value) {
+        // 字面量只做构图所需的最小类型归类；复杂集合统一视为 OBJECT，不推断元素泛型。
         if (value == null) return DataType.UNKNOWN;
         if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
             return DataType.INT;
@@ -422,6 +426,7 @@ public final class LogicalDagBuilder {
     }
 
     private static String canonicalValue(Object value) {
+        // C5：长度前缀编码避免简单字符串拼接歧义；Map 排序后编码，使键迭代顺序不影响去重。
         if (value == null) {
             return frame("N", "");
         }

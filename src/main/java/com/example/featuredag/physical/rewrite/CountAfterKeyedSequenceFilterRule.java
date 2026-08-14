@@ -35,12 +35,14 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
             String rootNodeId,
             ExecutionEnvironment environment,
             OperatorRegistry operatorRegistry) {
+        // 此优化利用同一请求序列服务多个候选 key，仅在线候选批场景才有预期收益。
         if (environment != ExecutionEnvironment.ONLINE) return Optional.empty();
 
         LogicalDag dag = optimized.dag();
         LogicalNode root = dag.node(rootNodeId);
         if (!(root instanceof OperatorNode aggregate)) return Optional.empty();
 
+        // C10：通过算子声明的语义识别“序列基数”，不依赖 count_distinct 等业务名称。
         SequenceCardinalitySemantic cardinality = operatorRegistry
                 .semantic(aggregate.operatorName(), SequenceCardinalitySemantic.class)
                 .orElse(null);
@@ -52,6 +54,7 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
                 aggregate.inputs().get(cardinality.sequenceInputIndex()).nodeId());
         OperatorNode filter;
         List<String> intermediateNodeIds = new ArrayList<>();
+        // 允许聚合直接消费过滤节点，也允许中间隔一个特征输出边界；后者同样必须被安全消费。
         if (aggregateInput instanceof OperatorNode directFilter) {
             filter = directFilter;
         } else if (aggregateInput instanceof FeatureOutputNode featureOutput) {
@@ -76,6 +79,7 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
                 || !optimized.metadata().node(filter.nodeId()).cacheEligible()) {
             return Optional.empty();
         }
+        // C9：共享节点或根节点不能被融合吞掉，否则其他输出路径将失去独立物理槽。
         if (!safeToConsume(optimized, filter.nodeId())) return Optional.empty();
         for (String intermediateNodeId : intermediateNodeIds) {
             if (!safeToConsume(optimized, intermediateNodeId)) return Optional.empty();
@@ -83,9 +87,11 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
 
         NodeInput sequenceInput = filter.inputs().get(filterSemantic.sequenceInputIndex());
         NodeInput keyInput = filter.inputs().get(filterSemantic.keyInputIndex());
+        // key 必须随 ITEM 变化，才能把该模式安排到候选批阶段；请求级 key 不需要此专用路径。
         if (!dag.node(keyInput.nodeId()).entityScopes().contains(EntityScope.ITEM)) {
             return Optional.empty();
         }
+        // C9/C10：融合只暴露序列和候选 key 两个外部输入，并完整记录被消费的逻辑节点。
         List<String> consumedNodeIds = new ArrayList<>();
         consumedNodeIds.add(filter.nodeId());
         consumedNodeIds.addAll(intermediateNodeIds);
@@ -108,6 +114,7 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
     }
 
     private static boolean safeToConsume(OptimizedLogicalPlan optimized, String nodeId) {
+        // 非根且只有一个消费者，才能保证融合后不会切断其他输出或共享分支（C9）。
         return !optimized.dag().rootNodeIds().contains(nodeId)
                 && optimized.metadata().node(nodeId).referenceCount() == 1;
     }

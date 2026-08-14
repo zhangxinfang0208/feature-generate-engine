@@ -25,6 +25,7 @@ final class FeatureOutputEncoder {
 
     static FeatureOutputEncoder from(LogicalDag dag) {
         Map<String, ValueShape> shapes = new LinkedHashMap<>();
+        // 输出形状取自逻辑推断最终结果，而非原始配置声明，确保编码契约与实际节点一致（C6）。
         dag.featureOutputNodeIds().keySet().forEach(featureName ->
                 shapes.put(featureName, dag.featureOutput(featureName).valueShape()));
         return new FeatureOutputEncoder(shapes);
@@ -45,6 +46,7 @@ final class FeatureOutputEncoder {
     private List<?> encodeMaterialized(String featureName, Object value) {
         ValueShape shape = Objects.requireNonNull(
                 outputShapes.get(featureName), "Unknown output feature: " + featureName);
+        // 公共 API 始终返回 List：序列展开为元素列表，标量/对象包装为单元素列表。
         if (shape == ValueShape.SEQUENCE) {
             if (!(value instanceof List<?> list)) {
                 throw new IllegalStateException(

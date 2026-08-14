@@ -20,6 +20,7 @@ public final class SliceByIndicesOperator extends AbstractBuiltinOperator {
 
     @Override
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
+        // 输出元素类型、实体域和序列形状继承第一个输入，indices 只决定选择范围。
         return OperatorSupport.passThroughInference(inputs, 0);
     }
 
@@ -32,6 +33,7 @@ public final class SliceByIndicesOperator extends AbstractBuiltinOperator {
         int sequenceSize = OperatorSupport.sequenceSize(rawSequence, name(), "sequence");
         int indexCount = OperatorSupport.sequenceSize(rawIndices, name(), "indices");
         List<Object> result = new ArrayList<Object>(indexCount);
+        // 每个下标先做整数和边界校验；允许重复下标，并严格保持 indices 的顺序。
         for (int position = 0; position < indexCount; position++) {
             int index = OperatorSupport.asSequenceIndex(
                     OperatorSupport.sequenceElementAt(

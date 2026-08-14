@@ -237,6 +237,7 @@ public final class FeatureDagEngine {
     private OfflineBatchGenerateResult generateOfflineBatch(
             OfflineBatchGenerateRequest request,
             ExecutionObservation observation) {
+        // 整批只创建一个上下文并遍历一次物理计划；各源节点和算子通过 OfflineBatchValue 保持行对齐。
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
@@ -254,6 +255,7 @@ public final class FeatureDagEngine {
                 try {
                     ValueHandle value = execution.feature(output.featureName());
                     if (value instanceof OfflineBatchValue batch) {
+                        // 批输出逐行回填；行数不一致意味着某个 Kernel 破坏了 Batch 等价性约束。
                         if (batch.size() != rows.size()) {
                             throw new IllegalStateException(
                                     "Offline batch output size " + batch.size()
@@ -266,6 +268,7 @@ public final class FeatureDagEngine {
                                             output.featureName(), batch.valueAt(index)));
                         }
                     } else {
+                        // 与行无关的常量结果广播到每一行，不要求上游人为制造重复批值。
                         List<?> encoded = outputEncoder.encode(output.featureName(), value);
                         for (Map<String, List<?>> row : rows) {
                             row.put(output.storeName(), encoded);
@@ -336,6 +339,7 @@ public final class FeatureDagEngine {
             OnlineBatchGenerateRequest request,
             ExecutionObservation observation) {
         List<OnlineRequestGroup> groups = request.groups();
+        // API 边界保持分组结构；ExecutionContext 内部展平候选，以便物理计划只遍历一次。
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
@@ -386,6 +390,7 @@ public final class FeatureDagEngine {
                         for (int candidateIndex = 0;
                                 candidateIndex < batch.size();
                                 candidateIndex++) {
+                            // 用上下文保存的组边界把扁平候选结果还原为调用方传入的分组与组内顺序。
                             int groupIndex = context.candidateGroupIndex(candidateIndex);
                             int indexInGroup = context.candidateIndexInGroup(candidateIndex);
                             candidateResults.get(groupIndex).get(indexInGroup).put(
@@ -426,6 +431,7 @@ public final class FeatureDagEngine {
             int groupCount,
             int candidateCount,
             int offlineRowCount) {
+        // NOOP 或完全关闭采集时不分配请求级观测对象，核心执行路径只多一次空判断。
         if (runtimeObserver == RuntimeObserver.NOOP) return null;
         ObservabilityOptions options = observabilityController.options();
         if (!options.canCaptureAnyRequest()) return null;
@@ -443,6 +449,7 @@ public final class FeatureDagEngine {
             ExecutionPhase phase,
             Supplier<T> operation) {
         if (observation == null) return operation.get();
+        // 解码、运行、编码共享同一计时包装；异常先记录所属阶段，再原样交给上层转换。
         long start = System.nanoTime();
         try {
             return operation.get();
@@ -469,6 +476,7 @@ public final class FeatureDagEngine {
     private void publishObservation(ExecutionObservation observation) {
         if (observation == null) return;
         long totalDurationNanos = observation.elapsedNanos();
+        // 普通未采样请求直接丢弃；失败和慢请求可由配置强制保留。
         if (!observation.shouldPublish(totalDurationNanos)) return;
         try {
             runtimeObserver.onExecutionCompleted(observation.snapshot(
@@ -486,6 +494,7 @@ public final class FeatureDagEngine {
     private boolean deterministicSample(String executionId, double sampleRate) {
         if (sampleRate <= 0.0) return false;
         if (sampleRate >= 1.0) return true;
+        // planId + executionId 的稳定哈希让同一请求在重试和多实例间得到一致采样结论。
         long hash = hashText(0xcbf29ce484222325L, planId);
         hash ^= 0xff;
         hash *= 0x100000001b3L;
@@ -521,11 +530,13 @@ public final class FeatureDagEngine {
             PhysicalRewriteRegistry rewriteRules = PhysicalRewriteRegistry.standard();
             SequenceIndexRegistry sequenceIndexes = SequenceIndexRegistry.standard();
             PhysicalExecutorRegistry executors = PhysicalExecutorRegistry.standard(sequenceIndexes);
+            // 各扩展点共用同一组注册实例，保证逻辑推断、物理改写和运行执行看到一致能力集合。
             // C1：按「定义 → 逻辑 → 规划 → 物理 → 运行时」逐层构建，各层产物依次作为下一层的输入
             LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), operators)
                     .build(mapped.definitions(), mapped.targetFeatures());
             PhysicalPlan plan = new PhysicalPlanner(operators, rewriteRules).plan(
                     new LogicalDagOptimizer(operators).analyze(dag), options.environment(), planId);
+            // 在引擎发布前验证全部专用 executorId 和配置，使初始化失败而不是首个请求失败。
             executors.validate(plan);
             FeatureInputDecoder inputDecoder = FeatureInputDecoder.from(dag);
             FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
@@ -596,6 +607,7 @@ public final class FeatureDagEngine {
         }
 
         private void markFailure(ExecutionPhase phase, Throwable error) {
+            // 只保留最初失败阶段；后续包装异常不能覆盖最接近根因的位置。
             if (failure == null) {
                 failurePhase = phase;
                 failure = error;
@@ -626,6 +638,7 @@ public final class FeatureDagEngine {
                 long totalDurationNanos) {
             ObservationDetailLevel detailLevel = options.detailLevel();
             List<NodeExecutionSnapshot> nodes = new ArrayList<>();
+            // 节点级快照按物理计划顺序生成，便于直接还原执行链；不复制结果值或 Throwable。
             if (context != null && detailLevel.includesNodes()) {
                 for (PhysicalNode node : plan.nodes()) {
                     RuntimeNodeState state = context.nodeStates().get(node.physicalNodeId());
@@ -650,11 +663,13 @@ public final class FeatureDagEngine {
             int logicalNodeCount = plan.nodes().stream()
                     .mapToInt(node -> node.logicalNodeIds().size())
                     .sum();
+            // 一个物理节点消费多个逻辑节点即视为融合，用于观测优化是否实际生效。
             int fusedNodeCount = (int) plan.nodes().stream()
                     .filter(node -> node.logicalNodeIds().size() > 1)
                     .count();
             SequenceMetrics sequenceMetrics = new SequenceMetrics();
             if (context != null) {
+                // 只从序列源节点统计输入规模，避免下游多个视图重复计算同一业务序列。
                 for (PhysicalNode node : plan.nodes()) {
                     if (node.executorType() != ExecutorType.SOURCE_BINDING
                             || node.logicalValueShape() != ValueShape.SEQUENCE) {
@@ -698,6 +713,7 @@ public final class FeatureDagEngine {
         private static void collectSequenceMetrics(
                 Object value,
                 SequenceMetrics metrics) {
+            // 同时兼容单值和三种批句柄，递归统计批内每个序列元素。
             if (value == null) return;
             if (value instanceof SequenceValue sequence) {
                 metrics.record(sequence.size());

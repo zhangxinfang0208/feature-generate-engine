@@ -41,6 +41,7 @@ public final class DiscreteOperator extends AbstractBuiltinOperator {
         List<?> values = OperatorSupport.asList(value, name(), "discrete_key");
         List<BigDecimal> boundaries = new ArrayList<BigDecimal>(values.size());
         BigDecimal previous = null;
+        // BigDecimal 保留输入数值精度，避免 double 舍入影响临界点归桶结果。
         for (int index = 0; index < values.size(); index++) {
             Object boundary = values.get(index);
             if (!(boundary instanceof Number)) {
@@ -62,6 +63,7 @@ public final class DiscreteOperator extends AbstractBuiltinOperator {
 
     private static int bucket(BigDecimal value, List<BigDecimal> boundaries) {
         int bucket = 0;
+        // 相等时进入右侧桶，因此边界 [10, 20] 对应 (-∞,10)、[10,20)、[20,+∞) 三个桶。
         for (BigDecimal boundary : boundaries) {
             if (value.compareTo(boundary) >= 0) bucket++;
         }

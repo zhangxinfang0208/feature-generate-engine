@@ -49,9 +49,11 @@ public final class PhysicalPlanner {
 
     public PhysicalPlan plan(OptimizedLogicalPlan optimized, ExecutionEnvironment environment, String planId) {
         LogicalDag dag = optimized.dag();
+        // 规则选择只读取逻辑 DAG 与规划元数据，先得到不重叠改写集合，再统一进行 L1→L2 转换（C8）。
         Map<String, PhysicalRewrite> rewrites = rewriteRegistry.select(
                 optimized, environment, operatorRegistry);
         Set<String> skippedLogicalNodes = new LinkedHashSet<>();
+        // C9：融合根仍负责产出最终槽；其余已消费节点从逐节点转换中跳过，避免重复执行和物化。
         for (PhysicalRewrite rewrite : rewrites.values()) {
             for (String consumedNodeId : rewrite.consumedNodeIds()) {
                 if (!consumedNodeId.equals(rewrite.rootNodeId())) {
@@ -73,6 +75,7 @@ public final class PhysicalPlanner {
             String outputSlot = "slot:" + (++sequence);
             PhysicalNode physicalNode;
             if (rewrite != null) {
+                // C9：融合节点只连接模式外部的依赖槽，模式内部的边由专用执行器一次性完成。
                 List<String> inputSlots = rewrite.externalInputNodeIds().stream()
                         .map(inputNodeId -> requireSlot(logicalSlots, inputNodeId))
                         .toList();
@@ -109,6 +112,7 @@ public final class PhysicalPlanner {
 
             if (logicalNode instanceof FeatureOutputNode output
                     && dag.rootNodeIds().contains(output.nodeId())) {
+                // 只有目标根建立对外 feature→slot 映射；内部 FEATURE_OUTPUT 仍可作为普通依赖参与执行。
                 outputFeatureSlots.put(output.featureName(), physicalNode.outputSlot());
             }
         }
@@ -134,6 +138,7 @@ public final class PhysicalPlanner {
         String executorId;
         Map<String, Object> config = new LinkedHashMap<>();
         if (node instanceof SourceNode source) {
+            // SOURCE_BINDING 配置保留外部绑定名、默认值和实体域，运行时据此选择共享/候选输入容器。
             executorType = ExecutorType.SOURCE_BINDING;
             executorId = PhysicalExecutorIds.SOURCE_BINDING;
             config.put("featureName", source.featureName());
@@ -145,6 +150,7 @@ public final class PhysicalPlanner {
             executorId = PhysicalExecutorIds.LITERAL;
             config.put("value", literal.value());
         } else if (node instanceof OperatorNode operator) {
+            // 通用算子的 Kernel ID 与可用 Batch 实现写入计划，运行时无需重新探测注册能力（C10）。
             executorType = ExecutorType.GENERIC_OPERATOR;
             executorId = PhysicalExecutorIds.GENERIC_OPERATOR;
             OperatorDefinition definition = operatorRegistry.require(operator.operatorName());
@@ -174,6 +180,7 @@ public final class PhysicalPlanner {
         ExecutionMode mode = environment == ExecutionEnvironment.OFFLINE
                 ? ExecutionMode.BATCH
                 : (stage == ExecutionStage.REQUEST_SHARED ? ExecutionMode.REQUEST : ExecutionMode.BATCH);
+        // C10：阶段、模式、缓存与物化策略在此固化；运行时只执行这些决策。
         CachePolicy cache = cacheFor(metadata, environment, stage);
         MaterializationPolicy materialization = materializationFor(node);
 
@@ -210,6 +217,7 @@ public final class PhysicalPlanner {
             NodePlanningMetadata metadata,
             ExecutionEnvironment environment,
             ExecutionStage stage) {
+        // 非确定性或有副作用的节点在规划期直接排除，运行时不会再尝试缓存。
         if (!metadata.cacheEligible()) return CachePolicy.NONE;
         if (environment == ExecutionEnvironment.ONLINE && stage == ExecutionStage.REQUEST_SHARED) {
             return CachePolicy.REQUEST;
@@ -218,6 +226,7 @@ public final class PhysicalPlanner {
     }
 
     private static MaterializationPolicy materializationFor(LogicalNode node) {
+        // 序列优先保留视图以共享底层块和选择范围；标量等普通值延迟物化到输出边界。
         if (node.valueShape() == ValueShape.SEQUENCE) return MaterializationPolicy.VIEW;
         return MaterializationPolicy.LAZY;
     }

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/** 返回目标值在序列中的全部逻辑下标，未命中时返回不可变空列表。 */
 public final class FindIndicesOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public FindIndicesOperator() {
@@ -35,6 +36,7 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         List<Object> result = new ArrayList<Object>(call.rowCount());
+        // 候选批可能用多个 target 查询同一序列，先按序列身份构建 value→positions 索引再复用。
         Map<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>> indexes =
                 new LinkedHashMap<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
@@ -62,6 +64,7 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
     private List<Integer> find(Object rawSequence, Object target) {
         int sequenceSize = OperatorSupport.sequenceSize(rawSequence, name(), "sequence");
         List<Integer> result = new ArrayList<Integer>();
+        // Objects.equals 同时支持 null 元素和 null target，语义与索引路径保持一致。
         for (int index = 0; index < sequenceSize; index++) {
             if (Objects.equals(
                     OperatorSupport.sequenceElementAt(rawSequence, index, name(), "sequence"),
@@ -86,6 +89,7 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
             positions.add(index);
         }
         Map<Object, List<Integer>> result = new LinkedHashMap<Object, List<Integer>>();
+        // 对外缓存前同时冻结位置列表和索引 Map，避免批内后续行意外修改共享结果。
         for (Map.Entry<Object, List<Integer>> entry : mutable.entrySet()) {
             result.put(entry.getKey(), OperatorSupport.immutableList(entry.getValue()));
         }

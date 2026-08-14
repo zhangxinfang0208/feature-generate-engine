@@ -24,6 +24,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 配置层适配器：把面向使用方的宽松配置模型收敛为引擎内部的严格定义模型。
+ *
+ * <p>本类负责默认值、枚举、开关、实体域覆盖和输出顺序等配置语义；表达式本身只在这里
+ * 做引用完整性预检，真正的类型/形状推断仍由逻辑层完成，从而保持 C1 的单向分层依赖。</p>
+ */
 public final class FeatureConfigMapper {
     private FeatureConfigMapper() {}
 
@@ -43,6 +49,7 @@ public final class FeatureConfigMapper {
             Set<String> requestedTargets,
             Map<String, Set<EntityScope>> scopeOverrides,
             Set<EntityScope> defaultBaseScopes) {
+        // 第一阶段：统一可选参数和集合默认值，后续代码只处理非 null 的规范化输入。
         Objects.requireNonNull(config, "config");
         requestedTargets = requestedTargets == null ? Set.of() : requestedTargets;
         scopeOverrides = scopeOverrides == null ? Map.of() : scopeOverrides;
@@ -54,6 +61,7 @@ public final class FeatureConfigMapper {
         List<FeatureDefinition> definitions = new ArrayList<>();
         List<DerivedEntry> enabledDerived = new ArrayList<>();
         int declarationIndex = 0;
+        // 第二阶段：逐条配置转换为不可变 FeatureDefinition；禁用项只保留索引信息用于引用校验。
         for (FeatureConfig feature : config.features()) {
             String name = requireText(feature.name(), "features[].name");
             DefinitionType definitionType = parseDefinitionType(feature.definitionType(), name);
@@ -72,6 +80,7 @@ public final class FeatureConfigMapper {
                     definitionType, enabled, outputPolicy, declarationIndex));
 
             if (definitionType == DefinitionType.BASE) {
+                // C2：BASE 对应 RAW，只允许源绑定，不允许表达式；实体域可由初始化参数覆盖。
                 requireBlank(feature.expression(), "expression for BASE feature " + name);
                 String sourceBinding = requireText(feature.rawName(), "raw_name for BASE feature " + name);
                 Set<EntityScope> scopes = resolveScopes(name, feature.entityScopes(), scopeOverrides);
@@ -93,6 +102,7 @@ public final class FeatureConfigMapper {
                             .build());
                 }
             } else {
+                // C2：DERIVED 必须携带表达式；声明形状和实体域将在逻辑推断后按 C6 再次核对。
                 String expression = requireText(feature.expression(), "expression for DERIVED feature " + name);
                 Set<EntityScope> configuredScopes = resolveScopes(name, feature.entityScopes(), Map.of());
                 if (enabled) {
@@ -115,8 +125,10 @@ public final class FeatureConfigMapper {
             declarationIndex++;
         }
 
+        // 在目标裁剪前检查所有启用派生特征，避免禁用依赖因“暂未选为目标”而潜伏到后续初始化。
         validateDisabledReferences(entries, enabledDerived);
 
+        // 第三阶段：确定真正需要构图的根，并生成稳定排序的外部输出描述。
         Set<String> targets = selectTargets(entries, enabledDerived, requestedTargets);
         List<FeatureOutputDescriptor> outputs = enabledDerived.stream()
                 .filter(entry -> targets.contains(entry.definition().name()))
@@ -180,6 +192,7 @@ public final class FeatureConfigMapper {
             Map<String, DefinitionEntry> entries,
             List<DerivedEntry> enabledDerived,
             Set<String> requestedTargets) {
+        // 未显式指定时，以所有启用且允许输出的派生特征作为根；INTERNAL_ONLY 只能作为中间依赖。
         if (requestedTargets.isEmpty()) {
             Set<String> result = new LinkedHashSet<>();
             enabledDerived.stream()
@@ -188,6 +201,7 @@ public final class FeatureConfigMapper {
                     .forEach(entry -> result.add(entry.definition().name()));
             return result;
         }
+        // 显式目标必须同时满足“存在、派生、启用、可输出”，尽量在构图前给出配置级错误。
         for (String requested : requestedTargets) {
             String name = requireText(requested, "target feature");
             DefinitionEntry entry = entries.get(name);
@@ -206,6 +220,7 @@ public final class FeatureConfigMapper {
             List<DerivedEntry> enabledDerived) {
         ExpressionParser parser = new ExpressionParser();
         for (DerivedEntry entry : enabledDerived) {
+            // 此处只遍历 AST 收集引用，不生成或持久化逻辑节点；AST 生命周期仍止于构建阶段（C3）。
             Set<String> references = new LinkedHashSet<>();
             collectFeatureReferences(
                     parser.parse(entry.definition().expressionContent()), references);
@@ -221,6 +236,7 @@ public final class FeatureConfigMapper {
     }
 
     private static void collectFeatureReferences(AstNode node, Set<String> references) {
+        // 数组和对象字面量也可能嵌套特征引用，因此需要递归覆盖全部复合 AST 分支。
         if (node instanceof AstFeatureRef featureRef) {
             references.add(featureRef.featureName());
         } else if (node instanceof AstCall call) {
@@ -241,6 +257,7 @@ public final class FeatureConfigMapper {
     private static FeatureOutputDescriptor toOutputDescriptor(DerivedEntry entry) {
         FeatureConfig config = entry.config();
         String name = entry.definition().name();
+        // store_name 缺省时沿用特征名；未配置 order 的输出排在显式顺序之后。
         String storeName = config.storeName() == null || config.storeName().isBlank()
                 ? name : config.storeName().trim();
         int order = config.order() == null ? Integer.MAX_VALUE : config.order();
@@ -248,6 +265,7 @@ public final class FeatureConfigMapper {
     }
 
     private static Comparator<FeatureOutputDescriptor> outputComparator() {
+        // declarationIndex 作为稳定次序，保证相同 order 的配置在多次初始化中输出顺序一致。
         return Comparator.comparingInt(FeatureOutputDescriptor::order)
                 .thenComparingInt(FeatureOutputDescriptor::declarationIndex);
     }
@@ -271,6 +289,7 @@ public final class FeatureConfigMapper {
         }
         Set<EntityScope> override = overrides.get(featureName);
         if (override != null) {
+            // 覆盖项存在即完全替换配置值；显式空集合留给调用方表示“未声明”，再由上层应用默认域。
             if (override.isEmpty()) return Set.of();
             return Collections.unmodifiableSet(new LinkedHashSet<>(override));
         }
@@ -289,6 +308,7 @@ public final class FeatureConfigMapper {
     }
 
     private static Object convertDefault(Object value, DataType type, String featureName) {
+        // 默认值在配置边界完成类型收窄，运行时命中默认分支时无需再次猜测或转换类型。
         if (value == null || type == DataType.UNKNOWN) return value;
         return switch (type) {
             case STRING -> {
@@ -299,6 +319,7 @@ public final class FeatureConfigMapper {
                 if (!(value instanceof Number number)) throw invalidDefault(featureName, type, value);
                 double doubleValue = number.doubleValue();
                 long longValue = number.longValue();
+                // 同时拒绝小数和超出 int 范围的整数，避免静默截断改变特征语义。
                 if (doubleValue != longValue || longValue < Integer.MIN_VALUE || longValue > Integer.MAX_VALUE) {
                     throw invalidDefault(featureName, type, value);
                 }

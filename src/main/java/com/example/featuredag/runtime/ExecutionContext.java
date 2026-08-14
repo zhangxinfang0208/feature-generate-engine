@@ -42,6 +42,7 @@ public final class ExecutionContext {
             List<Map<String, Object>> onlineSharedGroups,
             int[] candidateGroupOffsets,
             boolean onlineBatch) {
+        // 输入容器在请求入口复制并冻结，确保执行期间看到稳定快照；结果槽、缓存和状态则仅在本上下文内可变。
         this.executionId = Objects.requireNonNull(executionId, "executionId");
         this.environment = Objects.requireNonNull(environment, "environment");
         this.sharedSourceValues = Collections.unmodifiableMap(new LinkedHashMap<>(sharedSourceValues));
@@ -63,6 +64,7 @@ public final class ExecutionContext {
     }
 
     public static ExecutionContext offlineRow(String executionId, Map<String, Object> rowValues) {
+        // 离线单行沿用共享源值容器，但不启用批标记，因此算子无批句柄输入时走 Single Kernel。
         return new ExecutionContext(
                 executionId, ExecutionEnvironment.OFFLINE,
                 rowValues, List.of(), List.of(), false,
@@ -73,6 +75,7 @@ public final class ExecutionContext {
             String executionId,
             List<Map<String, Object>> rows) {
         Objects.requireNonNull(rows, "rows");
+        // 离线整批以行列表为唯一变化维度，SOURCE_BINDING 会产出 OfflineBatchValue。
         return new ExecutionContext(
                 executionId, ExecutionEnvironment.OFFLINE,
                 Map.of(), List.of(), rows, true,
@@ -84,6 +87,7 @@ public final class ExecutionContext {
             Map<String, Object> userAndSceneValues,
             List<Map<String, Object>> candidates) {
         Objects.requireNonNull(candidates, "candidates");
+        // 单个在线请求也保存一组 offsets，使专用执行器可复用与在线分组批一致的候选定位语义。
         return new ExecutionContext(
                 requestId, ExecutionEnvironment.ONLINE,
                 userAndSceneValues, candidates, List.of(), false,
@@ -106,6 +110,7 @@ public final class ExecutionContext {
         }
         List<Map<String, Object>> flattenedCandidates = new ArrayList<>();
         int[] offsets = new int[groupExecutionIds.size() + 1];
+        // 在线分组批先展平成连续候选域；offsets 保留组边界，供共享值广播、报错定位和结果还原。
         for (int groupIndex = 0; groupIndex < candidateGroups.size(); groupIndex++) {
             List<Map<String, Object>> group = Objects.requireNonNull(
                     candidateGroups.get(groupIndex), "candidate group " + groupIndex);
@@ -155,6 +160,7 @@ public final class ExecutionContext {
     }
 
     private void validateOnlineBatchLayout() {
+        // offsets 必须覆盖 [0, candidateCount] 且单调不减；相等的相邻值合法，表示该组没有候选。
         if (onlineGroupExecutionIds.size() != onlineSharedGroups.size()) {
             throw new IllegalArgumentException(
                     "Online batch group ids and shared groups must have equal size");
@@ -175,6 +181,7 @@ public final class ExecutionContext {
 
     private int[] buildCandidateGroupIndexes() {
         int[] indexes = new int[candidates.size()];
+        // 预建 candidateIndex → groupIndex 的反向索引，避免运行时每次按 offsets 线性查找。
         for (int groupIndex = 0; groupIndex + 1 < candidateGroupOffsets.length; groupIndex++) {
             Arrays.fill(
                     indexes,

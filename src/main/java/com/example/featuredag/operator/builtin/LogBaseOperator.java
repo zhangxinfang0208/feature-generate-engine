@@ -36,6 +36,7 @@ public final class LogBaseOperator extends AbstractBuiltinOperator {
         validateBase(base);
         validateValue(value);
         validateUpbound(upbound);
+        // 先按 upbound 截断再使用换底公式；Single Kernel 是标量适配 Batch 路径的语义基准。
         return Math.log(Math.min(value, upbound)) / Math.log(base);
     }
 

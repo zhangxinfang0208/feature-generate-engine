@@ -35,6 +35,7 @@ final class FeatureInputDecoder {
         List<SourceSpec> sources = dag.orderedNodes().stream()
                 .filter(SourceNode.class::isInstance)
                 .map(SourceNode.class::cast)
+                // 解码规则直接取自已验证的逻辑源节点，避免 API 层重新解释原始配置。
                 .map(source -> new SourceSpec(
                         source.sourceBinding(),
                         source.outputType(),
@@ -82,6 +83,7 @@ final class FeatureInputDecoder {
             List<SourceSpec> sources) {
         Map<String, Object> result = new LinkedHashMap<>();
         for (SourceSpec source : sources) {
+            // 缺失值不在解码层报错：运行时 SOURCE_BINDING 还需要按实体域检查默认值和候选位置。
             if (!external.containsKey(source.sourceBinding())) continue;
             List<?> values = external.get(source.sourceBinding());
             Object decoded = decodeValue(source, values);
@@ -96,12 +98,14 @@ final class FeatureInputDecoder {
                     "Feature " + source.sourceBinding() + " values must not be null");
         }
         if (source.shape() == ValueShape.SEQUENCE) {
+            // 普通序列只冻结外部 List；事件序列额外转换为支持视图和索引的列式运行时表示。
             if (source.dataType() == DataType.EVENT_SEQUENCE) {
                 return decodeEventSequence(source.sourceBinding(), values);
             }
             return FeatureValueCollections.immutableList(values);
         }
         if (source.shape() == ValueShape.CANDIDATE_VECTOR) {
+            // 向量保持全部元素；标量则遵循公共 API 的单元素 List 契约，只读取首项。
             return FeatureValueCollections.immutableList(values);
         }
         if (values.isEmpty()) {
@@ -143,6 +147,7 @@ final class FeatureInputDecoder {
         }
         String sequenceId = sourceBinding + "#"
                 + Integer.toUnsignedString(System.identityHashCode(values));
+        // sequenceId 表示本次外部序列实例，结合版本号参与视图/索引缓存隔离。
         return new SequenceBlock(sequenceId, 0L, events);
     }
 

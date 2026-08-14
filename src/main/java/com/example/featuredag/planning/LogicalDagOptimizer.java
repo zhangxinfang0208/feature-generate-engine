@@ -40,12 +40,14 @@ public final class LogicalDagOptimizer {
     }
 
     public OptimizedLogicalPlan analyze(LogicalDag dag) {
+        // 全图事实先独立计算，再按拓扑序汇总到每个节点，便于新增规划指标而不污染逻辑模型。
         Map<String, Integer> referenceCounts = computeReferenceCounts(dag);
         Map<String, Set<String>> reachableRoots = computeReachableRoots(dag);
         Map<String, NodePlanningMetadata> result = new LinkedHashMap<>();
 
         for (String nodeId : dag.topologicalOrder()) {
             LogicalNode node = dag.node(nodeId);
+            // C8：这里只计算物理规划需要的“事实”，不把规模或缓存资格写回逻辑节点。
             boolean cacheEligible = true;
             long estimatedSize = switch (node.valueShape()) {
                 case SEQUENCE -> ESTIMATED_SEQUENCE_BYTES;
@@ -56,8 +58,10 @@ public final class LogicalDagOptimizer {
             if (node instanceof OperatorNode operator) {
                 OperatorDefinition definition = operatorRegistry.find(operator.operatorName()).orElse(null);
                 if (definition == null) {
+                    // 注册表缺失时保守禁用缓存；真正的未知算子通常已在逻辑构建阶段被拒绝。
                     cacheEligible = false;
                 } else {
+                    // 只有确定且无副作用的求值才允许复用，避免缓存改变可观察语义。
                     cacheEligible = definition.deterministic() && definition.sideEffectFree();
                 }
             }

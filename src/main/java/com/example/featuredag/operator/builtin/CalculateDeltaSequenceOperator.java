@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+/** 按元素计算 sequence[i] - base，输出长度和顺序与输入序列完全一致。 */
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     public CalculateDeltaSequenceOperator() {
@@ -38,6 +40,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         List<Object> result = new ArrayList<Object>(call.rowCount());
+        // 同一请求组内若序列对象与 base 都相同，只计算一次；追加结果时仍严格保持 Batch 行顺序。
         Map<DeltaBatchKey, Object> values = new LinkedHashMap<DeltaBatchKey, Object>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
             try {
@@ -67,6 +70,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
     private List<Double> calculateWithBase(Object rawSequence, double base) {
         List<?> sequence = OperatorSupport.asList(rawSequence, name(), "sequence");
         List<Double> result = new ArrayList<Double>(sequence.size());
+        // 每个元素都要求是有限数，防止 NaN/Infinity 悄悄传播到后续特征。
         for (int index = 0; index < sequence.size(); index++) {
             Object element = sequence.get(index);
             if (element instanceof Map<?, ?>) {
@@ -89,6 +93,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
 
         private DeltaBatchKey(int groupIndex, Object sequence, double base) {
             this.groupIndex = groupIndex;
+            // 序列按对象身份比较，避免对长序列做深比较，也防止不同视图因内容相同而误复用。
             this.sequence = sequence;
             this.baseBits = Double.doubleToLongBits(base);
         }

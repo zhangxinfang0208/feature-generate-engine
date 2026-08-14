@@ -19,6 +19,7 @@ public final class PhysicalRewriteRegistry {
 
     public PhysicalRewriteRegistry register(PhysicalRewriteRule rule) {
         Objects.requireNonNull(rule, "rule");
+        // ruleId 是计划配置和诊断中的稳定标识，重复注册通常意味着装配错误。
         PhysicalRewriteRule previous = rules.putIfAbsent(rule.ruleId(), rule);
         if (previous != null) {
             throw new IllegalArgumentException("Physical rewrite rule already registered: " + rule.ruleId());
@@ -36,11 +37,13 @@ public final class PhysicalRewriteRegistry {
         }
 
         List<PhysicalRewrite> candidates = new ArrayList<>();
+        // 每条规则都可从任意拓扑节点尝试匹配；规则本身负责验证模式、环境和融合安全条件。
         for (String nodeId : optimized.dag().topologicalOrder()) {
             for (PhysicalRewriteRule rule : rules.values()) {
                 rule.match(optimized, nodeId, environment, operatorRegistry).ifPresent(candidates::add);
             }
         }
+        // C8/C9：先按优先级和收益择优，再用拓扑位置与规则 ID 消除遍历顺序带来的不确定性。
         candidates.sort(Comparator
                 .comparingInt(PhysicalRewrite::priority).reversed()
                 .thenComparing(Comparator.comparingLong(PhysicalRewrite::estimatedBenefit).reversed())
@@ -50,12 +53,14 @@ public final class PhysicalRewriteRegistry {
         Set<String> consumed = new LinkedHashSet<>();
         List<PhysicalRewrite> accepted = new ArrayList<>();
         for (PhysicalRewrite candidate : candidates) {
+            // C9：一个逻辑节点最多属于一个融合结果，避免两个物理节点重复消费同一子图。
             if (candidate.consumedNodeIds().stream().anyMatch(consumed::contains)) continue;
             accepted.add(candidate);
             consumed.addAll(candidate.consumedNodeIds());
         }
         accepted.sort(Comparator.comparingInt(rewrite -> topologicalIndex.get(rewrite.rootNodeId())));
 
+        // 以融合根索引，PhysicalPlanner 遍历到根时即可原位生成专用物理节点。
         Map<String, PhysicalRewrite> result = new LinkedHashMap<>();
         for (PhysicalRewrite rewrite : accepted) result.put(rewrite.rootNodeId(), rewrite);
         return Map.copyOf(result);

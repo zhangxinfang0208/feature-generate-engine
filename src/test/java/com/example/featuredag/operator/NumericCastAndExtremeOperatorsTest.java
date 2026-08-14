@@ -31,7 +31,7 @@ import static org.junit.Assert.assertTrue;
 public final class NumericCastAndExtremeOperatorsTest {
     @Test
     public void registryManifestAndMetadata() {
-        assertEquals(12, InitialBusinessOperators.definitions().size());
+        assertEquals(16, InitialBusinessOperators.definitions().size());
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String name : new String[] {"to_int", "to_bigint", "min", "max"}) {
             OperatorDefinition definition = registry.require(name);

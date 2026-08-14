@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 12 个算子（首期 8 个业务算子 + 数值转换/极值算子）：
+`OperatorRegistry.standard()` 注册以下 16 个算子（首期 8 个业务算子 + 数值转换/极值/算术算子）：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -22,10 +22,14 @@
 | `to_bigint` | `to_bigint(value)` | 数值标量转 64 位 bigint 载体，小数向零截断，超范围失败 |
 | `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
 | `max` | `max(value1, value2, ...)` | 计算数值标量最大值，精确十进制比较，相等保留最左输入 |
+| `add` | `add(value1, value2)` | 数值标量加法，精确十进制求和后按输入载体定宽 |
+| `sub` | `sub(value1, value2)` | 数值标量减法（左操作数减右操作数） |
+| `mul` | `mul(value1, value2)` | 数值标量乘法，整型溢出直接失败不回绕 |
+| `div` | `div(value1, value2)` | 数值标量除法，固定 DOUBLE；分母为 0 返回 0.0（防除 0） |
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 8 个（`discrete`、`log_base`、`slice_by_indices`、`get_seq_length`、`to_int`、`to_bigint`、`min`、`max`）实测批开销反噬或无可复用中间量，不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 12 个（`discrete`、`log_base`、`slice_by_indices`、`get_seq_length`、`to_int`、`to_bigint`、`min`、`max`、`add`、`sub`、`mul`、`div`）实测批开销反噬或无可复用中间量，不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
 ## 目录结构
 
@@ -41,7 +45,7 @@ src/main/java/com/example/featuredag/
 ├── physical     # 物理计划与改写规则
 ├── runtime      # 计划执行
 └── operator
-    └── builtin  # 标准算子独立实现（首期 8 个 + 数值转换/极值 4 个）与显式注册清单
+    └── builtin  # 标准算子独立实现（首期 8 个 + 数值转换/极值/算术 8 个）与显式注册清单
 ```
 
 仓库不包含依赖非首期算子的 Demo 或 JMH 基准代码。

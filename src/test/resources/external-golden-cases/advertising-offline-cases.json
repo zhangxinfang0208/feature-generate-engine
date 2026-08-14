@@ -1,0 +1,168 @@
+{
+  "suite_name": "advertising_fatigue_offline_golden_cases",
+  "schema_version": 1,
+  "feature_set_file": "advertising-model-feature-set.json",
+  "environment": "OFFLINE",
+  "comparison": {
+    "array_order_sensitive": true,
+    "numeric_absolute_tolerance": 1.0e-9
+  },
+  "target_features": [
+    "same_industry_positions",
+    "same_industry_ads",
+    "same_industry_actions",
+    "same_industry_action_tokens",
+    "distinct_same_industry_action_count",
+    "same_industry_event_count",
+    "ad_fatigue_bucket",
+    "ad_fatigue_log2",
+    "fatigue_adjusted_score_components"
+  ],
+  "cases": [
+    {
+      "case_id": "new_user_without_ad_history",
+      "business_scenario": "新用户没有广告历史，同业疲劳度为最低档，候选广告分数组件不扣减。",
+      "input": {
+        "execution_id": "ad-new-user",
+        "row_values": {
+          "candidate_ad_industry": ["AUTO"],
+          "recent_ad_industry_seq": [],
+          "recent_ad_action_seq": [],
+          "candidate_score_component_seq": [1.2, 2.5, 4.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "ad-new-user",
+        "feature_values": {
+          "same_industry_positions": [],
+          "same_industry_ads": [],
+          "same_industry_actions": [],
+          "same_industry_action_tokens": [],
+          "distinct_same_industry_action_count": [0],
+          "same_industry_event_count": [0],
+          "ad_fatigue_bucket": [1],
+          "ad_fatigue_log2": [0.0],
+          "fatigue_adjusted_score_components": [1.2, 2.5, 4.0]
+        }
+      }
+    },
+    {
+      "case_id": "history_has_no_same_industry_ad",
+      "business_scenario": "用户近期看过广告，但没有汽车行业广告，因此候选汽车广告不产生同业疲劳惩罚。",
+      "input": {
+        "execution_id": "ad-no-same-industry",
+        "row_values": {
+          "candidate_ad_industry": ["AUTO"],
+          "recent_ad_industry_seq": ["FINANCE", "TRAVEL"],
+          "recent_ad_action_seq": ["expose", "click"],
+          "candidate_score_component_seq": [-1.0, 0.5, 2.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "ad-no-same-industry",
+        "feature_values": {
+          "same_industry_positions": [],
+          "same_industry_ads": [],
+          "same_industry_actions": [],
+          "same_industry_action_tokens": [],
+          "distinct_same_industry_action_count": [0],
+          "same_industry_event_count": [0],
+          "ad_fatigue_bucket": [1],
+          "ad_fatigue_log2": [0.0],
+          "fatigue_adjusted_score_components": [-1.0, 0.5, 2.0]
+        }
+      }
+    },
+    {
+      "case_id": "one_same_industry_click",
+      "business_scenario": "用户近期点击过一次游戏广告，候选游戏广告进入单次触达疲劳档。",
+      "input": {
+        "execution_id": "ad-one-same-industry",
+        "row_values": {
+          "candidate_ad_industry": ["GAME"],
+          "recent_ad_industry_seq": ["GAME", "FINANCE", "TRAVEL"],
+          "recent_ad_action_seq": ["click", "expose", "click"],
+          "candidate_score_component_seq": [1.0, 4.0, 8.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "ad-one-same-industry",
+        "feature_values": {
+          "same_industry_positions": [0],
+          "same_industry_ads": ["GAME"],
+          "same_industry_actions": ["click"],
+          "same_industry_action_tokens": ["GAME|click"],
+          "distinct_same_industry_action_count": [1],
+          "same_industry_event_count": [1],
+          "ad_fatigue_bucket": [2],
+          "ad_fatigue_log2": [1.0],
+          "fatigue_adjusted_score_components": [0.0, 3.0, 7.0]
+        }
+      }
+    },
+    {
+      "case_id": "three_same_industry_events_with_duplicate_exposure",
+      "business_scenario": "用户近期接触三次游戏广告，其中两次只是曝光；验证行为去重、位置顺序和三次触达边界。",
+      "input": {
+        "execution_id": "ad-three-same-industry",
+        "row_values": {
+          "candidate_ad_industry": ["GAME"],
+          "recent_ad_industry_seq": ["GAME", "FINANCE", "GAME", "GAME", "TRAVEL"],
+          "recent_ad_action_seq": ["expose", "click", "click", "expose", "expose"],
+          "candidate_score_component_seq": [2.0, 4.5, 8.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "ad-three-same-industry",
+        "feature_values": {
+          "same_industry_positions": [0, 2, 3],
+          "same_industry_ads": ["GAME", "GAME", "GAME"],
+          "same_industry_actions": ["expose", "click", "expose"],
+          "same_industry_action_tokens": ["GAME|expose", "GAME|click", "GAME|expose"],
+          "distinct_same_industry_action_count": [2],
+          "same_industry_event_count": [3],
+          "ad_fatigue_bucket": [3],
+          "ad_fatigue_log2": [1.5849625007211563],
+          "fatigue_adjusted_score_components": [
+            0.4150374992788437,
+            2.915037499278844,
+            6.415037499278844
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "five_same_industry_events_high_fatigue",
+      "business_scenario": "用户已五次接触电商广告，包含曝光、点击、加购和转化，候选电商广告进入高疲劳档。",
+      "input": {
+        "execution_id": "ad-five-same-industry",
+        "row_values": {
+          "candidate_ad_industry": ["ECOMMERCE"],
+          "recent_ad_industry_seq": ["ECOMMERCE", "GAME", "ECOMMERCE", "ECOMMERCE", "ECOMMERCE", "ECOMMERCE"],
+          "recent_ad_action_seq": ["expose", "expose", "click", "cart", "convert", "click"],
+          "candidate_score_component_seq": [-1.0, 2.0, 10.0]
+        }
+      },
+      "expected_output": {
+        "execution_id": "ad-five-same-industry",
+        "feature_values": {
+          "same_industry_positions": [0, 2, 3, 4, 5],
+          "same_industry_ads": ["ECOMMERCE", "ECOMMERCE", "ECOMMERCE", "ECOMMERCE", "ECOMMERCE"],
+          "same_industry_actions": ["expose", "click", "cart", "convert", "click"],
+          "same_industry_action_tokens": [
+            "ECOMMERCE|expose",
+            "ECOMMERCE|click",
+            "ECOMMERCE|cart",
+            "ECOMMERCE|convert",
+            "ECOMMERCE|click"
+          ],
+          "distinct_same_industry_action_count": [4],
+          "same_industry_event_count": [5],
+          "ad_fatigue_bucket": [4],
+          "ad_fatigue_log2": [2.0],
+          "fatigue_adjusted_score_components": [-3.0, 0.0, 8.0]
+        }
+      }
+    }
+  ]
+}

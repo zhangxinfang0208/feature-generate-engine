@@ -4,9 +4,9 @@
 
 项目整体使用 Java 21 构建。首期内置算子源码位于 `operator.builtin`，这部分代码只使用 JDK 1.8 可用的语法和 API，便于后续独立抽取或生成；这不代表整个仓库可直接使用 JDK 1.8 编译。
 
-## 首期算子
+## 标准算子
 
-`OperatorRegistry.standard()` 严格只注册以下 8 个算子：
+`OperatorRegistry.standard()` 注册以下 12 个算子（首期 8 个业务算子 + 数值转换/极值算子）：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -18,10 +18,14 @@
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
+| `to_int` | `to_int(value)` | 数值标量转 32 位 int 载体，小数向零截断，超范围失败 |
+| `to_bigint` | `to_bigint(value)` | 数值标量转 64 位 bigint 载体，小数向零截断，超范围失败 |
+| `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
+| `max` | `max(value1, value2, ...)` | 计算数值标量最大值，精确十进制比较，相等保留最左输入 |
 
-每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的首期算子清单，`OperatorRegistry.standard()` 直接注册该清单。
+每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；`discrete`、`log_base`、`slice_by_indices`、`get_seq_length` 实测批开销反噬（0.1~0.3x），不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 8 个（`discrete`、`log_base`、`slice_by_indices`、`get_seq_length`、`to_int`、`to_bigint`、`min`、`max`）实测批开销反噬或无可复用中间量，不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
 ## 目录结构
 
@@ -37,7 +41,7 @@ src/main/java/com/example/featuredag/
 ├── physical     # 物理计划与改写规则
 ├── runtime      # 计划执行
 └── operator
-    └── builtin  # 首期 8 个独立算子实现与显式注册清单
+    └── builtin  # 标准算子独立实现（首期 8 个 + 数值转换/极值 4 个）与显式注册清单
 ```
 
 仓库不包含依赖非首期算子的 Demo 或 JMH 基准代码。
@@ -53,7 +57,7 @@ mvn clean package
 
 `mvn clean package` 会生成 thin JAR，以及包含并重定位 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`。这两个产物都是库文件，不包含 Demo `Main-Class`。
 
-自测试使用 Java `assert`，覆盖 8 个首期算子的注册清单、独立实现类、参数数量、求值、异常校验、Batch 路由和 DAG 类型/shape 推断。
+自测试使用 Java `assert`，覆盖标准算子的注册清单、独立实现类与参数数量，以及首期 8 个算子的求值、异常校验、Batch 路由和 DAG 类型/shape 推断。
 
 ## 调测 Demo
 

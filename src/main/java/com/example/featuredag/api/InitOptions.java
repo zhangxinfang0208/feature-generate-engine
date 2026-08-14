@@ -1,14 +1,17 @@
 package com.example.featuredag.api;
 
 import com.example.featuredag.definition.EntityScope;
+import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.runtime.ObservabilityOptions;
 import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.RuntimeObserver;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -21,6 +24,7 @@ public final class InitOptions {
     private final Set<EntityScope> defaultRawFeatureScopes;
     private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
+    private final List<OperatorDefinition> operatorExtensions;
 
     private InitOptions(Builder builder) {
         this.environment = Objects.requireNonNull(builder.environment, "environment");
@@ -39,6 +43,8 @@ public final class InitOptions {
         this.observabilityController = Objects.requireNonNull(
                 builder.observabilityController, "observabilityController");
         this.runtimeObserver = Objects.requireNonNull(builder.runtimeObserver, "runtimeObserver");
+        this.operatorExtensions = Collections.unmodifiableList(
+                new ArrayList<OperatorDefinition>(builder.operatorExtensions));
     }
 
     public static Builder builder() { return new Builder(); }
@@ -60,6 +66,7 @@ public final class InitOptions {
         return observabilityController;
     }
     public RuntimeObserver runtimeObserver() { return runtimeObserver; }
+    public List<OperatorDefinition> operatorExtensions() { return operatorExtensions; }
 
     private static String blankToNull(String value) {
         if (value == null) return null;
@@ -94,6 +101,7 @@ public final class InitOptions {
         private RuntimeObservabilityController observabilityController =
                 new RuntimeObservabilityController(ObservabilityOptions.builder().build());
         private RuntimeObserver runtimeObserver = RuntimeObserver.noop();
+        private final List<OperatorDefinition> operatorExtensions = new ArrayList<>();
 
         public Builder environment(ExecutionEnvironment value) {
             this.environment = value;
@@ -138,6 +146,24 @@ public final class InitOptions {
         public Builder observabilityController(RuntimeObservabilityController value) {
             this.observabilityController = Objects.requireNonNull(
                     value, "observabilityController");
+            return this;
+        }
+
+        /**
+         * 在标准清单之外注册业务算子；每个引擎实例持有独立注册表，扩展不会污染全局状态。
+         */
+        public Builder addOperatorExtension(OperatorDefinition value) {
+            this.operatorExtensions.add(Objects.requireNonNull(value, "operatorExtension"));
+            return this;
+        }
+
+        public Builder operatorExtensions(List<? extends OperatorDefinition> values) {
+            this.operatorExtensions.clear();
+            if (values != null) {
+                for (OperatorDefinition value : values) {
+                    addOperatorExtension(value);
+                }
+            }
             return this;
         }
 

@@ -6,6 +6,8 @@ import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -23,6 +25,9 @@ import java.util.List;
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
 public final class DivOperator extends AbstractBuiltinOperator {
+    private static final List<String> PARAMETER_NAMES = Collections.unmodifiableList(
+            Arrays.asList("value", "divisor"));
+
     public DivOperator() {
         super("div", 2, 2, true, false);
     }
@@ -31,6 +36,11 @@ public final class DivOperator extends AbstractBuiltinOperator {
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
         OperatorSupport.rejectEventSequence(name(), inputs);
         return OperatorSupport.fixedInference(inputs, DataType.DOUBLE, ValueShape.SCALAR);
+    }
+
+    @Override
+    public List<String> parameterNames() {
+        return PARAMETER_NAMES;
     }
 
     @Override

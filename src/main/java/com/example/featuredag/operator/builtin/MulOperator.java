@@ -5,6 +5,8 @@ import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -19,6 +21,9 @@ import java.util.List;
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
 public final class MulOperator extends AbstractBuiltinOperator {
+    private static final List<String> PARAMETER_NAMES = Collections.unmodifiableList(
+            Arrays.asList("value", "multiplier"));
+
     public MulOperator() {
         super("mul", 2, 2, true, false);
     }
@@ -28,6 +33,11 @@ public final class MulOperator extends AbstractBuiltinOperator {
         OperatorSupport.rejectEventSequence(name(), inputs);
         return OperatorSupport.fixedInference(
                 inputs, OperatorSupport.numericResultType(inputs), ValueShape.SCALAR);
+    }
+
+    @Override
+    public List<String> parameterNames() {
+        return PARAMETER_NAMES;
     }
 
     @Override

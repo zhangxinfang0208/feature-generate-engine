@@ -2,6 +2,7 @@ package com.example.featuredag.operator;
 
 import com.example.featuredag.operator.builtin.InitialBusinessOperators;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,6 +22,7 @@ public final class OperatorRegistry {
 
     public OperatorRegistry register(OperatorDefinition definition) {
         Objects.requireNonNull(definition, "definition");
+        validateParameterNames(definition);
         OperatorDefinition previous = definitions.putIfAbsent(definition.name(), definition);
         if (previous != null) {
             throw new IllegalArgumentException("Operator already registered: " + definition.name());
@@ -137,6 +139,30 @@ public final class OperatorRegistry {
             throw new IllegalArgumentException(
                     "Operator " + definition.name() + " expects " + definition.minArguments()
                             + ".." + definition.maxArguments() + " arguments, got " + count);
+        }
+    }
+
+    private static void validateParameterNames(OperatorDefinition definition) {
+        List<String> parameterNames = Objects.requireNonNull(
+                definition.parameterNames(),
+                "parameterNames for operator " + definition.name());
+        if (parameterNames.isEmpty()) return;
+        if (parameterNames.size() != definition.maxArguments()) {
+            throw new IllegalArgumentException(
+                    "Operator " + definition.name() + " declares " + parameterNames.size()
+                            + " parameter names but maxArguments is " + definition.maxArguments());
+        }
+        HashSet<String> uniqueNames = new HashSet<>();
+        for (String parameterName : parameterNames) {
+            if (parameterName == null || parameterName.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Operator " + definition.name() + " has a blank parameter name");
+            }
+            if (!uniqueNames.add(parameterName)) {
+                throw new IllegalArgumentException(
+                        "Operator " + definition.name()
+                                + " has duplicate parameter name: " + parameterName);
+            }
         }
     }
 }

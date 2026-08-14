@@ -6,7 +6,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-/** 显式标准算子清单：首期 8 个业务算子，加上 to_int / to_bigint / min / max 数值算子。 */
+/** Manifest for the eight operators delivered in the initial release. */
 public final class InitialBusinessOperators {
     private InitialBusinessOperators() {}
 
@@ -19,10 +19,6 @@ public final class InitialBusinessOperators {
                 new GetSequenceLengthOperator(),
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
-                new CalculateDeltaSequenceOperator(),
-                new ToIntOperator(),
-                new ToBigintOperator(),
-                new MinOperator(),
-                new MaxOperator()));
+                new CalculateDeltaSequenceOperator()));
     }
 }

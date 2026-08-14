@@ -1,6 +1,5 @@
 /**
- * Independent implementations for the standard operators: the eight operators in the
- * initial release plus the to_int / to_bigint / min / max numeric operators.
+ * Independent implementations for the eight operators in the initial release.
  *
  * <p>Each operator owns its metadata, inference and evaluation behavior. The source in this
  * package intentionally uses Java 8-compatible language features and JDK APIs. Registration is

@@ -21,11 +21,13 @@ public final class RuntimeCache {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(nodeState, "nodeState");
-        // 必须用 containsKey 区分“命中且值为 null”和“未命中”，两者的统计与执行语义不同。
-        boolean hit = values.containsKey(key);
+        // put() 禁止写入 null 值，因此命中的缓存值必然非 null：一次 get() 即可同时判定命中与取值，
+        // 不必再额外 containsKey 探查一次同一个 key。
+        Object value = values.get(key);
+        boolean hit = value != null;
         mutableStats(kind).recordLookup(hit);
         nodeState.recordCacheLookup(kind, hit);
-        return new CacheLookup(hit, hit ? values.get(key) : null);
+        return new CacheLookup(hit, value);
     }
 
     public void put(

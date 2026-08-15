@@ -127,7 +127,7 @@ public final class DagRuntime {
                                     + " for offline batch row " + index);
                 }
             }
-            return new OfflineBatchValue(values, node.logicalValueShape());
+            return OfflineBatchValue.owned(values, node.logicalValueShape());
         }
 
         if (context.isOnlineBatch()) {
@@ -152,7 +152,7 @@ public final class DagRuntime {
                                         + context.candidateIndexInGroup(candidateIndex));
                     }
                 }
-                return new CandidateBatchValue(values, node.logicalValueShape());
+                return CandidateBatchValue.owned(values, node.logicalValueShape());
             }
             // USER/SCENE 等非 ITEM 源值每组一份，形成 RequestBatchValue，后续可广播到组内候选。
             List<Object> values = new ArrayList<>(context.onlineGroupCount());
@@ -171,7 +171,7 @@ public final class DagRuntime {
                                     + " (" + context.onlineGroupExecutionId(groupIndex) + ")");
                 }
             }
-            return new RequestBatchValue(values, node.logicalValueShape());
+            return RequestBatchValue.owned(values, node.logicalValueShape());
         }
 
         if (context.environment() == com.example.featuredag.physical.ExecutionEnvironment.ONLINE && itemScoped) {
@@ -274,11 +274,12 @@ public final class DagRuntime {
                 0);
         List<Object> result = evaluateBatch(
                 node, operatorName, inputHandles, domain, context, state);
+        // result 是本次求值刚构建的独占列表，不再被其他引用持有，交给对应 owned() 工厂避免二次拷贝。
         return switch (domain) {
             case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
-            case OFFLINE_ROW -> new OfflineBatchValue(result, logicalValueShape);
-            case ONLINE_REQUEST -> new RequestBatchValue(result, logicalValueShape);
-            case ONLINE_CANDIDATE -> new CandidateBatchValue(result, logicalValueShape);
+            case OFFLINE_ROW -> OfflineBatchValue.owned(result, logicalValueShape);
+            case ONLINE_REQUEST -> RequestBatchValue.owned(result, logicalValueShape);
+            case ONLINE_CANDIDATE -> CandidateBatchValue.owned(result, logicalValueShape);
             case NONE -> throw new IllegalStateException("Missing evaluation domain");
         };
     }
@@ -393,10 +394,16 @@ public final class DagRuntime {
 
     private static EvaluationDomain evaluationDomain(List<ValueHandle> handles) {
         // 批域由输入句柄携带；在线请求值可向候选域广播，但离线行、在线候选等域禁止混用（C10）。
-        boolean singleCandidate = handles.stream().anyMatch(CandidateVectorValue.class::isInstance);
-        boolean offlineRow = handles.stream().anyMatch(OfflineBatchValue.class::isInstance);
-        boolean onlineRequest = handles.stream().anyMatch(RequestBatchValue.class::isInstance);
-        boolean onlineCandidate = handles.stream().anyMatch(CandidateBatchValue.class::isInstance);
+        boolean singleCandidate = false;
+        boolean offlineRow = false;
+        boolean onlineRequest = false;
+        boolean onlineCandidate = false;
+        for (ValueHandle handle : handles) {
+            if (handle instanceof CandidateVectorValue) singleCandidate = true;
+            else if (handle instanceof OfflineBatchValue) offlineRow = true;
+            else if (handle instanceof RequestBatchValue) onlineRequest = true;
+            else if (handle instanceof CandidateBatchValue) onlineCandidate = true;
+        }
         int incompatibleDomains = (singleCandidate ? 1 : 0)
                 + (offlineRow ? 1 : 0)
                 + ((onlineRequest || onlineCandidate) ? 1 : 0);
@@ -654,30 +661,37 @@ public final class DagRuntime {
             }
             case CandidateVectorValue vector -> {
                 List<?> widened = widenScalars(vector.values());
-                yield widened != vector.values()
-                        ? new CandidateVectorValue(new ArrayList<Object>(widened))
-                        : handle;
+                if (widened == vector.values()) yield handle;
+                // widenScalars 对 List<Object> 入参总是返回 List<Object>（未改写时原样透传，
+                // 改写时内部就地构建）；这里按已知的实际运行时类型转换，避免再拷贝一次——
+                // CandidateVectorValue 的构造器本身已经会拷贝一次。
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) widened;
+                yield new CandidateVectorValue(objectValues);
             }
             case OfflineBatchValue batch -> {
                 List<?> widened = widenBatchValues(
                         batch.values(), batch.elementShape());
-                yield widened != batch.values()
-                        ? new OfflineBatchValue(widened, batch.elementShape())
-                        : handle;
+                if (widened == batch.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) widened;
+                yield OfflineBatchValue.owned(objectValues, batch.elementShape());
             }
             case RequestBatchValue batch -> {
                 List<?> widened = widenBatchValues(
                         batch.values(), batch.elementShape());
-                yield widened != batch.values()
-                        ? new RequestBatchValue(widened, batch.elementShape())
-                        : handle;
+                if (widened == batch.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) widened;
+                yield RequestBatchValue.owned(objectValues, batch.elementShape());
             }
             case CandidateBatchValue batch -> {
                 List<?> widened = widenBatchValues(
                         batch.values(), batch.elementShape());
-                yield widened != batch.values()
-                        ? new CandidateBatchValue(widened, batch.elementShape())
-                        : handle;
+                if (widened == batch.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) widened;
+                yield CandidateBatchValue.owned(objectValues, batch.elementShape());
             }
             default -> handle;
         };
@@ -707,22 +721,37 @@ public final class DagRuntime {
         if (elementShape != ValueShape.SEQUENCE) return widenScalars(values);
 
         IdentityHashMap<List<?>, List<?>> widenedSequences = null;
+        List<?> lastSequence = null;
+        Object lastResult = null;
         List<Object> widened = null;
         for (int index = 0; index < values.size(); index++) {
             Object value = values.get(index);
             Object normalized;
             if (value instanceof List<?> sequence) {
-                List<?> cached = widenedSequences == null
-                        ? null : widenedSequences.get(sequence);
-                if (cached != null) {
-                    normalized = cached;
+                if (sequence == lastSequence) {
+                    // 最常见的重复模式：连续多行复用同一引用（如缺失行统一回退到同一个默认
+                    // 序列），O(1) 直接命中，不必等缓存分配。
+                    normalized = lastResult;
                 } else {
-                    List<?> sequenceResult = widenScalars(sequence);
-                    normalized = sequenceResult;
-                    if (sequenceResult != sequence) {
-                        if (widenedSequences == null) widenedSequences = new IdentityHashMap<>();
-                        widenedSequences.put(sequence, sequenceResult);
+                    List<?> cached = widenedSequences == null
+                            ? null : widenedSequences.get(sequence);
+                    if (cached != null) {
+                        normalized = cached;
+                    } else {
+                        List<?> sequenceResult = widenScalars(sequence);
+                        normalized = sequenceResult;
+                        if (sequenceResult != sequence) {
+                            if (widenedSequences == null) widenedSequences = new IdentityHashMap<>();
+                            widenedSequences.put(sequence, sequenceResult);
+                        } else if (widenedSequences != null) {
+                            // 本批已经确认存在需要改写的序列（缓存已分配）：顺带缓存“确认无需
+                            // 改写”的结果，避免同一引用非连续复用时仍反复全量扫描；未分配缓存的
+                            // 全干净批次不为此付出额外的 Map 开销。
+                            widenedSequences.put(sequence, sequence);
+                        }
                     }
+                    lastSequence = sequence;
+                    lastResult = normalized;
                 }
             } else {
                 normalized = widenIntegralToDouble(value);
@@ -800,7 +829,11 @@ public final class DagRuntime {
             return new ListSequenceValue(alignmentId, list);
         }
         if (logicalValueShape == ValueShape.CANDIDATE_VECTOR && value instanceof List<?> list) {
-            return new CandidateVectorValue(new ArrayList<>(list));
+            // list 可能是配置里长期共享的字面量，不能跳过拷贝；但 CandidateVectorValue 的紧凑
+            // 构造器本身已经会拷贝一次，这里不必再预先拷贝一遍，用强转直接交给它拷贝即可。
+            @SuppressWarnings("unchecked")
+            List<Object> objectList = (List<Object>) list;
+            return new CandidateVectorValue(objectList);
         }
         return new ScalarValue(value);
     }

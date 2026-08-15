@@ -59,7 +59,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
                 throw OperatorSupport.batchFailure(rowIndex, error);
             }
         }
-        return new BatchOperatorResult(new ListBatchColumn(result));
+        return new BatchOperatorResult(ListBatchColumn.owned(result));
     }
 
     private List<Double> calculate(Object rawSequence, Object rawBase) {

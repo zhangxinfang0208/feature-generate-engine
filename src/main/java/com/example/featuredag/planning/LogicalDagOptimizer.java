@@ -7,11 +7,10 @@ import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorRegistry;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -92,21 +91,27 @@ public final class LogicalDagOptimizer {
     }
 
     /**
-     * 可达根集合（C8）：自根节点反向遍历，记录每个节点能被哪些根特征到达；
+     * 可达根集合（C8）：一次反拓扑传播记录每个节点能被哪些根特征到达；
      * 供物理层判断节点在各输出路径上的价值与缓存范围。
+     *
+     * <p>输出本身（每个节点到其可达根集合的映射）最坏情况下总大小是 Θ(根数 × 节点数)——
+     * 任何精确产出该结果的算法都受此下界约束，这里不是要突破这个界，只是把「按每个根各自
+     * 反向遍历一遍共享祖先子图」的重复开销，压成一次遍历：拓扑序上消费者先于其输入被处理
+     * （topologicalOrder 是生产者在前、消费者在后），反向遍历时每个节点在被处理完（即其自身
+     * 及全部消费者贡献的可达根集合已经确定）后，才把这个集合并入它自己的全部输入节点，避免
+     * 对被多个根共享的子图重复入栈/出栈。</p>
      */
     private static Map<String, Set<String>> computeReachableRoots(LogicalDag dag) {
         Map<String, Set<String>> result = new LinkedHashMap<>();
         for (String nodeId : dag.nodes().keySet()) result.put(nodeId, new LinkedHashSet<>());
-        for (String root : dag.rootNodeIds()) {
-            Deque<String> stack = new ArrayDeque<>();
-            Set<String> visited = new LinkedHashSet<>();
-            stack.push(root);
-            while (!stack.isEmpty()) {
-                String current = stack.pop();
-                if (!visited.add(current)) continue;
-                result.get(current).add(root);
-                for (NodeInput input : dag.node(current).inputs()) stack.push(input.nodeId());
+        Set<String> roots = dag.rootNodeIds();
+        List<String> order = dag.topologicalOrder();
+        for (int index = order.size() - 1; index >= 0; index--) {
+            String nodeId = order.get(index);
+            Set<String> reachable = result.get(nodeId);
+            if (roots.contains(nodeId)) reachable.add(nodeId);
+            for (NodeInput input : dag.node(nodeId).inputs()) {
+                result.get(input.nodeId()).addAll(reachable);
             }
         }
         return result;

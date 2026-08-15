@@ -58,7 +58,7 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
                 throw OperatorSupport.batchFailure(rowIndex, error);
             }
         }
-        return new BatchOperatorResult(new ListBatchColumn(result));
+        return new BatchOperatorResult(ListBatchColumn.owned(result));
     }
 
     private List<Integer> find(Object rawSequence, Object target) {

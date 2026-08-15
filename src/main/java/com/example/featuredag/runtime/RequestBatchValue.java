@@ -18,6 +18,19 @@ public final class RequestBatchValue implements ValueHandle {
         this.elementShape = Objects.requireNonNull(elementShape, "elementShape");
     }
 
+    private RequestBatchValue(List<Object> ownedValues, ValueShape elementShape, boolean trusted) {
+        this.values = Collections.unmodifiableList(ownedValues);
+        this.elementShape = Objects.requireNonNull(elementShape, "elementShape");
+    }
+
+    /**
+     * 包内信任构造：跳过防御拷贝。调用方必须保证传入的列表是刚构建、后续不再持有
+     * 可变引用的独占列表；公开构造器仍保留拷贝语义，对外不可变契约不变。
+     */
+    static RequestBatchValue owned(List<Object> values, ValueShape elementShape) {
+        return new RequestBatchValue(Objects.requireNonNull(values, "values"), elementShape, true);
+    }
+
     public List<Object> values() { return values; }
     public ValueShape elementShape() { return elementShape; }
     public int size() { return values.size(); }

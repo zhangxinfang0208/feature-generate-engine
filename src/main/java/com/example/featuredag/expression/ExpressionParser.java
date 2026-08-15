@@ -41,6 +41,7 @@ public final class ExpressionParser {
         RBRACKET,
         COMMA,
         COLON,
+        EQUAL,
         EOF
     }
 
@@ -70,6 +71,7 @@ public final class ExpressionParser {
                 case ']' -> single(TokenType.RBRACKET);
                 case ',' -> single(TokenType.COMMA);
                 case ':' -> single(TokenType.COLON);
+                case '=' -> single(TokenType.EQUAL);
                 case '"', '\'' -> stringToken(ch);
                 default -> {
                     if (isIdentifierStart(ch)) yield identifierToken();
@@ -202,8 +204,10 @@ public final class ExpressionParser {
         private AstNode parseIdentifierOrCall() {
             Token identifier = consume(TokenType.IDENTIFIER);
             List<AstNode> arguments = new ArrayList<>();
+            Map<Integer, String> argumentNames = new LinkedHashMap<>();
             Token end = identifier;
             boolean hasCall = false;
+            boolean namedArgumentSeen = false;
             int invocationCount = 0;
             while (current.type() == TokenType.LPAREN) {
                 hasCall = true;
@@ -211,7 +215,19 @@ public final class ExpressionParser {
                 consume(TokenType.LPAREN);
                 if (current.type() != TokenType.RPAREN) {
                     do {
-                        arguments.add(parseExpression());
+                        AstNode argument = parseExpression();
+                        if (current.type() == TokenType.EQUAL) {
+                            if (!(argument instanceof AstFeatureRef parameterRef)) {
+                                throw error("Named argument must start with an identifier");
+                            }
+                            consume(TokenType.EQUAL);
+                            argumentNames.put(arguments.size(), parameterRef.featureName());
+                            argument = parseExpression();
+                            namedArgumentSeen = true;
+                        } else if (namedArgumentSeen) {
+                            throw error("Positional argument must not follow a named argument");
+                        }
+                        arguments.add(argument);
                         if (current.type() != TokenType.COMMA) break;
                         consume(TokenType.COMMA);
                     } while (true);
@@ -222,6 +238,7 @@ public final class ExpressionParser {
                 return new AstCall(
                         identifier.text(),
                         arguments,
+                        argumentNames,
                         invocationCount,
                         new SourceSpan(identifier.start(), end.end()));
             }

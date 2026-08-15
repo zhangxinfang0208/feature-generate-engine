@@ -49,13 +49,17 @@ public final class DagEngineSelfTest {
             "to_int",
             "to_bigint",
             "min",
-            "max");
+            "max",
+            "add",
+            "sub",
+            "mul",
+            "div");
 
     /**
      * 提供原生 BatchOperatorKernel 的算子：批内按 (group, sequence, 参数) 身份键复用
-     * 收益显著；其余 8 个（discrete / log_base / slice_by_indices / get_seq_length /
-     * to_int / to_bigint / min / max）实测批开销反噬或无可复用中间量，
-     * 不提供原生 Batch，由 SingleLoopBatchOperatorKernel 逐行适配。
+     * 收益显著；其余 12 个（discrete / log_base / slice_by_indices / get_seq_length /
+     * to_int / to_bigint / min / max / add / sub / mul / div）实测批开销反噬或
+     * 无可复用中间量，不提供原生 Batch，由 SingleLoopBatchOperatorKernel 逐行适配。
      */
     private static final Set<String> NATIVE_BATCH_OPERATORS = Set.of(
             "find_indices", "count_distinct", "zip_concat", "calc_delta_seq");
@@ -85,7 +89,7 @@ public final class DagEngineSelfTest {
                 .map(OperatorDefinition::name)
                 .collect(Collectors.toSet());
 
-        assert definitions.size() == 12 : "Expected 12 operators, got " + definitions.size();
+        assert definitions.size() == 16 : "Expected 16 operators, got " + definitions.size();
         assert names.equals(INITIAL_OPERATOR_NAMES) : names;
         assert definitions.stream()
                 .map(OperatorDefinition::getClass)
@@ -105,7 +109,11 @@ public final class DagEngineSelfTest {
                 Map.entry("to_int", List.of(1, 1)),
                 Map.entry("to_bigint", List.of(1, 1)),
                 Map.entry("min", List.of(2, Integer.MAX_VALUE)),
-                Map.entry("max", List.of(2, Integer.MAX_VALUE)));
+                Map.entry("max", List.of(2, Integer.MAX_VALUE)),
+                Map.entry("add", List.of(2, 2)),
+                Map.entry("sub", List.of(2, 2)),
+                Map.entry("mul", List.of(2, 2)),
+                Map.entry("div", List.of(2, 2)));
 
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String name : INITIAL_OPERATOR_NAMES) {

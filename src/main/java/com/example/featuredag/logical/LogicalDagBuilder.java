@@ -193,8 +193,9 @@ public final class LogicalDagBuilder {
         }
         if (ast instanceof AstCall call) {
             validateInvocationStyle(call, owner);
+            List<AstNode> arguments = bindNamedArguments(call, owner);
             List<String> inputIds = new ArrayList<>();
-            for (AstNode argument : call.arguments()) {
+            for (AstNode argument : arguments) {
                 inputIds.add(buildAst(argument, owner, context));
             }
             return createOperatorNode(call.functionName(), inputIds, owner, context);
@@ -219,6 +220,97 @@ public final class LogicalDagBuilder {
                     "Operator " + call.functionName()
                             + " does not support chained invocation in feature " + owner.name());
         }
+    }
+
+    /**
+     * C3/C5：命名参数仅存在于临时 AST；构图前按算子元数据归一化为位置参数，
+     * 使等价的命名/位置写法共享同一 canonical 逻辑节点，且不污染规划与运行时协议。
+     */
+    private List<AstNode> bindNamedArguments(AstCall call, FeatureDefinition owner) {
+        if (!call.hasNamedArguments()) return call.arguments();
+
+        OperatorDefinition definition;
+        try {
+            definition = operatorRegistry.require(call.functionName());
+        } catch (RuntimeException error) {
+            throw new DagBuildException(
+                    "Invalid operator " + call.functionName() + " in feature "
+                            + owner.name() + ": " + error.getMessage(),
+                    error);
+        }
+
+        List<String> parameterNames = definition.parameterNames();
+        if (parameterNames.isEmpty()) {
+            throw new DagBuildException(
+                    "Operator " + call.functionName()
+                            + " does not support named arguments in feature " + owner.name());
+        }
+        if (call.arguments().size() > parameterNames.size()) {
+            throw new DagBuildException(
+                    "Operator " + call.functionName() + " expects at most "
+                            + parameterNames.size() + " arguments, got " + call.arguments().size()
+                            + " in feature " + owner.name());
+        }
+
+        Map<String, Integer> indexesByName = new LinkedHashMap<>();
+        for (int index = 0; index < parameterNames.size(); index++) {
+            indexesByName.put(parameterNames.get(index), index);
+        }
+        AstNode[] bound = new AstNode[parameterNames.size()];
+        int nextPositionalIndex = 0;
+        boolean namedArgumentSeen = false;
+        for (int sourceIndex = 0; sourceIndex < call.arguments().size(); sourceIndex++) {
+            String parameterName = call.argumentName(sourceIndex);
+            int targetIndex;
+            if (parameterName == null) {
+                if (namedArgumentSeen) {
+                    throw new DagBuildException(
+                            "Positional argument must not follow a named argument for operator "
+                                    + call.functionName() + " in feature " + owner.name());
+                }
+                targetIndex = nextPositionalIndex++;
+            } else {
+                namedArgumentSeen = true;
+                Integer declaredIndex = indexesByName.get(parameterName);
+                if (declaredIndex == null) {
+                    throw new DagBuildException(
+                            "Unknown named argument '" + parameterName + "' for operator "
+                                    + call.functionName() + "; expected one of " + parameterNames
+                                    + " in feature " + owner.name());
+                }
+                targetIndex = declaredIndex;
+            }
+            if (bound[targetIndex] != null) {
+                throw new DagBuildException(
+                        "Argument '" + parameterNames.get(targetIndex)
+                                + "' is specified more than once for operator "
+                                + call.functionName() + " in feature " + owner.name());
+            }
+            bound[targetIndex] = call.arguments().get(sourceIndex);
+        }
+
+        List<AstNode> ordered = new ArrayList<>();
+        for (int index = 0; index < bound.length; index++) {
+            if (bound[index] == null) {
+                if (index < definition.minArguments()) {
+                    throw new DagBuildException(
+                            "Missing required argument '" + parameterNames.get(index)
+                                    + "' for operator " + call.functionName()
+                                    + " in feature " + owner.name());
+                }
+                for (int laterIndex = index + 1; laterIndex < bound.length; laterIndex++) {
+                    if (bound[laterIndex] != null) {
+                        throw new DagBuildException(
+                                "Named arguments for operator " + call.functionName()
+                                        + " cannot skip parameter '" + parameterNames.get(index)
+                                        + "' in feature " + owner.name());
+                    }
+                }
+                break;
+            }
+            ordered.add(bound[index]);
+        }
+        return List.copyOf(ordered);
     }
 
     private Object toLiteralValue(AstNode node) {

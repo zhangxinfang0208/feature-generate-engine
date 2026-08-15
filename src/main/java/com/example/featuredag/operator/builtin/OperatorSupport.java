@@ -10,6 +10,7 @@ import com.example.featuredag.operator.OperatorSequence;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.MathContext;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -58,6 +59,47 @@ final class OperatorSupport {
             }
         }
         return DataType.INT;
+    }
+
+    static BigDecimal arithmeticOperand(Object value, String operator) {
+        // 算术操作数统一走精确十进制：先校验有限性，再消除 Integer/Long/Double 混算的精度歧义。
+        return asPreciseDecimal(
+                asNumber(value), operator + " requires finite numeric values");
+    }
+
+    static Object arithmeticCarrier(
+            BigDecimal result, Object left, Object right, String operator) {
+        // 精确十进制结果按输入载体定宽输出：双方均为整型载体 → Long（longValueExact
+        // 溢出直接失败不回绕，与 to_bigint 的失败语义一致）；任一浮点载体 → Double
+        // （超范围结果视为溢出，拒绝返回 ±Infinity）。
+        if (isIntegralCarrier(left) && isIntegralCarrier(right)) {
+            try {
+                return Long.valueOf(result.longValueExact());
+            } catch (ArithmeticException error) {
+                throw new IllegalArgumentException(
+                        operator + " overflow for result: " + result);
+            }
+        }
+        double doubleResult = result.doubleValue();
+        if (!Double.isFinite(doubleResult)) {
+            throw new IllegalArgumentException(operator + " overflow for result: " + result);
+        }
+        return Double.valueOf(doubleResult);
+    }
+
+    private static boolean isIntegralCarrier(Object value) {
+        return value instanceof Byte || value instanceof Short
+                || value instanceof Integer || value instanceof Long
+                || value instanceof BigInteger;
+    }
+
+    static double finiteQuotient(BigDecimal dividend, BigDecimal divisor, String operator) {
+        // DECIMAL64（16 位有效数字）与 double 精度对齐；商超出 double 表示范围视为溢出。
+        double result = dividend.divide(divisor, MathContext.DECIMAL64).doubleValue();
+        if (!Double.isFinite(result)) {
+            throw new IllegalArgumentException(operator + " overflow for quotient");
+        }
+        return result;
     }
 
     private static Set<EntityScope> unionScopes(List<OperatorInputMetadata> inputs) {

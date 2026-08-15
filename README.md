@@ -101,6 +101,7 @@ Demo 源码本身只使用 JDK 1.8 语法/API，但运行完整项目仍需要 J
 
 详细设计见：
 
+- [`docs/architecture/calc-delta-seq.md`](docs/architecture/calc-delta-seq.md)
 - [`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)
 - [`docs/architecture/operator-single-batch-execution.md`](docs/architecture/operator-single-batch-execution.md)
 - [`docs/architecture/online-grouped-batch-execution.md`](docs/architecture/online-grouped-batch-execution.md)

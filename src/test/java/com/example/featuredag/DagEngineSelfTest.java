@@ -105,7 +105,7 @@ public final class DagEngineSelfTest {
                 Map.entry("get_seq_length", List.of(1, 1)),
                 Map.entry("count_distinct", List.of(1, 1)),
                 Map.entry("zip_concat", List.of(2, Integer.MAX_VALUE)),
-                Map.entry("calc_delta_seq", List.of(2, 2)),
+                Map.entry("calc_delta_seq", List.of(2, 3)),
                 Map.entry("to_int", List.of(1, 1)),
                 Map.entry("to_bigint", List.of(1, 1)),
                 Map.entry("min", List.of(2, Integer.MAX_VALUE)),

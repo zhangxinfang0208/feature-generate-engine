@@ -9,6 +9,7 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
+import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.physical.ExecutorType;
@@ -527,6 +528,9 @@ public final class FeatureDagEngine {
                             + options.environment().name().toLowerCase(Locale.ROOT)
                     : configuredPlanId;
             OperatorRegistry operators = OperatorRegistry.standard();
+            for (OperatorDefinition extension : options.operatorExtensions()) {
+                operators.register(extension);
+            }
             PhysicalRewriteRegistry rewriteRules = PhysicalRewriteRegistry.standard();
             SequenceIndexRegistry sequenceIndexes = SequenceIndexRegistry.standard();
             PhysicalExecutorRegistry executors = PhysicalExecutorRegistry.standard(sequenceIndexes);

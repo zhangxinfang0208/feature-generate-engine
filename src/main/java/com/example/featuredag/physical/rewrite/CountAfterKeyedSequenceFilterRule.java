@@ -91,6 +91,12 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
         if (!dag.node(keyInput.nodeId()).entityScopes().contains(EntityScope.ITEM)) {
             return Optional.empty();
         }
+        // 序列必须是请求级共享值：专用执行器按“同一请求序列建一次索引、每个候选 key 查一次计数”
+        // 设计，只接受 SequenceValue（见 SequenceKeyCountExecutor）。若序列本身随 ITEM 变化，
+        // 运行时会在候选批阶段拿到候选向量而非 SequenceValue，必须回退到未融合执行。
+        if (dag.node(sequenceInput.nodeId()).entityScopes().contains(EntityScope.ITEM)) {
+            return Optional.empty();
+        }
         // C9/C10：融合只暴露序列和候选 key 两个外部输入，并完整记录被消费的逻辑节点。
         List<String> consumedNodeIds = new ArrayList<>();
         consumedNodeIds.add(filter.nodeId());

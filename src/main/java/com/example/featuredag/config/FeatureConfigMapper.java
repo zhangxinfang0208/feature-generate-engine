@@ -89,17 +89,20 @@ public final class FeatureConfigMapper {
                 }
                 if (enabled) {
                     DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
-                    definitions.add(FeatureDefinition.builder()
+                    FeatureDefinition.Builder builder = FeatureDefinition.builder()
                             .name(name)
                             .role(FeatureRole.RAW)
                             .dataType(type)
                             .entityScopes(scopes)
-                            .defaultValue(convertDefault(feature.defaultValue(), type, name))
                             .sourceBinding(sourceBinding)
                             .outputPolicy(OutputPolicy.OUTPUT)
                             .declaredValueShape(resolveBaseValueShape(
-                                    declaredValueShape, feature.sequenceMaxLength()))
-                            .build());
+                                    declaredValueShape, feature.sequenceMaxLength()));
+                    // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
+                    if (feature.defaultValue() != null) {
+                        builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
+                    }
+                    definitions.add(builder.build());
                 }
             } else {
                 // C2：DERIVED 必须携带表达式；声明形状和实体域将在逻辑推断后按 C6 再次核对。
@@ -107,17 +110,20 @@ public final class FeatureConfigMapper {
                 Set<EntityScope> configuredScopes = resolveScopes(name, feature.entityScopes(), Map.of());
                 if (enabled) {
                     DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
-                    FeatureDefinition definition = FeatureDefinition.builder()
+                    FeatureDefinition.Builder builder = FeatureDefinition.builder()
                             .name(name)
                             .role(FeatureRole.DERIVED)
                             .dataType(type)
                             .entityScopes(configuredScopes)
                             .expressionContent(expression)
-                            .defaultValue(convertDefault(feature.defaultValue(), type, name))
                             .outputPolicy(outputPolicy)
                             .declaredValueShape(declaredValueShape)
-                            .description(feature.description())
-                            .build();
+                            .description(feature.description());
+                    // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
+                    if (feature.defaultValue() != null) {
+                        builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
+                    }
+                    FeatureDefinition definition = builder.build();
                     definitions.add(definition);
                     enabledDerived.add(new DerivedEntry(feature, definition, declarationIndex));
                 }

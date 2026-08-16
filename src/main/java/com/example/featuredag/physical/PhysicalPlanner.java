@@ -1,5 +1,6 @@
 package com.example.featuredag.physical;
 
+import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.logical.FeatureOutputNode;
@@ -172,6 +173,8 @@ public final class PhysicalPlanner {
             executorId = PhysicalExecutorIds.FEATURE_OUTPUT;
             config.put("featureName", output.featureName());
             config.put("isRoot", dag.rootNodeIds().contains(output.nodeId()));
+            // 定宽决策在物理计划中固化；运行时只执行布尔策略，不解析类型或按算子名特判（C10）。
+            config.put("widenIntegralToDouble", output.outputType() == DataType.DOUBLE);
         } else {
             throw new IllegalArgumentException("Unsupported logical node: " + node.nodeType());
         }

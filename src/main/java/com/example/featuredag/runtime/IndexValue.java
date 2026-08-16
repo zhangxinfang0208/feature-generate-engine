@@ -17,6 +17,18 @@ public final class IndexValue implements ValueHandle {
         this.positionsByKey = Collections.unmodifiableMap(copy);
     }
 
+    private IndexValue(Map<Object, int[]> ownedPositionsByKey, boolean trusted) {
+        this.positionsByKey = Collections.unmodifiableMap(ownedPositionsByKey);
+    }
+
+    /**
+     * 包内信任构造：跳过对每个数组的防御拷贝。调用方必须保证传入的 Map 和其中每个
+     * int[] 都是刚构建、后续不再持有可变引用的独占数据；公开构造器仍保留拷贝语义。
+     */
+    static IndexValue owned(Map<Object, int[]> positionsByKey) {
+        return new IndexValue(positionsByKey, true);
+    }
+
     public int count(Object key) {
         int[] positions = positionsByKey.get(key);
         return positions == null ? 0 : positions.length;

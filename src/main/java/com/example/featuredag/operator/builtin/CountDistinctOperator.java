@@ -55,7 +55,7 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator
                 throw OperatorSupport.batchFailure(rowIndex, error);
             }
         }
-        return new BatchOperatorResult(new ListBatchColumn(result));
+        return new BatchOperatorResult(ListBatchColumn.owned(result));
     }
 
     private static int count(Object sequence) {

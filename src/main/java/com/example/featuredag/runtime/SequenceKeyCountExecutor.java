@@ -192,7 +192,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             for (Object key : normalizedKeys) result.add(countsByKey.get(key));
         }
         state.setDedupCounts(context.candidateCount(), totalUniqueKeys);
-        return new CandidateBatchValue(result, node.logicalValueShape());
+        return CandidateBatchValue.owned(result, node.logicalValueShape());
     }
 
     private static Object requestValue(ValueHandle handle, int groupIndex) {

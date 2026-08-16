@@ -26,7 +26,7 @@ public final class SingleLoopBatchOperatorKernel implements BatchOperatorKernel 
                 throw new BatchOperatorEvaluationException(rowIndex, error);
             }
         }
-        return new BatchOperatorResult(new ListBatchColumn(result));
+        return new BatchOperatorResult(ListBatchColumn.owned(result));
     }
 
     @Override

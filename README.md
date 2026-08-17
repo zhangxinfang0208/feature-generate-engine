@@ -31,22 +31,6 @@
 
 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 12 个（`discrete`、`log_base`、`slice_by_indices`、`get_seq_length`、`to_int`、`to_bigint`、`min`、`max`、`add`、`sub`、`mul`、`div`）实测批开销反噬或无可复用中间量，不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
-## 业务扩展算子
-
-`group_count_concat(sequence, {"delimiter":"#"})` 按元素首次出现顺序分组计数，
-输出“值 + 分隔符 + 频次”序列。例如 `["a", "b", "a"]` 输出
-`["a#2", "b#1"]`。它不进入标准注册表，需要按引擎实例显式注册：
-
-```java
-InitOptions options = InitOptions.builder()
-        .environment(ExecutionEnvironment.OFFLINE)
-        .addOperatorExtension(new GroupCountConcatOperator())
-        .build();
-FeatureDagEngine engine = FeatureDagEngine.init(configJson, options);
-```
-
-扩展实例同时用于逻辑推断、物理计划和运行执行，不会污染其他引擎实例或标准注册表。
-
 ## 目录结构
 
 ```text

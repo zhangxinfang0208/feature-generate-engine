@@ -10,10 +10,6 @@
 注册清单不得承载推断或求值逻辑。首期 `operator.builtin` 源码还必须保持 JDK 1.8 语法/API 兼容，
 但项目整体构建基线仍为 Java 21。
 
-`group_count_concat` 是业务扩展示例，不属于上述标准清单。它通过
-`InitOptions.Builder.addOperatorExtension(...)` 按引擎实例注册，同一个扩展实例集合会贯穿
-逻辑推断、物理计划和运行执行，且不会修改 `OperatorRegistry.standard()` 的固定边界。
-
 ## 1. 基本原则
 
 1. 算子名称只用于表达式解析、注册表查找和通用算子执行，不得作为规划或物理优化条件。

@@ -4,24 +4,16 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
-import com.example.featuredag.operator.OperatorSequence;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 按值分组计数，并按首次出现顺序输出 {@code value + delimiter + count}。
- * 可选配置对象只接受字符串类型的 {@code delimiter}，默认值为 {@code #}。
- */
+/** 按值分组计数，并按首次出现顺序输出 {@code value + delimiter + count}。 */
 public final class GroupCountConcatOperator extends AbstractBuiltinOperator {
     private static final String DEFAULT_DELIMITER = "#";
-    private static final String DELIMITER_KEY = "delimiter";
-    private static final List<String> PARAMETER_NAMES = Collections.unmodifiableList(
-            Arrays.asList("sequence", "config"));
 
     public GroupCountConcatOperator() {
         super("group_count_concat", 1, 2, true, true);
@@ -29,7 +21,7 @@ public final class GroupCountConcatOperator extends AbstractBuiltinOperator {
 
     @Override
     public List<String> parameterNames() {
-        return PARAMETER_NAMES;
+        return Arrays.asList("sequence", "config");
     }
 
     @Override
@@ -58,25 +50,13 @@ public final class GroupCountConcatOperator extends AbstractBuiltinOperator {
         return groupAndConcat(arguments.get(0), delimiter);
     }
 
-    private static String delimiter(Object rawConfig) {
+    private String delimiter(Object rawConfig) {
         if (!(rawConfig instanceof Map<?, ?>)) {
             throw new IllegalArgumentException(
                     "group_count_concat expects an object config as its second argument");
         }
-        Map<?, ?> config = (Map<?, ?>) rawConfig;
-        for (Object key : config.keySet()) {
-            if (!DELIMITER_KEY.equals(key)) {
-                throw new IllegalArgumentException(
-                        "group_count_concat config contains unknown key: " + key);
-            }
-        }
-        if (!config.containsKey(DELIMITER_KEY)) return DEFAULT_DELIMITER;
-        Object configured = config.get(DELIMITER_KEY);
-        if (!(configured instanceof String)) {
-            throw new IllegalArgumentException(
-                    "group_count_concat delimiter must be a string");
-        }
-        return (String) configured;
+        Object configured = ((Map<?, ?>) rawConfig).get("delimiter");
+        return configured == null ? DEFAULT_DELIMITER : String.valueOf(configured);
     }
 
     private List<String> groupAndConcat(Object rawSequence, String delimiter) {
@@ -85,13 +65,10 @@ public final class GroupCountConcatOperator extends AbstractBuiltinOperator {
         for (int index = 0; index < size; index++) {
             Object value = OperatorSupport.sequenceElementAt(
                     rawSequence, index, name(), "sequence");
-            if (value instanceof Map<?, ?>
-                    || value instanceof Iterable<?>
-                    || value instanceof OperatorSequence
-                    || (value != null && value.getClass().isArray())) {
+            if (value instanceof Map<?, ?>) {
                 throw new IllegalArgumentException(
-                        "group_count_concat requires scalar sequence elements; element at index "
-                                + index + " is " + OperatorSupport.typeName(value));
+                        "group_count_concat does not support event sequence elements"
+                                + " (index " + index + ")");
             }
             Integer count = counts.get(value);
             counts.put(value, count == null ? 1 : count + 1);

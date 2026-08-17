@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -89,7 +88,7 @@ public final class GroupCountConcatOperatorTest {
     }
 
     @Test
-    public void executesCategoryFilterAndGroupingThroughPublicApiExtension() {
+    public void executesCategoryFilterAndGroupingThroughStandardRegistry() {
         String configJson = """
                 {
                   "feature_set_name": "category_behavior_strength",
@@ -132,7 +131,6 @@ public final class GroupCountConcatOperatorTest {
                 """;
         InitOptions options = InitOptions.builder()
                 .environment(ExecutionEnvironment.OFFLINE)
-                .addOperatorExtension(new GroupCountConcatOperator())
                 .build();
         FeatureDagEngine engine = FeatureDagEngine.init(configJson, options);
 
@@ -147,7 +145,7 @@ public final class GroupCountConcatOperatorTest {
         assertEquals(
                 Arrays.asList("creative-a#2", "creative-b#1"),
                 result.featureValues().get("ecommerce_click_strength"));
-        assertFalse(OperatorRegistry.standard().find("group_count_concat").isPresent());
+        assertTrue(OperatorRegistry.standard().find("group_count_concat").isPresent());
     }
 
     private static final class OfflineLayout implements BatchLayout {

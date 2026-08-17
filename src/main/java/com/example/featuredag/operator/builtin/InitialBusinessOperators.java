@@ -6,7 +6,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-/** 显式标准算子清单：首期 8 个业务算子，加上 to_int / to_bigint / min / max 数值算子与 add / sub / mul / div 算术算子。 */
+/** 显式标准算子清单：算子实例只在此装配，推断和求值逻辑均位于独立实现类。 */
 public final class InitialBusinessOperators {
     private InitialBusinessOperators() {}
 
@@ -19,6 +19,7 @@ public final class InitialBusinessOperators {
                 new GetSequenceLengthOperator(),
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
+                new GroupCountConcatOperator(),
                 new CalculateDeltaSequenceOperator(),
                 new ToIntOperator(),
                 new ToBigintOperator(),

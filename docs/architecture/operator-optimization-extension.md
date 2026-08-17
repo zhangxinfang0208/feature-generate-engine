@@ -4,7 +4,8 @@
 目标是让核心 `planning`、`physical`、`runtime` 只依赖稳定协议，不再按业务算子名称增加分支。
 
 当前标准注册表包含首期的 `discrete`、`log_base`、`slice_by_indices`、`find_indices`、
-`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`，数值转换/极值算子
+`get_seq_length`、`count_distinct`、`zip_concat`、`calc_delta_seq`，序列聚合算子
+`group_count_concat`，数值转换/极值算子
 `to_int`、`to_bigint`、`min`、`max`，以及算术算子 `add`、`sub`、`mul`、`div`
 （`div` 固定产出 DOUBLE，分母为 0 时防除 0 返回 0.0）。每个算子必须拥有独立实现类；
 注册清单不得承载推断或求值逻辑。首期 `operator.builtin` 源码还必须保持 JDK 1.8 语法/API 兼容，

@@ -25,6 +25,7 @@ import org.junit.Test;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -51,6 +52,44 @@ public class CountAfterKeyedSequenceFilterRuleTest {
         // 序列请求级共享、key 随 ITEM 变化：专用执行器的既有设计场景，确认修复未破坏正常路径。
         Optional<PhysicalRewrite> match = matchRewrite(EntityScope.USER);
         assertTrue("请求级共享序列应当仍可融合", match.isPresent());
+    }
+
+    @Test
+    public void refusesToFuseAcrossDerivedFeatureDefaultBoundary() {
+        OperatorRegistry registry = new OperatorRegistry()
+                .register(new FakeKeyedFilterOperator())
+                .register(new FakeCardinalityOperator());
+        List<FeatureDefinition> definitions = List.of(
+                FeatureDefinition.builder()
+                        .name("seq")
+                        .role(FeatureRole.RAW)
+                        .dataType(DataType.STRING)
+                        .addEntityScope(EntityScope.USER)
+                        .sourceBinding("seq")
+                        .declaredValueShape(ValueShape.SEQUENCE)
+                        .build(),
+                FeatureDefinition.raw("cand_key", DataType.STRING, EntityScope.ITEM, null),
+                FeatureDefinition.builder()
+                        .name("filtered")
+                        .role(FeatureRole.DERIVED)
+                        .dataType(DataType.OBJECT)
+                        .expressionContent("myfilter(seq, cand_key)")
+                        .declaredValueShape(ValueShape.SEQUENCE)
+                        .defaultValue(Map.of("fallback", true))
+                        .outputPolicy(OutputPolicy.INTERNAL_ONLY)
+                        .build(),
+                FeatureDefinition.derived(
+                        "result", DataType.INT, "myagg(filtered)", OutputPolicy.OUTPUT));
+
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry)
+                .build(definitions, Set.of("result"));
+        OptimizedLogicalPlan optimized = new LogicalDagOptimizer(registry).analyze(dag);
+        String aggregateNodeId = dag.featureOutput("result").producerNodeId();
+
+        Optional<PhysicalRewrite> match = new CountAfterKeyedSequenceFilterRule()
+                .match(optimized, aggregateNodeId, ExecutionEnvironment.ONLINE, registry);
+
+        assertFalse("融合不得跳过带 dft 的衍生特征边界", match.isPresent());
     }
 
     private static Optional<PhysicalRewrite> matchRewrite(EntityScope sequenceScope) {

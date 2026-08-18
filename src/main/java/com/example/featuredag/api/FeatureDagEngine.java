@@ -543,7 +543,8 @@ public final class FeatureDagEngine {
             // 在引擎发布前验证全部专用 executorId 和配置，使初始化失败而不是首个请求失败。
             executors.validate(plan);
             FeatureInputDecoder inputDecoder = FeatureInputDecoder.from(dag);
-            FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
+            FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(
+                    dag, mapped.outputs());
             return new FeatureDagEngine(
                     options.environment(), mapped, planId, plan, new DagRuntime(operators, executors),
                     inputDecoder,

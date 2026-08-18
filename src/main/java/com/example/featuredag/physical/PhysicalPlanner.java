@@ -173,6 +173,8 @@ public final class PhysicalPlanner {
             executorId = PhysicalExecutorIds.FEATURE_OUTPUT;
             config.put("featureName", output.featureName());
             config.put("isRoot", dag.rootNodeIds().contains(output.nodeId()));
+            // L1→物理层：衍生默认值固化在 FEATURE_OUTPUT 配置中，运行时无需回查原始模型配置（C1/C10）。
+            config.put("defaultValue", output.defaultValue());
             // 定宽决策在物理计划中固化；运行时只执行布尔策略，不解析类型或按算子名特判（C10）。
             config.put("widenIntegralToDouble", output.outputType() == DataType.DOUBLE);
         } else {

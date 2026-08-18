@@ -19,6 +19,7 @@ import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.SequenceViewInputMode;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -83,9 +84,7 @@ public final class DagRuntime {
                         node.executorConfig().get("value"),
                         node.logicalValueShape(),
                         context.executionId());
-                case FEATURE_OUTPUT -> widenIntegralFeatureOutput(
-                        requireSingleInput(node, context),
-                        node.executorConfig().get("widenIntegralToDouble"));
+                case FEATURE_OUTPUT -> executeFeatureOutput(node, context, state);
                 case GENERIC_OPERATOR -> executeGenericOperator(node, context, state);
                 case SPECIALIZED -> {
                     state.recordOperatorInvocation(
@@ -638,6 +637,143 @@ public final class DagRuntime {
             throw new IllegalStateException("Feature output must have exactly one input");
         }
         return requireSlot(context, node.inputSlots().get(0));
+    }
+
+    /**
+     * 衍生特征边界语义：算子成功返回后，若整个特征值为 null 或空容器，使用模型 dft；
+     * 异常不会进入本方法，仍由节点执行边界原样上抛。默认值替换先于 DOUBLE 定宽，
+     * 确保声明 DOUBLE、dft 为整数配置值时对外仍得到 Double（C6/C10）。
+     */
+    private static ValueHandle executeFeatureOutput(
+            PhysicalNode node,
+            ExecutionContext context,
+            RuntimeNodeState state) {
+        ValueHandle value = applyFeatureDefault(
+                requireSingleInput(node, context),
+                node.executorConfig().get("defaultValue"),
+                node.logicalValueShape(),
+                context.executionId(),
+                state);
+        return widenIntegralFeatureOutput(
+                value, node.executorConfig().get("widenIntegralToDouble"));
+    }
+
+    private static ValueHandle applyFeatureDefault(
+            ValueHandle handle,
+            Object defaultValue,
+            ValueShape logicalValueShape,
+            String alignmentId,
+            RuntimeNodeState state) {
+        if (defaultValue == null) return handle;
+
+        ValueHandle result = switch (handle) {
+            case ScalarValue scalar -> isEmptyFeatureValue(scalar.value())
+                    ? defaultHandle(defaultValue, logicalValueShape, alignmentId)
+                    : handle;
+            case ListSequenceValue sequence -> sequence.size() == 0
+                    ? defaultHandle(defaultValue, ValueShape.SEQUENCE, sequence.alignmentId())
+                    : handle;
+            case SequenceValue sequence -> sequence.size() == 0
+                    ? defaultHandle(defaultValue, ValueShape.SEQUENCE, alignmentId)
+                    : handle;
+            case CandidateVectorValue vector -> {
+                List<?> replaced = replaceEmptyElements(
+                        vector.values(), defaultValue, logicalValueShape);
+                if (replaced == vector.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) replaced;
+                yield new CandidateVectorValue(objectValues);
+            }
+            case OfflineBatchValue batch -> {
+                List<?> replaced = replaceEmptyElements(
+                        batch.values(), defaultValue, batch.elementShape());
+                if (replaced == batch.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) replaced;
+                yield OfflineBatchValue.owned(objectValues, batch.elementShape());
+            }
+            case RequestBatchValue batch -> {
+                List<?> replaced = replaceEmptyElements(
+                        batch.values(), defaultValue, batch.elementShape());
+                if (replaced == batch.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) replaced;
+                yield RequestBatchValue.owned(objectValues, batch.elementShape());
+            }
+            case CandidateBatchValue batch -> {
+                List<?> replaced = replaceEmptyElements(
+                        batch.values(), defaultValue, batch.elementShape());
+                if (replaced == batch.values()) yield handle;
+                @SuppressWarnings("unchecked")
+                List<Object> objectValues = (List<Object>) replaced;
+                yield CandidateBatchValue.owned(objectValues, batch.elementShape());
+            }
+            default -> handle;
+        };
+        if (result != handle) state.setFallbackUsed(true);
+        return result;
+    }
+
+    /** Copy-on-write：批/候选中没有空元素时保持原容器引用。 */
+    private static List<?> replaceEmptyElements(
+            List<?> values,
+            Object defaultValue,
+            ValueShape elementShape) {
+        List<Object> replaced = null;
+        Object replacement = null;
+        for (int index = 0; index < values.size(); index++) {
+            Object value = values.get(index);
+            boolean empty = isEmptyFeatureValue(value);
+            if (empty && replacement == null) {
+                replacement = defaultRawValue(defaultValue, elementShape);
+            }
+            Object normalized = empty ? replacement : value;
+            if (replaced == null && empty) {
+                replaced = new ArrayList<>(values.size());
+                for (int prefix = 0; prefix < index; prefix++) {
+                    replaced.add(values.get(prefix));
+                }
+            }
+            if (replaced != null) replaced.add(normalized);
+        }
+        if (replaced == null) return values;
+        return Collections.unmodifiableList(replaced);
+    }
+
+    private static ValueHandle defaultHandle(
+            Object defaultValue,
+            ValueShape valueShape,
+            String alignmentId) {
+        if (valueShape == ValueShape.SEQUENCE) {
+            return new ListSequenceValue(
+                    alignmentId, defaultSequenceValue(defaultValue));
+        }
+        return new ScalarValue(defaultValue);
+    }
+
+    private static Object defaultRawValue(Object defaultValue, ValueShape valueShape) {
+        return valueShape == ValueShape.SEQUENCE
+                ? defaultSequenceValue(defaultValue)
+                : defaultValue;
+    }
+
+    /** 序列 dft 可直接是完整 List；标量 dft 则表示一个兜底元素。 */
+    private static List<?> defaultSequenceValue(Object defaultValue) {
+        if (defaultValue instanceof List<?> list) return list;
+        return Collections.singletonList(defaultValue);
+    }
+
+    private static boolean isEmptyFeatureValue(Object value) {
+        if (value == null) return true;
+        if (value instanceof ScalarValue scalar) {
+            return isEmptyFeatureValue(scalar.value());
+        }
+        if (value instanceof ListSequenceValue sequence) return sequence.size() == 0;
+        if (value instanceof SequenceValue sequence) return sequence.size() == 0;
+        if (value instanceof CharSequence text) return text.length() == 0;
+        if (value instanceof Collection<?> collection) return collection.isEmpty();
+        if (value instanceof Map<?, ?> map) return map.isEmpty();
+        return value.getClass().isArray() && java.lang.reflect.Array.getLength(value) == 0;
     }
 
     /**

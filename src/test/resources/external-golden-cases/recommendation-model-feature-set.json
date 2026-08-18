@@ -171,7 +171,7 @@
       "store_name": "normalized_score_seq",
       "type": "DOUBLE",
       "definition_type": "DERIVED",
-      "expression": "calc_delta_seq(history_score_seq, matched_event_log2)",
+      "expression": "calc_delta_seq(history_score_seq, matched_event_log2, {\"direction\":\"ELEMENT_MINUS_BASE\"})",
       "output_policy": "OUTPUT",
       "to_use": true,
       "order": 109,

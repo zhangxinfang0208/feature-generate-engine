@@ -196,7 +196,7 @@ public final class SequenceViewRuntimeTest {
                                 Map.of("numbers", repeated),
                                 Map.of("numbers", equalButDistinct))));
         OfflineBatchValue values = (OfflineBatchValue) result.feature(outputFeature);
-        assertEquals(List.of(1.0, 3.0), values.valueAt(0));
+        assertEquals(List.of(-1.0, -3.0), values.valueAt(0));
         assertSame(
                 "Native Batch should reuse one materialized sequence identity",
                 values.valueAt(0),

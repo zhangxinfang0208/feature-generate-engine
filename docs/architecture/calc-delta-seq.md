@@ -15,17 +15,17 @@ calc_delta_seq(sequence, base, config)
 - `base`：有限数值标量；
 - `config`：可选对象，控制减法方向和单位换算。
 
-两参数调用保持兼容语义：
+两参数调用默认使用 `base - element` 语义：
 
 ```text
-result[i] = sequence[i] - base
+result[i] = base - sequence[i]
 ```
 
 例如：
 
 ```text
 calc_delta_seq([2, 5, 9], 10)
-=> [-8.0, -5.0, -1.0]
+=> [8.0, 5.0, 1.0]
 ```
 
 ## 2. 配置参数
@@ -34,7 +34,7 @@ calc_delta_seq([2, 5, 9], 10)
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `direction` | STRING | `ELEMENT_MINUS_BASE` | 减法方向 |
+| `direction` | STRING | `BASE_MINUS_ELEMENT` | 减法方向 |
 | `divisor` | NUMBER | `1.0` | 差值的除数，必须是有限正数 |
 
 `direction` 支持：

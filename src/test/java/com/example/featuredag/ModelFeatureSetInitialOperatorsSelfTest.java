@@ -153,7 +153,7 @@ public final class ModelFeatureSetInitialOperatorsSelfTest {
         assertFeature(values, "distinct_matching_context", List.of(2));
         assertFeature(values, "match_count_bucket", List.of(2));
         assertDoubleFeature(values, "match_count_log2", 1.0);
-        assertDoubleSequence(values, "adjusted_scores", List.of(1.0, 4.0, 8.0));
+        assertDoubleSequence(values, "adjusted_scores", List.of(-1.0, -4.0, -8.0));
         assertFeature(values, "adjusted_scores_length", List.of(3));
         assertFeature(values, "deeply_nested_all_operators", List.of(3));
     }
@@ -192,8 +192,8 @@ public final class ModelFeatureSetInitialOperatorsSelfTest {
         assertDoubleSequence(
                 fourDistinct,
                 "adjusted_scores",
-                List.of(2.0 - expectedLog, 5.0 - expectedLog,
-                        9.0 - expectedLog, 11.0 - expectedLog));
+                List.of(expectedLog - 2.0, expectedLog - 5.0,
+                        expectedLog - 9.0, expectedLog - 11.0));
         assertFeature(fourDistinct, "adjusted_scores_length", List.of(4));
         assertFeature(fourDistinct, "deeply_nested_all_operators", List.of(4));
     }

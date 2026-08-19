@@ -17,7 +17,7 @@ import java.util.Map;
 /**
  * 按元素计算差值，输出长度和顺序与输入序列完全一致。
  *
- * <p>两参数调用保持 {@code sequence[i] - base} 的兼容语义；可选第三个配置对象支持通过
+ * <p>两参数调用默认计算 {@code base - sequence[i]}；可选第三个配置对象支持通过
  * {@code direction} 调整减法方向，并通过 {@code divisor} 对差值做单位换算。
  */
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
@@ -135,7 +135,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
 
     private static final class DeltaOptions {
         private static final DeltaOptions DEFAULTS = new DeltaOptions(
-                DeltaDirection.ELEMENT_MINUS_BASE, 1.0);
+                DeltaDirection.BASE_MINUS_ELEMENT, 1.0);
 
         private final DeltaDirection direction;
         private final double divisor;
@@ -164,7 +164,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
 
             DeltaDirection direction = config.containsKey(DIRECTION_KEY)
                     ? DeltaDirection.parse(config.get(DIRECTION_KEY))
-                    : DeltaDirection.ELEMENT_MINUS_BASE;
+                    : DeltaDirection.BASE_MINUS_ELEMENT;
             double divisor = config.containsKey(DIVISOR_KEY)
                     ? OperatorSupport.finiteDouble(
                             config.get(DIVISOR_KEY), "calc_delta_seq divisor")
@@ -173,7 +173,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
                 throw new IllegalArgumentException(
                         "calc_delta_seq divisor must be greater than 0");
             }
-            if (direction == DeltaDirection.ELEMENT_MINUS_BASE && divisor == 1.0) {
+            if (direction == DeltaDirection.BASE_MINUS_ELEMENT && divisor == 1.0) {
                 return DEFAULTS;
             }
             return new DeltaOptions(direction, divisor);

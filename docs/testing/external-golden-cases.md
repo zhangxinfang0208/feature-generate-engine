@@ -22,7 +22,7 @@
 | `matched_event_count` | `get_seq_length(matched_positions)` | 统计历史匹配次数 |
 | `matched_event_bucket` | `discrete(matched_event_count, [0, 1, 3, 5])` | 对匹配次数分桶 |
 | `matched_event_log2` | `log_base(matched_event_bucket, 2, 16)` | 对匹配强度做对数变换 |
-| `normalized_score_seq` | `calc_delta_seq(history_score_seq, matched_event_log2)` | 每个历史分数减去匹配强度 |
+| `normalized_score_seq` | `calc_delta_seq(history_score_seq, matched_event_log2, {"direction":"ELEMENT_MINUS_BASE"})` | 每个历史分数减去匹配强度 |
 
 这条链路覆盖首期全部 8 个算子。五个场景覆盖冷启动空历史、非空历史无匹配、单次匹配、重复上下文以及 3/5 两个精确分桶边界。每条用例中的历史类目、行为和分数序列都逐位置对齐。
 

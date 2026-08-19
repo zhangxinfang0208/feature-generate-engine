@@ -152,7 +152,7 @@ public final class DagEngineSelfTest {
                 List.of(List.of("a1", "a2"), List.of("b1", "b2")))
                 .equals(List.of("a1#b1", "a2#b2"));
         assert registry.evaluate("calc_delta_seq", List.of(List.of(2, 5, 9), 10))
-                .equals(List.of(-8.0, -5.0, -1.0));
+                .equals(List.of(8.0, 5.0, 1.0));
     }
 
     private static void testInitialOperatorNativeBatchEquivalence() {

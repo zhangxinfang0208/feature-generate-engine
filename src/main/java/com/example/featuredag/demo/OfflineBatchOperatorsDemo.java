@@ -38,7 +38,7 @@ public final class OfflineBatchOperatorsDemo {
         InitialOperatorDemoSupport.assertFeature(
                 first, "matching_indices", InitialOperatorDemoSupport.sequence(0, 2));
         InitialOperatorDemoSupport.assertFeature(
-                first, "number_deltas", InitialOperatorDemoSupport.sequence(-8.0, -5.0, -1.0));
+                first, "number_deltas", InitialOperatorDemoSupport.sequence(8.0, 5.0, 1.0));
 
         Map<String, List<?>> second = result.rows().get(1);
         InitialOperatorDemoSupport.assertFeature(
@@ -48,7 +48,7 @@ public final class OfflineBatchOperatorsDemo {
         InitialOperatorDemoSupport.assertFeature(
                 second, "selected_codes", InitialOperatorDemoSupport.sequence("Y", "X"));
         InitialOperatorDemoSupport.assertFeature(
-                second, "number_deltas", InitialOperatorDemoSupport.sequence(5.0, 3.0, -1.0));
+                second, "number_deltas", InitialOperatorDemoSupport.sequence(-5.0, -3.0, 1.0));
         return result;
     }
 

@@ -46,7 +46,7 @@ public final class SequenceOperatorsDemo {
         InitialOperatorDemoSupport.assertFeature(
                 result.featureValues(),
                 "number_deltas",
-                InitialOperatorDemoSupport.sequence(-8.0, -5.0, -1.0));
+                InitialOperatorDemoSupport.sequence(8.0, 5.0, 1.0));
         return result;
     }
 

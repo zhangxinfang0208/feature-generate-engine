@@ -20,16 +20,29 @@ public final class CalculateDeltaSequenceConfigurationTest {
     private static final long REQUEST_TIMESTAMP_MS = 1_720_007_200_000L;
 
     @Test
-    public void legacyTwoArgumentCallKeepsElementMinusBase() {
+    public void twoArgumentCallDefaultsToBaseMinusElement() {
         OperatorRegistry registry = OperatorRegistry.standard();
 
         assertEquals(2, registry.require("calc_delta_seq").minArguments());
         assertEquals(3, registry.require("calc_delta_seq").maxArguments());
         assertEquals(
-                Arrays.asList(-8.0, -5.0, -1.0),
+                Arrays.asList(8.0, 5.0, 1.0),
                 registry.evaluate(
                         "calc_delta_seq",
                         Arrays.<Object>asList(Arrays.asList(2, 5, 9), 10)));
+    }
+
+    @Test
+    public void configWithoutDirectionDefaultsToBaseMinusElement() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        Map<String, Object> config = new LinkedHashMap<String, Object>();
+        config.put("divisor", 2.0);
+
+        assertEquals(
+                Arrays.asList(4.0, 2.5, 0.5),
+                registry.evaluate(
+                        "calc_delta_seq",
+                        Arrays.<Object>asList(Arrays.asList(2, 5, 9), 10, config)));
     }
 
     @Test

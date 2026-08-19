@@ -25,7 +25,7 @@
 | `same_industry_event_count` | `get_seq_length(same_industry_positions)` |
 | `ad_fatigue_bucket` | `discrete(same_industry_event_count, [0, 1, 3, 5])` |
 | `ad_fatigue_log2` | `log_base(ad_fatigue_bucket, 2, 16)` |
-| `fatigue_adjusted_score_components` | `calc_delta_seq(candidate_score_component_seq, ad_fatigue_log2)` |
+| `fatigue_adjusted_score_components` | `calc_delta_seq(candidate_score_component_seq, ad_fatigue_log2, {"direction":"ELEMENT_MINUS_BASE"})` |
 
 这里的疲劳校正公式是示例规则：每个基础分数组件减去 `ad_fatigue_log2`。实际业务可以在不改变外部验证方式的前提下替换表达式和黄金结果。
 

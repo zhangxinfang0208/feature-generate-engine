@@ -134,6 +134,8 @@ public final class LogicalDagBuilder {
                     producer.entityScopes(),
                     producer.valueShape(),
                     role,
+                    // RAW 的 dft 仍只处理“源字段缺失”；衍生 dft 才处理成功计算出的空结果。
+                    definition.isRaw() ? null : definition.defaultValue(),
                     definition.expressionContent());
             context.nodes.put(outputId, outputNode);
             context.featureOutputIds.put(featureName, outputId);

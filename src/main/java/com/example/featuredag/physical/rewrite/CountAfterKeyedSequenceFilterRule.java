@@ -58,6 +58,8 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
         if (aggregateInput instanceof OperatorNode directFilter) {
             filter = directFilter;
         } else if (aggregateInput instanceof FeatureOutputNode featureOutput) {
+            // 默认值是特征边界语义；融合若跳过该边界会使空过滤结果无法兜底。
+            if (featureOutput.defaultValue() != null) return Optional.empty();
             LogicalNode producer = dag.node(featureOutput.producerNodeId());
             if (!(producer instanceof OperatorNode producerOperator)) return Optional.empty();
             filter = producerOperator;

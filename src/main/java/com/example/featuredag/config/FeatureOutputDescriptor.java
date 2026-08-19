@@ -6,12 +6,24 @@ public record FeatureOutputDescriptor(
         String featureName,
         String storeName,
         int order,
-        int declarationIndex) {
+        int declarationIndex,
+        Integer sequenceMaxLength) {
+    public FeatureOutputDescriptor(
+            String featureName,
+            String storeName,
+            int order,
+            int declarationIndex) {
+        this(featureName, storeName, order, declarationIndex, null);
+    }
+
     public FeatureOutputDescriptor {
         featureName = requireText(featureName, "featureName");
         storeName = requireText(storeName, "storeName");
         if (declarationIndex < 0) {
             throw new IllegalArgumentException("declarationIndex must not be negative");
+        }
+        if (sequenceMaxLength != null && sequenceMaxLength <= 0) {
+            throw new IllegalArgumentException("sequenceMaxLength must be positive");
         }
     }
 

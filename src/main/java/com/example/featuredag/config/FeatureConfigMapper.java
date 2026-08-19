@@ -68,6 +68,8 @@ public final class FeatureConfigMapper {
             boolean enabled = isEnabled(feature.toUse());
             OutputPolicy configuredOutputPolicy = parseOutputPolicy(feature.outputPolicy(), name);
             ValueShape declaredValueShape = parseValueShape(feature.valueShape(), name);
+            Integer sequenceMaxLength = validateSequenceMaxLength(
+                    feature.sequenceMaxLength(), name);
             if (definitionType == DefinitionType.BASE
                     && feature.outputPolicy() != null && !feature.outputPolicy().isBlank()
                     && configuredOutputPolicy != OutputPolicy.OUTPUT) {
@@ -97,7 +99,7 @@ public final class FeatureConfigMapper {
                             .sourceBinding(sourceBinding)
                             .outputPolicy(OutputPolicy.OUTPUT)
                             .declaredValueShape(resolveBaseValueShape(
-                                    declaredValueShape, feature.sequenceMaxLength()));
+                                    declaredValueShape, sequenceMaxLength));
                     // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
                     if (feature.defaultValue() != null) {
                         builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
@@ -187,6 +189,14 @@ public final class FeatureConfigMapper {
                 : null;
     }
 
+    private static Integer validateSequenceMaxLength(Integer value, String featureName) {
+        if (value != null && value <= 0) {
+            throw new IllegalArgumentException(
+                    "seq_max_length for feature " + featureName + " must be positive");
+        }
+        return value;
+    }
+
     private static void putUnique(
             Map<String, DefinitionEntry> entries, String name, DefinitionEntry entry) {
         if (entries.putIfAbsent(name, entry) != null) {
@@ -267,7 +277,12 @@ public final class FeatureConfigMapper {
         String storeName = config.storeName() == null || config.storeName().isBlank()
                 ? name : config.storeName().trim();
         int order = config.order() == null ? Integer.MAX_VALUE : config.order();
-        return new FeatureOutputDescriptor(name, storeName, order, entry.declarationIndex());
+        return new FeatureOutputDescriptor(
+                name,
+                storeName,
+                order,
+                entry.declarationIndex(),
+                config.sequenceMaxLength());
     }
 
     private static Comparator<FeatureOutputDescriptor> outputComparator() {

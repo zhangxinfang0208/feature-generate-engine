@@ -124,7 +124,7 @@ public final class GroupCountConcatOperatorTest {
                       "to_use": true,
                       "entity_scopes": ["USER"],
                       "value_shape": "SEQUENCE",
-                      "seq_max_length": 1024
+                      "seq_max_length": 2
                     }
                   ]
                 }

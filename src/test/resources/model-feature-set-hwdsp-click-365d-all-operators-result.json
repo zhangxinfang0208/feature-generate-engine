@@ -1,0 +1,35 @@
+{
+  "feature_set_name": "hwdsp_click_365d_all_initial_operators_no_intermediate",
+  "version": "2.0.0",
+  "execution_id": "hwdsp-click-365d-all-operators-single",
+  "source_data": {
+    "resource": "hwdsp-click-365d-all-operators-sample.tsv",
+    "auid": "123456",
+    "source_event_count": 81,
+    "target_slot_id": "k4hs367teq"
+  },
+  "feature_values": {
+    "hwdsp_clk_target_slot_pkg_age_seq_365d": [
+      "com.UCMobile|k4hs367teq|3.0712384259259258",
+      "com.UCMobile|k4hs367teq|4.044143518518519",
+      "com.baidu.searchbox|k4hs367teq|19.032337962962963",
+      "com.UCMobile|k4hs367teq|21.030613425925925",
+      "com.baidu.searchbox|k4hs367teq|26.013368055555556",
+      "com.xm.zsg|k4hs367teq|31.30148148148148",
+      "com.dt.fkzs|k4hs367teq|38.328784722222224",
+      "com.jzckj.qxsg.up|k4hs367teq|44.02274305555556",
+      "com.taobao.idlefish|k4hs367teq|44.482592592592596",
+      "com.shiyunku.syk|k4hs367teq|45.455671296296295",
+      "com.smile.gifmaker|k4hs367teq|45.49956018518518",
+      "com.hm.hmysct|k4hs367teq|55.00560185185185",
+      "com.hm.hmysct|k4hs367teq|55.0069212962963",
+      "com.zhijun.bookstore|k4hs367teq|58.36547453703704"
+    ],
+    "hwdsp_clk_target_slot_distinct_pkg_log2_365d": [
+      2.321928094887362
+    ],
+    "hwdsp_clk_target_slot_event_cnt_log2_365d": [
+      2.321928094887362
+    ]
+  }
+}

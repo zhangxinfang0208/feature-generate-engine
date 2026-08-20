@@ -1,0 +1,95 @@
+{
+  "features": [
+    {
+      "catalog": "root",
+      "encode": "separate",
+      "regexp": "",
+      "to_use": true,
+      "type": "string",
+      "raw_name": "",
+      "discrete_type": "",
+      "output_policy": "OUTPUT",
+      "expression": "group_count_concat(slice_by_indices(auid_hwdsp_clk_prmt_pkgname_seq_time_365d, find_indices(auid_hwdsp_clk_appc2_seq_time_365d, '电商')),{\"delimiter\":\"#\"})",
+      "order": 0,
+      "is_train_feature": true,
+      "tableType": "hive",
+      "definition_type": "DERIVED",
+      "name": "small_appc2_click_pkg_strength_seq",
+      "store_name": "",
+      "value_shape": "SEQUENCE",
+      "feature_type": "sparse",
+      "dft": "missing",
+      "entity_scopes": [
+        "USER"
+      ],
+      "featureClassification": "/特征/人/用户场景/出行场景",
+      "feature_source": "",
+      "prim_keys": "",
+      "is_feedback": "true",
+      "featureCategory": "online"
+    },
+    {
+      "catalog": "root",
+      "encode": "separate",
+      "regexp": "",
+      "table_name": "pps.ads_rcm_ad_auid_feature_click_cdr_merged_lseq_ds",
+      "to_use": true,
+      "type": "string",
+      "raw_name": "auid_hwdsp_clk_appc2_seq_time_365d",
+      "discrete_type": "",
+      "output_policy": "OUTPUT",
+      "expression": "",
+      "order": 0,
+      "is_train_feature": "false",
+      "featureCategory": "offline",
+      "tableType": "hive",
+      "definition_type": "BASE",
+      "name": "auid_hwdsp_clk_appc2_seq_time_365d",
+      "store_name": "auid_hwdsp_clk_appc2_seq_time_365d",
+      "value_shape": "SEQUENCE",
+      "feature_type": "sparse",
+      "dft": "missing",
+      "entity_scopes": [
+        "USER"
+      ],
+      "featureClassification": "/特征/人/用户场景/出行场景",
+      "feature_source": "",
+      "prim_keys": "auid",
+      "is_feedback": false
+    },
+    {
+      "catalog": "root",
+      "encode": "separate",
+      "regexp": "",
+      "table_name": "pps.ads_rcm_ad_auid_feature_click_cdr_merged_lseq_ds",
+      "to_use": true,
+      "type": "string",
+      "raw_name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "discrete_type": "",
+      "output_policy": "OUTPUT",
+      "expression": "",
+      "order": 0,
+      "is_train_feature": "false",
+      "featureCategory": "offline",
+      "tableType": "hive",
+      "definition_type": "BASE",
+      "name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "store_name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "value_shape": "SEQUENCE",
+      "feature_type": "sparse",
+      "dft": "missing",
+      "entity_scopes": [
+        "USER"
+      ],
+      "featureClassification": "/特征/人/用户场景/出行场景",
+      "feature_source": "",
+      "prim_keys": "auid",
+      "is_feedback": false
+    }
+  ],
+  "table_configs": {
+    "pps.ads_rcm_ad_auid_feature_click_cdr_merged_lseq_ds": {}
+  },
+  "feature_set_name": "transform_test",
+  "version": "latest"
+}

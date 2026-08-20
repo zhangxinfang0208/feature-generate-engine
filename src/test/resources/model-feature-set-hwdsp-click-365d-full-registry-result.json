@@ -1,0 +1,40 @@
+{
+  "feature_values" : {
+    "small_appc2_click_pkg_strength_seq" : [ "实用工具#6" ],
+    "hwdsp_clk_target_slot_pkg_age_seq_365d" : [ "com.UCMobile|k4hs367teq|3.0712384259259258", "com.UCMobile|k4hs367teq|4.044143518518519", "com.baidu.searchbox|k4hs367teq|19.032337962962963", "com.UCMobile|k4hs367teq|21.030613425925925", "com.baidu.searchbox|k4hs367teq|26.013368055555556", "com.xm.zsg|k4hs367teq|31.30148148148148", "com.dt.fkzs|k4hs367teq|38.328784722222224", "com.jzckj.qxsg.up|k4hs367teq|44.02274305555556", "com.taobao.idlefish|k4hs367teq|44.482592592592596", "com.shiyunku.syk|k4hs367teq|45.455671296296295", "com.smile.gifmaker|k4hs367teq|45.49956018518518", "com.hm.hmysct|k4hs367teq|55.00560185185185", "com.hm.hmysct|k4hs367teq|55.0069212962963", "com.zhijun.bookstore|k4hs367teq|58.36547453703704" ],
+    "hwdsp_clk_target_slot_event_cnt_log2_365d" : [ 2.321928094887362 ],
+    "hwdsp_clk_target_slot_distinct_pkg_log2_365d" : [ 2.321928094887362 ],
+    "shopping_appc2_click_pkg_strength_seq" : [ "com.taobao.idlefish#1", "com.taobao.taobao#4", "com.whyixiu.jingyangou#1" ],
+    "shopping_appc2_click_pkg_slot_age_seq" : [ "com.taobao.idlefish|k4hs367teq|44.482592592592596", "com.taobao.taobao|l4gzyf69el|220.56971064814815", "com.taobao.taobao|l4gzyf69el|220.6032060185185", "com.whyixiu.jingyangou|v49l70lm9a|264.2887847222222", "com.taobao.taobao|p208ixbkix|265.4871180555556", "com.taobao.taobao|q9exnhcdya|298.9963310185185" ],
+    "shopping_appc2_click_pkg_diversity_log2" : [ 1.5849625007211563 ],
+    "appc2_click_category_avg_cnt" : [ 5 ],
+    "appc2_click_category_repeat_cnt" : [ 65 ],
+    "auid_plus_5" : [ 1239 ],
+    "auid_minus_5" : [ 1229 ],
+    "auid_times_3" : [ 3702 ],
+    "auid_div_5" : [ 246.8 ],
+    "auid_min_threshold" : [ 1000 ],
+    "auid_max_threshold" : [ 2000 ],
+    "auid_div_5_to_int" : [ 246 ],
+    "auid_plus_5_to_bigint" : [ 1239 ]
+  },
+  "no_match_feature_values" : {
+    "small_appc2_click_pkg_strength_seq" : [ "no_such_category#6" ],
+    "hwdsp_clk_target_slot_pkg_age_seq_365d" : [ "com.UCMobile|k4hs367teq|3.0712384259259258", "com.UCMobile|k4hs367teq|4.044143518518519", "com.baidu.searchbox|k4hs367teq|19.032337962962963", "com.UCMobile|k4hs367teq|21.030613425925925", "com.baidu.searchbox|k4hs367teq|26.013368055555556", "com.xm.zsg|k4hs367teq|31.30148148148148", "com.dt.fkzs|k4hs367teq|38.328784722222224", "com.jzckj.qxsg.up|k4hs367teq|44.02274305555556", "com.taobao.idlefish|k4hs367teq|44.482592592592596", "com.shiyunku.syk|k4hs367teq|45.455671296296295", "com.smile.gifmaker|k4hs367teq|45.49956018518518", "com.hm.hmysct|k4hs367teq|55.00560185185185", "com.hm.hmysct|k4hs367teq|55.0069212962963", "com.zhijun.bookstore|k4hs367teq|58.36547453703704" ],
+    "hwdsp_clk_target_slot_event_cnt_log2_365d" : [ 2.321928094887362 ],
+    "hwdsp_clk_target_slot_distinct_pkg_log2_365d" : [ 2.321928094887362 ],
+    "shopping_appc2_click_pkg_strength_seq" : [ ],
+    "shopping_appc2_click_pkg_slot_age_seq" : [ ],
+    "shopping_appc2_click_pkg_diversity_log2" : [ 0.0 ],
+    "appc2_click_category_avg_cnt" : [ 81 ],
+    "appc2_click_category_repeat_cnt" : [ 80 ],
+    "auid_plus_5" : [ 1239 ],
+    "auid_minus_5" : [ 1229 ],
+    "auid_times_3" : [ 3702 ],
+    "auid_div_5" : [ 246.8 ],
+    "auid_min_threshold" : [ 1000 ],
+    "auid_max_threshold" : [ 2000 ],
+    "auid_div_5_to_int" : [ 246 ],
+    "auid_plus_5_to_bigint" : [ 1239 ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "feature_values": {
+    "small_appc2_click_pkg_strength_seq": ["实用工具#6"],
+    "hwdsp_clk_target_slot_pkg_age_seq_365d": ["com.UCMobile|k4hs367teq|3.0712384259259258", "com.UCMobile|k4hs367teq|4.044143518518519", "com.baidu.searchbox|k4hs367teq|19.032337962962963", "com.UCMobile|k4hs367teq|21.030613425925925", "com.baidu.searchbox|k4hs367teq|26.013368055555556", "com.xm.zsg|k4hs367teq|31.30148148148148", "com.dt.fkzs|k4hs367teq|38.328784722222224", "com.jzckj.qxsg.up|k4hs367teq|44.02274305555556", "com.taobao.idlefish|k4hs367teq|44.482592592592596", "com.shiyunku.syk|k4hs367teq|45.455671296296295", "com.smile.gifmaker|k4hs367teq|45.49956018518518", "com.hm.hmysct|k4hs367teq|55.00560185185185", "com.hm.hmysct|k4hs367teq|55.0069212962963", "com.zhijun.bookstore|k4hs367teq|58.36547453703704"],
+    "hwdsp_clk_target_slot_event_cnt_log2_365d": [2.321928094887362],
+    "hwdsp_clk_target_slot_distinct_pkg_log2_365d": [2.321928094887362],
+    "hwdsp_clk_target_slot_pkg_cnt_smooth": [19],
+    "hwdsp_clk_pkg_repeat_cnt": [34],
+    "hwdsp_clk_pkg_diversity_pct": [58.02469135802469],
+    "hwdsp_clk_active_day_ratio_365d": [1.0],
+    "hwdsp_clk_behavior_diversity_capped": [17],
+    "hwdsp_clk_env_dimension_max": [8],
+    "hwdsp_clk_pkg_diversity_pct_int": [58],
+    "hwdsp_clk_pkg_day_combo_cnt": [17155.0]
+  },
+  "no_match_feature_values": {
+    "small_appc2_click_pkg_strength_seq": ["实用工具#6"],
+    "hwdsp_clk_target_slot_pkg_age_seq_365d": [],
+    "hwdsp_clk_target_slot_event_cnt_log2_365d": [1.0],
+    "hwdsp_clk_target_slot_distinct_pkg_log2_365d": [1.0],
+    "hwdsp_clk_target_slot_pkg_cnt_smooth": [5],
+    "hwdsp_clk_pkg_repeat_cnt": [34],
+    "hwdsp_clk_pkg_diversity_pct": [58.02469135802469],
+    "hwdsp_clk_active_day_ratio_365d": [1.0],
+    "hwdsp_clk_behavior_diversity_capped": [17],
+    "hwdsp_clk_env_dimension_max": [8],
+    "hwdsp_clk_pkg_diversity_pct_int": [58],
+    "hwdsp_clk_pkg_day_combo_cnt": [17155.0]
+  }
+}

@@ -1,0 +1,228 @@
+{
+  "title": "HWDSP 365D 点击模型特征集端到端讲解",
+  "purpose": "一个文件讲清：输入数据结构、5 个 BASE 原始特征、用户原有 4 个输出、5 个业务扩展输出、8 个算术类别输出，以及注册表全部 17 个算子的分工。所有数值均由引擎真实执行产出并被单测钉死。",
+  "how_to_read": "先看 engine_contracts 与 source_row，再看 preserved_original_outputs；derived_features 解释业务扩展，arithmetic_test_outputs 展示 BASE/常量/嵌套类别，operator_coverage 是全算子覆盖索引。",
+  "engine_contracts": {
+    "input": "离线输入 = Map<特征名, List<?>>：SEQUENCE 特征传元素数组（字符串序列传字符串数组、timestamp 传整型数组），SCALAR 传单元素数组。",
+    "output": "输出恒为 Map<String, List<?>>：SEQUENCE 输出元素数组，SCALAR 输出单元素数组（如 [5]）。",
+    "source_format": "源表为 TSV：列分隔 \\t、序列分隔 ^、缺失值字面量 missing 原样进入引擎。"
+  },
+  "source_row": {
+    "table": "pps.ads_rcm_ad_auid_feature_click_cdr_merged_lseq_ds",
+    "auid": 1234,
+    "event_count": 81,
+    "sequence_alignment": "同一行的所有 *_seq_time_365d 序列按点击事件位置等长对齐（第 i 位描述同一次点击）。",
+    "timestamp_order": "timestamp 降序（最新在前）；date_diff 升序（天粒度，两者互为镜像）。",
+    "category_note": "真实行的一级类目（appc2）中没有『电商』取值，最接近的购物类目是『购物比价』，共命中 6 次（1 基位置 17/66/67/72/75/76，即 0 基下标 16/65/66/71/74/75）。筛选值不在引用列时输出空序列而非报错。"
+  },
+  "base_features": [
+    {
+      "name": "auid",
+      "type": "INT",
+      "value_shape": "SCALAR",
+      "meaning": "用户标识；在本测试特征集中作为数值 BASE，专门覆盖 BASE 与常量的算术组合。",
+      "sample": [1234]
+    },
+    {
+      "name": "timestamp",
+      "type": "INT",
+      "value_shape": "SEQUENCE",
+      "meaning": "365 天内每次点击的秒级 Unix 时间戳。",
+      "sample_head": [1779196859, 1778931504, 1778847445],
+      "sample_tail": [1744091601, 1743422589]
+    },
+    {
+      "name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "type": "STRING",
+      "value_shape": "SEQUENCE",
+      "meaning": "与点击对齐的推广包名序列；整行去重后共 47 个不同包名。",
+      "sample_head": ["com.UCMobile", "com.UCMobile", "com.UCMobile"],
+      "sample_tail": ["com.baidu.searchbox", "missing"]
+    },
+    {
+      "name": "auid_hwdsp_clk_slotid_seq_time_365d",
+      "type": "STRING",
+      "value_shape": "SEQUENCE",
+      "meaning": "与点击对齐的广告位 ID 序列。",
+      "sample_head": ["d8d6f8msbk", "k4hs367teq", "k4hs367teq"],
+      "sample_tail": ["d0fjyoiupb", "w3tu2puzip"]
+    },
+    {
+      "name": "auid_hwdsp_clk_appc2_seq_time_365d",
+      "type": "STRING",
+      "value_shape": "SEQUENCE",
+      "meaning": "与点击对齐的一级类目序列；整行去重后共 16 个不同类目（含 missing）。",
+      "sample_head": ["实用工具", "实用工具", "实用工具"],
+      "sample_tail": ["棋牌桌游", "拍摄美化", "missing"]
+    }
+  ],
+  "preserved_original_outputs": {
+    "small_appc2_click_pkg_strength_seq": ["实用工具#6"],
+    "hwdsp_clk_target_slot_pkg_age_seq_365d": "共 14 项；首项 com.UCMobile|k4hs367teq|3.0712384259259258",
+    "hwdsp_clk_target_slot_event_cnt_log2_365d": [2.321928094887362],
+    "hwdsp_clk_target_slot_distinct_pkg_log2_365d": [2.321928094887362]
+  },
+  "derived_features": [
+    {
+      "name": "shopping_appc2_click_pkg_strength_seq",
+      "type": "STRING",
+      "value_shape": "SEQUENCE",
+      "business_meaning": "购物比价类点击的推广包名强度：按包名分组计数并拼成『包名#次数』，按首次出现顺序输出。",
+      "expression": "group_count_concat(slice_by_indices(auid_hwdsp_clk_prmt_pkgname_seq_time_365d, find_indices(auid_hwdsp_clk_appc2_seq_time_365d, '购物比价')),{\"delimiter\":\"#\"})",
+      "operators": ["find_indices", "slice_by_indices", "group_count_concat"],
+      "steps": [
+        {
+          "step": 1,
+          "operator": "find_indices(appc2, '购物比价')",
+          "output": "[16, 65, 66, 71, 74, 75]",
+          "note": "在类目序列中找目标值的位置，0 基下标，保持原顺序。"
+        },
+        {
+          "step": 2,
+          "operator": "slice_by_indices(pkgname, 下标)",
+          "output": "[\"com.taobao.idlefish\", \"com.taobao.taobao\", \"com.taobao.taobao\", \"com.whyixiu.jingyangou\", \"com.taobao.taobao\", \"com.taobao.taobao\"]",
+          "note": "按下标从包名序列切片，得到 6 次购物比价点击的包名。"
+        },
+        {
+          "step": 3,
+          "operator": "group_count_concat(切片, {\"delimiter\":\"#\"})",
+          "output": "[\"com.taobao.idlefish#1\", \"com.taobao.taobao#4\", \"com.whyixiu.jingyangou#1\"]",
+          "note": "LinkedHashMap 分组计数保持首次出现顺序：idlefish 1 次、taobao 4 次、jingyangou 1 次。"
+        }
+      ],
+      "final_output": ["com.taobao.idlefish#1", "com.taobao.taobao#4", "com.whyixiu.jingyangou#1"]
+    },
+    {
+      "name": "shopping_appc2_click_pkg_slot_age_seq",
+      "type": "STRING",
+      "value_shape": "SEQUENCE",
+      "business_meaning": "购物比价类点击明细：每次点击的『包名|广告位|距基准天数』，供序列模型直接消费。",
+      "expression": "zip_concat(slice_by_indices(pkgname, 下标), slice_by_indices(slotid, 下标), calc_delta_seq(slice_by_indices(timestamp, 下标), 1779196859, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":86400}), {\"delimiter\":\"|\"})",
+      "operators": ["zip_concat", "calc_delta_seq"],
+      "steps": [
+        {
+          "step": 1,
+          "operator": "slice_by_indices × 3",
+          "output": "包名切片同上；广告位切片 = [\"k4hs367teq\", \"l4gzyf69el\", \"l4gzyf69el\", \"v49l70lm9a\", \"p208ixbkix\", \"q9exnhcdya\"]；时间戳切片取同 6 个下标。",
+          "note": "同一份 find_indices 下标复用于三条序列（节点按 canonical 签名去重，只算一次）。"
+        },
+        {
+          "step": 2,
+          "operator": "calc_delta_seq(ts切片, 1779196859, BASE_MINUS_ELEMENT/86400)",
+          "output": "[44.482592592592596, 220.56971064814815, 220.6032060185185, 264.2887847222222, 265.4871180555556, 298.9963310185185]",
+          "note": "每次点击距基准时间的天数 =(1779196859 − 点击时间戳)/86400；基准取该行最新点击时间戳。"
+        },
+        {
+          "step": 3,
+          "operator": "zip_concat(…, {\"delimiter\":\"|\"})",
+          "output": "逐位拼接三条序列为字符串，行数与顺序保持不变。",
+          "note": "元素经 String.valueOf 规格化，DOUBLE 用 Java 最短往返表示。"
+        }
+      ],
+      "final_output": [
+        "com.taobao.idlefish|k4hs367teq|44.482592592592596",
+        "com.taobao.taobao|l4gzyf69el|220.56971064814815",
+        "com.taobao.taobao|l4gzyf69el|220.6032060185185",
+        "com.whyixiu.jingyangou|v49l70lm9a|264.2887847222222",
+        "com.taobao.taobao|p208ixbkix|265.4871180555556",
+        "com.taobao.taobao|q9exnhcdya|298.9963310185185"
+      ]
+    },
+    {
+      "name": "shopping_appc2_click_pkg_diversity_log2",
+      "type": "DOUBLE",
+      "value_shape": "SCALAR",
+      "business_meaning": "购物比价点击的包名多样性：去重率分桶后取 log2，压到平滑量级。",
+      "expression": "log_base(discrete(add(mul(div(count_distinct(切片), get_seq_length(切片)), 100), 1), [1, 20, 40, 60, 80]), 2, 32)",
+      "operators": ["count_distinct", "get_seq_length", "div", "mul", "add", "discrete", "log_base"],
+      "steps": [
+        { "step": 1, "operator": "count_distinct(包名切片)", "output": "3", "note": "6 次点击覆盖 3 个不同包名。" },
+        { "step": 2, "operator": "get_seq_length(包名切片)", "output": "6", "note": "切片长度即购物比价点击次数。" },
+        { "step": 3, "operator": "div(3, 6)", "output": "0.5", "note": "去重率；div 固定产出 DOUBLE，分母为 0 时按比率语义返回 0.0 而非报错。" },
+        { "step": 4, "operator": "mul(0.5, 100)", "output": "50.0", "note": "换算成百分比。" },
+        { "step": 5, "operator": "add(50.0, 1)", "output": "51.0", "note": "+1 保证空序列（去重率 0）时后续 log_base 入参仍 > 0。" },
+        { "step": 6, "operator": "discrete(51.0, [1, 20, 40, 60, 80])", "output": "3", "note": "值 ≥ 边界则计入（相等进右桶）：1、20、40 均 ≤ 51，60、80 不满足，得桶号 3。" },
+        { "step": 7, "operator": "log_base(3, 2, 32)", "output": "1.5849625007211563", "note": "换底公式 log2，upbound=32 先截断再取对数。" }
+      ],
+      "final_output": [1.5849625007211563]
+    },
+    {
+      "name": "appc2_click_category_avg_cnt",
+      "type": "INT",
+      "value_shape": "SCALAR",
+      "business_meaning": "平均每个一级类目的点击次数（同类目黏性的粗粒度指标）。",
+      "expression": "to_int(div(get_seq_length(appc2), count_distinct(appc2)))",
+      "operators": ["to_int"],
+      "steps": [
+        { "step": 1, "operator": "get_seq_length(appc2)", "output": "81", "note": "全量点击次数。" },
+        { "step": 2, "operator": "count_distinct(appc2)", "output": "16", "note": "全量类目去重数（含 missing）。" },
+        { "step": 3, "operator": "div(81, 16)", "output": "5.0625", "note": "整型相除提升为 DOUBLE，不做截断商。" },
+        { "step": 4, "operator": "to_int(5.0625)", "output": "5", "note": "小数部分向零截断（与 SQL CAST 一致），产出 Integer 载体。" }
+      ],
+      "final_output": [5]
+    },
+    {
+      "name": "appc2_click_category_repeat_cnt",
+      "type": "INT",
+      "value_shape": "SCALAR",
+      "business_meaning": "同类目重复点击量下界：总点击量取两序列长度的较大值，类目覆盖数取两序列去重数的较小值，差值即至少发生了多少次同类目重复点击。",
+      "expression": "to_bigint(sub(max(get_seq_length(appc2), get_seq_length(pkgname)), min(count_distinct(appc2), count_distinct(pkgname))))",
+      "operators": ["max", "min", "sub", "to_bigint"],
+      "steps": [
+        { "step": 1, "operator": "max(81, 81)", "output": "81", "note": "两条序列等长，取较大者作总点击量；min/max 支持两个及以上标量。" },
+        { "step": 2, "operator": "min(16, 47)", "output": "16", "note": "类目去重数 16、包名去重数 47，取较小者作覆盖数下界。" },
+        { "step": 3, "operator": "sub(81, 16)", "output": "65", "note": "双方均为整型载体时产出 Long，溢出直接失败不回绕。" },
+        { "step": 4, "operator": "to_bigint(65)", "output": "65", "note": "固定 64 位 Long 载体；声明类型 INT 同时覆盖 Integer 与 Long。" }
+      ],
+      "final_output": [65]
+    }
+  ],
+  "arithmetic_test_outputs": [
+    {"name":"auid_plus_5","expression":"add(auid, 5)","category":"BASE + 整数常量","output":[1239],"carrier":"Long"},
+    {"name":"auid_minus_5","expression":"sub(auid, 5)","category":"BASE - 整数常量","output":[1229],"carrier":"Long"},
+    {"name":"auid_times_3","expression":"mul(auid, 3)","category":"BASE × 整数常量","output":[3702],"carrier":"Long"},
+    {"name":"auid_div_5","expression":"div(auid, 5)","category":"BASE ÷ 整数常量","output":[246.8],"carrier":"Double"},
+    {"name":"auid_min_threshold","expression":"min(auid, 1000, 2000)","category":"BASE + 多个常量，取最小值","output":[1000],"carrier":"Integer"},
+    {"name":"auid_max_threshold","expression":"max(auid, 1000, 2000)","category":"BASE + 多个常量，取最大值","output":[2000],"carrier":"Integer"},
+    {"name":"auid_div_5_to_int","expression":"to_int(div(auid, 5))","category":"派生 DOUBLE → to_int","output":[246],"carrier":"Integer"},
+    {"name":"auid_plus_5_to_bigint","expression":"to_bigint(add(auid, 5))","category":"派生 INT → to_bigint","output":[1239],"carrier":"Long"}
+  ],
+  "operator_coverage": {
+    "说明": "注册表当前全部 17 个标准算子均在可达 DAG 中出现；测试断言 DAG 算子集与该清单完全相等。",
+    "find_indices": "D1/D2/D3：类目筛选下标",
+    "slice_by_indices": "D1/D2/D3：按下标切片",
+    "group_count_concat": "D1：分组计数拼接",
+    "zip_concat": "D2：多序列逐位拼接",
+    "calc_delta_seq": "D2：时间差换算",
+    "count_distinct": "D3/D4/D5：去重计数",
+    "get_seq_length": "D3/D4/D5：序列长度",
+    "div": "D3/D4 + auid_div_5：除法（防除 0 → 0.0，固定 DOUBLE）",
+    "mul": "D3 + auid_times_3：派生值/BASE 与常量乘法",
+    "add": "D3 + auid_plus_5：派生值/BASE 与常量加法",
+    "discrete": "D3：数值分桶（值 ≥ 边界计入，相等进右桶）",
+    "log_base": "D3：对数变换（先按 upbound 截断）",
+    "to_int": "D4 + auid_div_5_to_int：向零截断为 Integer",
+    "max": "D5 + auid_max_threshold：多标量取最大",
+    "min": "D5 + auid_min_threshold：多标量取最小",
+    "sub": "D5 + auid_minus_5：减法",
+    "to_bigint": "D5 + auid_plus_5_to_bigint：固定 Long 载体"
+  },
+  "no_intermediate_note": "17 个 DERIVED 都是最终模型输出（OUTPUT），表达式只引用 5 个 BASE 原始特征、互相不引用；所有筛选、切片、计数、分桶和算术组合全部内联，不暴露中间衍生特征。",
+  "edge_case_no_match": {
+    "description": "把 6 个购物比价全部替换为行内已有类目『实用工具』后（目标类目零命中）：",
+    "outputs": {
+      "shopping_appc2_click_pkg_strength_seq": [],
+      "shopping_appc2_click_pkg_slot_age_seq": [],
+      "shopping_appc2_click_pkg_diversity_log2": [0.0],
+      "appc2_click_category_avg_cnt": [5],
+      "appc2_click_category_repeat_cnt": [66]
+    },
+    "note": "购物类序列静默输出空序列；div(0,0)=0.0 → +1=1.0 → 落第 1 桶 → log2(1)=0.0；原模型目标 slot 输出与 8 个 auid 算术输出不受影响。"
+  },
+  "artifacts": {
+    "feature_set_config": "src/test/resources/model-feature-set-hwdsp-click-365d-full-registry.json",
+    "multi_row_samples": "src/test/resources/model-feature-set-hwdsp-click-365d-full-registry-samples.json",
+    "golden_result": "src/test/resources/model-feature-set-hwdsp-click-365d-full-registry-result.json",
+    "pinning_test": "src/test/java/com/example/featuredag/HwdspClick365dFullRegistryTest.java"
+  }
+}

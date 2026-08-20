@@ -9,6 +9,7 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
+import com.example.featuredag.logical.LogicalDagPrinter;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
@@ -16,6 +17,7 @@ import com.example.featuredag.physical.ExecutorType;
 import com.example.featuredag.physical.PhysicalNode;
 import com.example.featuredag.physical.PhysicalPlan;
 import com.example.featuredag.physical.PhysicalPlanner;
+import com.example.featuredag.physical.PhysicalPlanPrinter;
 import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
 import com.example.featuredag.planning.LogicalDagOptimizer;
 import com.example.featuredag.runtime.CandidateBatchValue;
@@ -36,6 +38,7 @@ import com.example.featuredag.runtime.RequestBatchValue;
 import com.example.featuredag.runtime.RuntimeNodeState;
 import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.RuntimeObserver;
+import com.example.featuredag.runtime.RuntimeTraceObserver;
 import com.example.featuredag.runtime.SequenceIndexRegistry;
 import com.example.featuredag.runtime.SequenceValue;
 import com.example.featuredag.runtime.ValueHandle;
@@ -55,28 +58,33 @@ public final class FeatureDagEngine {
     private final String version;
     private final String planId;
     private final List<FeatureOutputDescriptor> outputs;
+    private final LogicalDag logicalDag;
     private final PhysicalPlan plan;
     private final DagRuntime runtime;
     private final FeatureInputDecoder inputDecoder;
     private final FeatureOutputEncoder outputEncoder;
     private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
+    private final RuntimeTraceObserver runtimeTraceObserver;
 
     private FeatureDagEngine(
             ExecutionEnvironment environment,
             MappedFeatureSet mapped,
             String planId,
+            LogicalDag logicalDag,
             PhysicalPlan plan,
             DagRuntime runtime,
             FeatureInputDecoder inputDecoder,
             FeatureOutputEncoder outputEncoder,
             RuntimeObservabilityController observabilityController,
-            RuntimeObserver runtimeObserver) {
+            RuntimeObserver runtimeObserver,
+            RuntimeTraceObserver runtimeTraceObserver) {
         this.environment = environment;
         this.featureSetName = mapped.featureSetName();
         this.version = mapped.version();
         this.planId = planId;
         this.outputs = mapped.outputs();
+        this.logicalDag = Objects.requireNonNull(logicalDag, "logicalDag");
         this.plan = plan;
         this.runtime = runtime;
         this.inputDecoder = inputDecoder;
@@ -84,6 +92,8 @@ public final class FeatureDagEngine {
         this.observabilityController = Objects.requireNonNull(
                 observabilityController, "observabilityController");
         this.runtimeObserver = Objects.requireNonNull(runtimeObserver, "runtimeObserver");
+        this.runtimeTraceObserver = Objects.requireNonNull(
+                runtimeTraceObserver, "runtimeTraceObserver");
     }
 
     public static FeatureDagEngine init(Path configFile, InitOptions options) {
@@ -204,6 +214,12 @@ public final class FeatureDagEngine {
     public String planId() { return planId; }
     public ExecutionEnvironment environment() { return environment; }
 
+    /** 返回初始化后不可变的逻辑 DAG 文本，适合本地调测打印。 */
+    public String describeLogicalDag() { return LogicalDagPrinter.print(logicalDag); }
+
+    /** 返回运行时实际消费的物理计划文本，包含槽位、执行器和融合信息。 */
+    public String describePhysicalPlan() { return PhysicalPlanPrinter.print(plan); }
+
     /**
      * 离线推理（单行）：解码整行源值 → 执行物理计划 → 按输出描述逐个编码；
      * 任一输出特征失败即整体失败，并在异常中带上特征名定位。
@@ -217,8 +233,7 @@ public final class FeatureDagEngine {
                 () -> ExecutionContext.offlineRow(
                         request.executionId(), inputDecoder.decodeOffline(request.rowValues())));
         attachContext(observation, context);
-        ExecutionResult execution = measure(
-                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             Map<String, List<?>> result = new LinkedHashMap<>();
             for (FeatureOutputDescriptor output : outputs) {
@@ -245,8 +260,7 @@ public final class FeatureDagEngine {
                 () -> ExecutionContext.offlineBatch(
                         request.executionId(), inputDecoder.decodeOfflineBatch(request.rows())));
         attachContext(observation, context);
-        ExecutionResult execution = measure(
-                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
             for (int index = 0; index < request.rows().size(); index++) {
@@ -299,8 +313,7 @@ public final class FeatureDagEngine {
                         inputDecoder.decodeOnlineShared(request.sharedValues()),
                         inputDecoder.decodeOnlineCandidates(request.candidates())));
         attachContext(observation, context);
-        ExecutionResult execution = measure(
-                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             Map<String, List<?>> sharedResults = new LinkedHashMap<>();
             List<Map<String, List<?>>> candidateResults =
@@ -350,8 +363,7 @@ public final class FeatureDagEngine {
                         inputDecoder.decodeOnlineSharedBatch(groups),
                         inputDecoder.decodeOnlineCandidateBatch(groups)));
         attachContext(observation, context);
-        ExecutionResult execution = measure(
-                observation, ExecutionPhase.RUNTIME, () -> runtime.execute(plan, context));
+        ExecutionResult execution = executeRuntime(context, observation);
 
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
@@ -443,6 +455,37 @@ public final class FeatureDagEngine {
                 offlineRowCount,
                 options,
                 deterministicSample(executionId, options.sampleRate()));
+    }
+
+    private ExecutionResult executeRuntime(
+            ExecutionContext context,
+            ExecutionObservation observation) {
+        try {
+            ExecutionResult result = measure(
+                    observation,
+                    ExecutionPhase.RUNTIME,
+                    () -> runtime.execute(plan, context));
+            publishRuntimeTrace(context.executionId(), result);
+            return result;
+        } catch (RuntimeException error) {
+            // 失败时也发布已完成节点，便于从最后一个 FAILED 节点定位参数和根因。
+            publishRuntimeTrace(
+                    context.executionId(),
+                    new ExecutionResult(
+                            Map.of(),
+                            context.nodeStates(),
+                            context.runtimeCache().snapshot()));
+            throw error;
+        }
+    }
+
+    private void publishRuntimeTrace(String executionId, ExecutionResult result) {
+        if (runtimeTraceObserver == RuntimeTraceObserver.NOOP) return;
+        try {
+            runtimeTraceObserver.onExecutionFinished(executionId, plan, result);
+        } catch (RuntimeException ignored) {
+            // 调测出口与业务执行隔离：打印或自定义 sink 失败不得改变 generate 结果。
+        }
     }
 
     private static <T> T measure(
@@ -545,11 +588,13 @@ public final class FeatureDagEngine {
             FeatureInputDecoder inputDecoder = FeatureInputDecoder.from(dag);
             FeatureOutputEncoder outputEncoder = FeatureOutputEncoder.from(dag);
             return new FeatureDagEngine(
-                    options.environment(), mapped, planId, plan, new DagRuntime(operators, executors),
+                    options.environment(), mapped, planId, dag, plan,
+                    new DagRuntime(operators, executors),
                     inputDecoder,
                     outputEncoder,
                     options.observabilityController(),
-                    options.runtimeObserver());
+                    options.runtimeObserver(),
+                    options.runtimeTraceObserver());
         } catch (RuntimeException error) {
             throw initializationFailure(
                     error, featureSetName, version, configuredPlanId);

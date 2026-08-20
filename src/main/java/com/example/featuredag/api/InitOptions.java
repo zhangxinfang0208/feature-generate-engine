@@ -6,6 +6,7 @@ import com.example.featuredag.physical.ExecutionEnvironment;
 import com.example.featuredag.runtime.ObservabilityOptions;
 import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.RuntimeObserver;
+import com.example.featuredag.runtime.RuntimeTraceObserver;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,6 +25,7 @@ public final class InitOptions {
     private final Set<EntityScope> defaultRawFeatureScopes;
     private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
+    private final RuntimeTraceObserver runtimeTraceObserver;
     private final List<OperatorDefinition> operatorExtensions;
 
     private InitOptions(Builder builder) {
@@ -43,6 +45,8 @@ public final class InitOptions {
         this.observabilityController = Objects.requireNonNull(
                 builder.observabilityController, "observabilityController");
         this.runtimeObserver = Objects.requireNonNull(builder.runtimeObserver, "runtimeObserver");
+        this.runtimeTraceObserver = Objects.requireNonNull(
+                builder.runtimeTraceObserver, "runtimeTraceObserver");
         this.operatorExtensions = Collections.unmodifiableList(
                 new ArrayList<OperatorDefinition>(builder.operatorExtensions));
     }
@@ -66,6 +70,7 @@ public final class InitOptions {
         return observabilityController;
     }
     public RuntimeObserver runtimeObserver() { return runtimeObserver; }
+    public RuntimeTraceObserver runtimeTraceObserver() { return runtimeTraceObserver; }
     public List<OperatorDefinition> operatorExtensions() { return operatorExtensions; }
 
     private static String blankToNull(String value) {
@@ -101,6 +106,7 @@ public final class InitOptions {
         private RuntimeObservabilityController observabilityController =
                 new RuntimeObservabilityController(ObservabilityOptions.builder().build());
         private RuntimeObserver runtimeObserver = RuntimeObserver.noop();
+        private RuntimeTraceObserver runtimeTraceObserver = RuntimeTraceObserver.noop();
         private final List<OperatorDefinition> operatorExtensions = new ArrayList<>();
 
         public Builder environment(ExecutionEnvironment value) {
@@ -133,6 +139,14 @@ public final class InitOptions {
 
         public Builder runtimeObserver(RuntimeObserver value) {
             this.runtimeObserver = Objects.requireNonNull(value, "runtimeObserver");
+            return this;
+        }
+
+        /**
+         * 开启包含原始特征和中间值的同步 trace；只应在本地调测时使用。
+         */
+        public Builder runtimeTraceObserver(RuntimeTraceObserver value) {
+            this.runtimeTraceObserver = Objects.requireNonNull(value, "runtimeTraceObserver");
             return this;
         }
 

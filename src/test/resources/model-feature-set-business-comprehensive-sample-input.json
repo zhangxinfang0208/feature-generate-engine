@@ -1,0 +1,50 @@
+{
+  "execution_id": "business-three-cases-normal-sample",
+  "row_values": {
+    "target_creative_industry_id": ["I1"],
+    "target_app_category": ["电商"],
+    "target_media_id": ["M1"],
+    "target_item_id": ["itemA"],
+    "request_timestamp_ms": [1700000000000],
+    "ratio_scale": [1000],
+    "smoothing_epsilon": [0.000001],
+
+    "numeric_left": [3.7],
+    "numeric_right": [2.0],
+    "log_base_number": [2.0],
+    "log_upbound": [1024.0],
+    "dynamic_boundaries": [0.0, 10.0, 100.0],
+    "manual_indices": [3, 0, 2, 2],
+    "numeric_sequence": [1.0, 3.7, 8.0],
+
+    "exposure_creative_industry_seq": ["I1", "I2", "I1", "I1"],
+    "click_creative_industry_seq": ["I1", "I2", "I1", "I3", "I1"],
+    "conversion_creative_industry_seq": ["I1", "I2", "I1", "I1"],
+
+    "exposure_app_category_seq": ["电商", "游戏", "电商", "电商", "工具"],
+    "click_app_category_seq": ["电商", "游戏", "电商", "电商", "工具"],
+    "conversion_app_category_seq": ["电商", "游戏", "电商", "电商"],
+
+    "exposure_media_seq": ["M1", "M2", "M1", "M1"],
+    "click_media_seq": ["M1", "M2", "M1", "M3", "M1"],
+    "conversion_media_seq": ["M1", "M2", "M1", "M1"],
+
+    "click_item_id_seq": ["itemA", "itemX", "itemA", "itemB", "itemY"],
+    "click_timestamp_ms_seq": [
+      1699996400000,
+      1699992800000,
+      1699989200000,
+      1699985600000,
+      1699982000000
+    ],
+
+    "conversion_item_id_seq": ["itemA", "itemZ", "itemA", "itemC"],
+    "conversion_behavior_type_seq": ["purchase", "purchase", "signup", "purchase"],
+    "conversion_timestamp_ms_seq": [
+      1699992800000,
+      1699989200000,
+      1699985600000,
+      1699982000000
+    ]
+  }
+}

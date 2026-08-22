@@ -1,0 +1,147 @@
+{
+  "feature_set_name": "hwdsp_click_365d_all_initial_operators_no_intermediate",
+  "version": "2.0.0",
+  "features": [
+    {
+      "catalog": "/sequence_feature/hwdsp_click_365d",
+      "table_name": "auid_hwdsp_click_365d",
+      "to_use": true,
+      "raw_name": "timestamp",
+      "seq_max_length": 4096,
+      "output_policy": "OUTPUT",
+      "expression": "",
+      "order": 1,
+      "is_train_feature": false,
+      "definition_type": "BASE",
+      "name": "timestamp",
+      "store_name": "timestamp",
+      "value_shape": "SEQUENCE",
+      "feature_type": "dense",
+      "dft": null,
+      "entity_scopes": [
+        "USER"
+      ],
+      "feature_group_name": "auid_hwdsp_click_365d_raw_feature",
+      "type": "INT",
+      "feature_source": "hwdsp_click_365d",
+      "prim_keys": "auid",
+      "description": "点击时间戳序列；样例使用秒级 Unix 时间戳。"
+    },
+    {
+      "catalog": "/sequence_feature/hwdsp_click_365d",
+      "table_name": "auid_hwdsp_click_365d",
+      "to_use": true,
+      "raw_name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "seq_max_length": 4096,
+      "output_policy": "OUTPUT",
+      "expression": "",
+      "order": 2,
+      "is_train_feature": false,
+      "definition_type": "BASE",
+      "name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "store_name": "auid_hwdsp_clk_prmt_pkgname_seq_time_365d",
+      "value_shape": "SEQUENCE",
+      "feature_type": "sparse",
+      "dft": null,
+      "entity_scopes": [
+        "USER"
+      ],
+      "feature_group_name": "auid_hwdsp_click_365d_raw_feature",
+      "type": "STRING",
+      "feature_source": "hwdsp_click_365d",
+      "prim_keys": "auid",
+      "description": "365D 点击推广包名序列。"
+    },
+    {
+      "catalog": "/sequence_feature/hwdsp_click_365d",
+      "table_name": "auid_hwdsp_click_365d",
+      "to_use": true,
+      "raw_name": "auid_hwdsp_clk_slotid_seq_time_365d",
+      "seq_max_length": 4096,
+      "output_policy": "OUTPUT",
+      "expression": "",
+      "order": 3,
+      "is_train_feature": false,
+      "definition_type": "BASE",
+      "name": "auid_hwdsp_clk_slotid_seq_time_365d",
+      "store_name": "auid_hwdsp_clk_slotid_seq_time_365d",
+      "value_shape": "SEQUENCE",
+      "feature_type": "sparse",
+      "dft": null,
+      "entity_scopes": [
+        "USER"
+      ],
+      "feature_group_name": "auid_hwdsp_click_365d_raw_feature",
+      "type": "STRING",
+      "feature_source": "hwdsp_click_365d",
+      "prim_keys": "auid",
+      "description": "365D 点击广告位序列；用例筛选 k4hs367teq。"
+    },
+    {
+      "catalog": "/derived_feature/hwdsp_click_365d",
+      "to_use": true,
+      "raw_name": "",
+      "seq_max_length": 4096,
+      "output_policy": "OUTPUT",
+      "expression": "zip_concat(slice_by_indices(auid_hwdsp_clk_prmt_pkgname_seq_time_365d, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq')), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq')), calc_delta_seq(slice_by_indices(timestamp, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq')), 1779196859, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":86400}), {\"delimiter\":\"|\"})",
+      "order": 101,
+      "is_train_feature": true,
+      "definition_type": "DERIVED",
+      "name": "hwdsp_clk_target_slot_pkg_age_seq_365d",
+      "store_name": "hwdsp_clk_target_slot_pkg_age_seq_365d",
+      "value_shape": "SEQUENCE",
+      "feature_type": "sparse",
+      "dft": null,
+      "entity_scopes": [
+        "USER"
+      ],
+      "feature_group_name": "auid_hwdsp_click_365d_model_output",
+      "type": "STRING",
+      "description": "最终模型特征：目标广告位的推广包名、广告位和点击距今天数；全部筛选与时间差计算均内联。"
+    },
+    {
+      "catalog": "/derived_feature/hwdsp_click_365d",
+      "to_use": true,
+      "raw_name": "",
+      "seq_max_length": 1,
+      "output_policy": "OUTPUT",
+      "expression": "log_base(discrete(count_distinct(slice_by_indices(auid_hwdsp_clk_prmt_pkgname_seq_time_365d, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq'))), [-1, 0, 1, 5, 10]), 2, 16)",
+      "order": 102,
+      "is_train_feature": true,
+      "definition_type": "DERIVED",
+      "name": "hwdsp_clk_target_slot_distinct_pkg_log2_365d",
+      "store_name": "hwdsp_clk_target_slot_distinct_pkg_log2_365d",
+      "value_shape": "SCALAR",
+      "feature_type": "dense",
+      "dft": 0,
+      "entity_scopes": [
+        "USER"
+      ],
+      "feature_group_name": "auid_hwdsp_click_365d_model_output",
+      "type": "DOUBLE",
+      "description": "最终模型特征：目标广告位不同推广包数量分桶后的 log2；不暴露下标、切片、计数或分桶中间态。"
+    },
+    {
+      "catalog": "/derived_feature/hwdsp_click_365d",
+      "to_use": true,
+      "raw_name": "",
+      "seq_max_length": 1,
+      "output_policy": "OUTPUT",
+      "expression": "log_base(discrete(get_seq_length(zip_concat(slice_by_indices(auid_hwdsp_clk_prmt_pkgname_seq_time_365d, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq')), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq')), calc_delta_seq(slice_by_indices(timestamp, find_indices(auid_hwdsp_clk_slotid_seq_time_365d, 'k4hs367teq')), 1779196859, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":86400}), {\"delimiter\":\"|\"})), [-1, 0, 1, 5, 10, 20]), 2, 32)",
+      "order": 103,
+      "is_train_feature": true,
+      "definition_type": "DERIVED",
+      "name": "hwdsp_clk_target_slot_event_cnt_log2_365d",
+      "store_name": "hwdsp_clk_target_slot_event_cnt_log2_365d",
+      "value_shape": "SCALAR",
+      "feature_type": "dense",
+      "dft": 0,
+      "entity_scopes": [
+        "USER"
+      ],
+      "feature_group_name": "auid_hwdsp_click_365d_model_output",
+      "type": "DOUBLE",
+      "description": "最终模型特征：目标广告位事件数分桶后的 log2；深层表达式直接内联筛选、切片、时间差、拼接和长度计算。"
+    }
+  ]
+}

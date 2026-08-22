@@ -1,0 +1,31 @@
+{
+  "execution_id": "hwdsp-one-derived-feature-sample",
+  "source_format": {
+    "delimiter": "\t",
+    "sequence_delimiter": "^",
+    "note": "推广包名序列与 appc2 序列必须按点击事件位置等长；表达式固定筛选 appc2='电商'。"
+  },
+  "row_values": {
+    "auid_hwdsp_clk_prmt_pkgname_seq_time_365d": [
+      "com.UCMobile",
+      "com.UCMobile",
+      "com.UCMobile",
+      "com.sjf.xskmnq.xyx.huawei",
+      "com.sjf.xskmnq.xyx.huawei",
+      "com.baidu.searchbox"
+    ],
+    "auid_hwdsp_clk_appc2_seq_time_365d": [
+      "电商",
+      "电商",
+      "电商",
+      "游戏",
+      "游戏",
+      "工具"
+    ]
+  },
+  "expected_feature_values": {
+    "small_appc2_click_pkg_strength_seq": [
+      "com.UCMobile#3"
+    ]
+  }
+}

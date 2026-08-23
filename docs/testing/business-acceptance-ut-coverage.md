@@ -1,6 +1,7 @@
-# 首期算子 UT 覆盖矩阵
+# 首期 8 算子回归 UT 覆盖矩阵
 
-首期只验收标准注册表中的 8 个算子，不在 UT 中保留或重新实现其他标准算子。原业务验收矩阵中依赖已移除 Demo、融合样例或非首期算子的项目，不再声明为当前 UT 覆盖。
+本矩阵只记录首期 8 个算子的专项回归，不再限制标准注册表范围。当前标准算子清单以
+`InitialBusinessOperators` 和 `AGENTS.md` 为准；后续算子使用各自独立的 JUnit 4 测试验收。
 
 | 算子 | 注册/独立类 | 求值 | 非法输入 | DAG 类型与 shape | Batch 路由 |
 | --- | --- | --- | --- | --- | --- |
@@ -15,8 +16,15 @@
 
 此外，`FeatureValueCodecSelfTest` 继续覆盖公共输入/输出值编解码。性能、业务平台接入、模型发布、容量和 SLA 不以本地 UT 冒充通过。
 
+扩展算子专项覆盖：
+
+| 算子 | 注册/独立类 | 求值 | 非法输入 | DAG 类型与 shape | Batch 路由 |
+| --- | --- | --- | --- | --- | --- |
+| `list_concat` | 已覆盖 | 广播 `seq2[0]`、分隔符配置 | 空 `seq2`、事件元素、错误 shape | STRING / SEQUENCE | SCALAR_ADAPTER |
+| `hit` | 已覆盖 | key 集合过滤、顺序与重复事件 | 非事件输入、缺失/非字符串 key | EVENT_SEQUENCE / SEQUENCE | SCALAR_ADAPTER |
+
 三个首期 Demo 的 `run()` 会纳入 `DagEngineSelfTest`，用于覆盖单行公共 API、序列输出编码和离线多行
-Batch 公共 API。Demo 和测试只允许使用首期 8 个算子。
+Batch 公共 API。这些 Demo 仍以首期 8 个算子为主题，不代表标准注册表只允许这 8 个算子。
 
 ## 执行方式
 
@@ -27,4 +35,4 @@ mvn clean package
 ./scripts/run-self-test.sh
 ```
 
-首期 `operator.builtin` 源码需保持 JDK 1.8 语法/API 兼容；该要求不改变整个项目的 Java 21 构建基线。
+标准 `operator.builtin` 源码需保持 JDK 1.8 语法/API 兼容；该要求不改变整个项目的 Java 21 构建基线。

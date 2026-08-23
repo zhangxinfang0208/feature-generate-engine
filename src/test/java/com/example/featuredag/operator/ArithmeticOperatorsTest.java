@@ -39,7 +39,7 @@ import static org.junit.Assert.assertTrue;
 public final class ArithmeticOperatorsTest {
     @Test
     public void registryManifestAndMetadata() {
-        assertEquals(17, InitialBusinessOperators.definitions().size());
+        assertEquals(19, InitialBusinessOperators.definitions().size());
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String name : new String[] {"add", "sub", "mul", "div"}) {
             OperatorDefinition definition = registry.require(name);

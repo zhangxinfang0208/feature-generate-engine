@@ -1,6 +1,6 @@
 {
   "title": "HWDSP 365D 点击模型特征集端到端讲解",
-  "purpose": "一个文件讲清：输入数据结构、5 个 BASE 原始特征、用户原有 4 个输出、5 个业务扩展输出、8 个算术类别输出，以及注册表全部 17 个算子的分工。所有数值均由引擎真实执行产出并被单测钉死。",
+  "purpose": "一个文件讲清：输入数据结构、5 个 BASE 原始特征、用户原有 4 个输出、5 个业务扩展输出、8 个算术类别输出，以及该历史业务 fixture 所覆盖 17 个算子的分工。所有数值均由引擎真实执行产出并被单测钉死。",
   "how_to_read": "先看 engine_contracts 与 source_row，再看 preserved_original_outputs；derived_features 解释业务扩展，arithmetic_test_outputs 展示 BASE/常量/嵌套类别，operator_coverage 是全算子覆盖索引。",
   "engine_contracts": {
     "input": "离线输入 = Map<特征名, List<?>>：SEQUENCE 特征传元素数组（字符串序列传字符串数组、timestamp 传整型数组），SCALAR 传单元素数组。",
@@ -188,7 +188,7 @@
     {"name":"auid_plus_5_to_bigint","expression":"to_bigint(add(auid, 5))","category":"派生 INT → to_bigint","output":[1239],"carrier":"Long"}
   ],
   "operator_coverage": {
-    "说明": "注册表当前全部 17 个标准算子均在可达 DAG 中出现；测试断言 DAG 算子集与该清单完全相等。",
+    "说明": "该历史业务 fixture 覆盖的 17 个标准算子均在可达 DAG 中出现；测试断言 DAG 算子集与该 fixture 清单完全相等。list_concat 与 hit 由各自专项测试覆盖。",
     "find_indices": "D1/D2/D3：类目筛选下标",
     "slice_by_indices": "D1/D2/D3：按下标切片",
     "group_count_concat": "D1：分组计数拼接",

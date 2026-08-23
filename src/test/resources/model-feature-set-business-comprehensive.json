@@ -2688,7 +2688,7 @@
       "prim_keys": "user_id",
       "is_feedback": false,
       "featureCategory": "online",
-      "description": "单条深层 DAG 覆盖全部 17 个标准算子，并复用相同 find_indices 子表达式验证节点去重。"
+      "description": "单条深层 DAG 覆盖该历史 fixture 的 17 个标准算子，并复用相同 find_indices 子表达式验证节点去重。"
     }
   ]
 }

@@ -28,6 +28,8 @@ public final class SequenceViewOperatorSupportTest {
                 "get_seq_length", true,
                 "count_distinct", true,
                 "zip_concat", true,
+                "list_concat", true,
+                "hit", true,
                 "calc_delta_seq", false);
         for (Map.Entry<String, Boolean> entry : expected.entrySet()) {
             assertEquals(
@@ -53,6 +55,26 @@ public final class SequenceViewOperatorSupportTest {
         assertEquals(Integer.valueOf(2), registry.evaluate("count_distinct", List.of(view)));
         assertEquals(List.of(1), registry.evaluate("find_indices", List.of(view, third)));
         assertEquals(List.of(third), registry.evaluate("slice_by_indices", List.of(view, List.of(1))));
+
+        Map<String, Object> hitFirst = Map.of("key", "a", "selected", true, "value", 1);
+        Map<String, Object> hitSecond = Map.of("key", "b", "selected", false, "value", 2);
+        Map<String, Object> hitThird = Map.of("key", "a", "selected", true, "value", 3);
+        SequenceView hitView = SequenceView.filterByColumn(
+                new SequenceBlock(
+                        "hit-sequence-view",
+                        1L,
+                        List.of(hitFirst, hitSecond, hitThird)),
+                "selected",
+                true);
+        assertEquals(
+                List.of(hitFirst, hitThird),
+                registry.evaluate("hit", List.of(hitView, List.of("a"))));
+
+        // 当前 SequenceView 承载事件 Map；list_concat 能直接消费视图并给出元素级拒绝。
+        IllegalArgumentException listConcatFailure = assertThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate("list_concat", List.of(view, List.of("suffix"))));
+        assertTrue(listConcatFailure.getMessage().contains("event"));
 
         // 事件元素无既定字符串契约：zip_concat 拒绝拼接，避免把事件结构 dump 固化为特征值。
         IllegalArgumentException zipFailure = assertThrows(

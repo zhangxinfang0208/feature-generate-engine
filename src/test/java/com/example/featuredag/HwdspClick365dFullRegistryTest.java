@@ -42,7 +42,7 @@ import static org.junit.Assert.assertTrue;
  *
  * <p>特征集配置沿用现网单特征属性全集（encode/tableType/featureCategory 等扩展字段
  * 原样保留），17 个 DERIVED 输出全部只引用 BASE 原始特征（无中间衍生特征），
- * 表达式内联覆盖注册表当前全部 17 个算子；其中 8 个数值输出专门覆盖
+ * 表达式内联覆盖该历史业务 fixture 的 17 个算子；其中 8 个数值输出专门覆盖
  * BASE/常量/嵌套算术组合，样例行取自真实 HWDSP 365D 点击行。</p>
  */
 public final class HwdspClick365dFullRegistryTest {
@@ -233,7 +233,7 @@ public final class HwdspClick365dFullRegistryTest {
                 .build(mapped.definitions(), mapped.targetFeatures());
 
         Set<String> operators = operatorNames(dag);
-        // 每个注册算子都必须被至少一个最终输出表达式触达，且 DAG 中没有清单外算子。
+        // fixture 清单中的每个算子都必须被最终输出表达式触达，且 DAG 中没有清单外算子。
         assertEquals(ALL_REGISTERED_OPERATORS, operators);
         assertEquals(RAW_INPUTS, sourceBindings(dag));
 

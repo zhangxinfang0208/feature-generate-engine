@@ -18,9 +18,12 @@ public final class FlexibleBooleanDeserializer extends JsonDeserializer<Boolean>
         if (token == JsonToken.VALUE_NULL) return null;
         if (token == JsonToken.VALUE_STRING) {
             String value = parser.getText().trim().toLowerCase(Locale.ROOT);
+            // 兼容历史配置用空串表示“未开启”，统一收敛为 false。
+            if (value.isEmpty()) return Boolean.FALSE;
             if ("true".equals(value)) return Boolean.TRUE;
             if ("false".equals(value)) return Boolean.FALSE;
         }
-        throw JsonMappingException.from(parser, "Expected boolean or string 'true'/'false'");
+        throw JsonMappingException.from(
+                parser, "Expected boolean, blank string, or string 'true'/'false'");
     }
 }

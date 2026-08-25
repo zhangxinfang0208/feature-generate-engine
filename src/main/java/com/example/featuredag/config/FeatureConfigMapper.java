@@ -63,6 +63,13 @@ public final class FeatureConfigMapper {
         int declarationIndex = 0;
         // 第二阶段：逐条配置转换为不可变 FeatureDefinition；禁用项只保留索引信息用于引用校验。
         for (FeatureConfig feature : config.features()) {
+            boolean explicitDefinition = hasText(feature.definitionType());
+            // 未显式进入 DAG 定义协议的历史元数据可能无名且不可达；直接略过，
+            // 避免对模型未使用的宽表字段施加定义层必填约束。
+            if (!explicitDefinition && !hasText(feature.name())) {
+                declarationIndex++;
+                continue;
+            }
             String name = requireText(feature.name(), "features[].name");
             DefinitionType definitionType = parseDefinitionType(feature.definitionType(), name);
             boolean enabled = isEnabled(feature.toUse());
@@ -70,7 +77,10 @@ public final class FeatureConfigMapper {
             ValueShape declaredValueShape = parseValueShape(feature.valueShape(), name);
             Integer sequenceMaxLength = validateSequenceMaxLength(
                     feature.sequenceMaxLength(), name);
-            if (definitionType == DefinitionType.BASE
+            DataType configuredType = parseFeatureType(
+                    feature.type(), name, explicitDefinition);
+            if (explicitDefinition
+                    && definitionType == DefinitionType.BASE
                     && feature.outputPolicy() != null && !feature.outputPolicy().isBlank()
                     && configuredOutputPolicy != OutputPolicy.OUTPUT) {
                 throw new IllegalArgumentException(
@@ -82,19 +92,21 @@ public final class FeatureConfigMapper {
                     definitionType, enabled, outputPolicy, declarationIndex));
 
             if (definitionType == DefinitionType.BASE) {
-                // C2：BASE 对应 RAW，只允许源绑定，不允许表达式；实体域可由初始化参数覆盖。
-                requireBlank(feature.expression(), "expression for BASE feature " + name);
-                String sourceBinding = requireText(feature.rawName(), "raw_name for BASE feature " + name);
+                // C2：显式 BASE 对应严格 RAW 定义，禁止表达式；未显式声明的历史
+                // 条目按宽松 BASE 兼容，缺失类型使用 UNKNOWN，便于不可达特征在 C3 裁剪。
+                if (explicitDefinition) {
+                    requireBlank(feature.expression(), "expression for BASE feature " + name);
+                }
+                String sourceBinding = textOrDefault(feature.rawName(), name);
                 Set<EntityScope> scopes = resolveScopes(name, feature.entityScopes(), scopeOverrides);
                 if (scopes.isEmpty()) {
                     scopes = defaultBaseScopes;
                 }
                 if (enabled) {
-                    DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
                     FeatureDefinition.Builder builder = FeatureDefinition.builder()
                             .name(name)
                             .role(FeatureRole.RAW)
-                            .dataType(type)
+                            .dataType(configuredType)
                             .entityScopes(scopes)
                             .sourceBinding(sourceBinding)
                             .outputPolicy(OutputPolicy.OUTPUT)
@@ -102,7 +114,8 @@ public final class FeatureConfigMapper {
                                     declaredValueShape, sequenceMaxLength));
                     // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
                     if (feature.defaultValue() != null) {
-                        builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
+                        builder.defaultValue(convertDefault(
+                                feature.defaultValue(), configuredType, name));
                     }
                     definitions.add(builder.build());
                 }
@@ -111,11 +124,10 @@ public final class FeatureConfigMapper {
                 String expression = requireText(feature.expression(), "expression for DERIVED feature " + name);
                 Set<EntityScope> configuredScopes = resolveScopes(name, feature.entityScopes(), Map.of());
                 if (enabled) {
-                    DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
                     FeatureDefinition.Builder builder = FeatureDefinition.builder()
                             .name(name)
                             .role(FeatureRole.DERIVED)
-                            .dataType(type)
+                            .dataType(configuredType)
                             .entityScopes(configuredScopes)
                             .expressionContent(expression)
                             .outputPolicy(outputPolicy)
@@ -123,7 +135,8 @@ public final class FeatureConfigMapper {
                             .description(feature.description());
                     // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
                     if (feature.defaultValue() != null) {
-                        builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
+                        builder.defaultValue(convertDefault(
+                                feature.defaultValue(), configuredType, name));
                     }
                     FeatureDefinition definition = builder.build();
                     definitions.add(definition);
@@ -163,6 +176,12 @@ public final class FeatureConfigMapper {
         if (value == null || value.isBlank()) return DefinitionType.BASE;
         return parseEnum(DefinitionType.class, value,
                 "definition_type for feature " + featureName);
+    }
+
+    private static DataType parseFeatureType(
+            String value, String featureName, boolean explicitDefinition) {
+        if (!hasText(value) && !explicitDefinition) return DataType.UNKNOWN;
+        return parseEnum(DataType.class, value, "type for feature " + featureName);
     }
 
     private static OutputPolicy parseOutputPolicy(String value, String featureName) {
@@ -371,6 +390,14 @@ public final class FeatureConfigMapper {
 
     private static boolean isEnabled(Boolean value) {
         return value == null || value;
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String textOrDefault(String value, String defaultValue) {
+        return hasText(value) ? value.trim() : defaultValue;
     }
 
     private static void requireBlank(String value, String field) {

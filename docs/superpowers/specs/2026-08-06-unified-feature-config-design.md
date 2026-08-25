@@ -2,17 +2,18 @@
 
 ## Goal
 
-Replace the split `features` and `derivedFeatures` JSON structure with one `features` array that represents both base and derived features. The new format is the only supported top-level format. Historical entries whose `definition_type` is null, blank, or absent are treated as base features.
+Replace the split `features` and `derivedFeatures` JSON structure with one `features` array that represents both base and derived features. The new format is the only supported top-level format. Historical entries whose `definition_type` is null, blank, or absent are treated as lenient base features so unused wide-table metadata does not fail DAG initialization.
 
 ## Configuration Model
 
 `FeatureSetConfig` contains one `features` list. Every list item uses a unified configuration type with the existing shared business fields plus these DAG fields:
 
-- `definition_type`: `BASE` or `DERIVED`; null, blank, or absent means `BASE`.
+- `definition_type`: `BASE` or `DERIVED`; a non-blank value opts into strict DAG-definition validation. Null, blank, or absent means a lenient compatibility `BASE`.
 - `expression`: required and non-blank for `DERIVED`; absent for `BASE`.
 - `entity_scopes`: zero or more of `ITEM`, `USER`, and `SCENE`.
 - `value_shape`: optional `SCALAR`, `SEQUENCE`, or `VECTOR`.
 - `output_policy`: `OUTPUT` or `INTERNAL_ONLY`.
+- `to_use` and `is_feedback`: accept JSON booleans or the strings `"true"`/`"false"`; a blank string is normalized to `false`, while null or an absent field remains unset.
 
 Unknown item-level business fields continue to be retained in `additionalProperties` so fields such as `catalog`, `encode`, and `feature_type` remain loadable without becoming engine concerns.
 
@@ -22,9 +23,10 @@ The obsolete top-level `derivedFeatures` property is rejected with an explicit c
 
 The mapper iterates the unified list in declaration order and dispatches by normalized `definition_type`.
 
-For a `BASE` feature:
+For an explicitly declared `BASE` feature:
 
-- `raw_name` is required and becomes the source binding.
+- `type` is required.
+- A non-blank `raw_name` becomes the source binding; otherwise it falls back to `name`.
 - A non-blank `expression` is invalid.
 - `output_policy` does not make a base feature a requested DAG target; its effective policy remains `OUTPUT` for the internal definition model.
 - Configured `entity_scopes` determine source scope. Existing scope overrides still take precedence. If no scope is available, the current compatibility behavior remains: use `USER`, and report the feature as unresolved during online initialization.
@@ -56,16 +58,16 @@ Initialization produces direct errors for:
 - a top-level `derivedFeatures` property;
 - an invalid `definition_type`, entity scope, value shape, or output policy;
 - a duplicate feature name anywhere in the unified list;
-- a base feature with a non-blank expression;
+- an explicitly declared base feature with a non-blank expression;
 - a derived feature without an expression;
-- a base feature without a source `raw_name`;
+- an explicitly declared base or derived feature without a type;
 - a derived declared scope or shape that disagrees with inference.
 
 The field path in mapping errors uses `features[]` for both kinds of feature.
 
 ## Compatibility Boundary
 
-Supported compatibility is limited to historical base-feature entries inside `features`: absent, null, or blank `definition_type` means `BASE`, and absent `value_shape` retains existing type-based inference. The old split top-level `derivedFeatures` format is intentionally unsupported.
+Supported compatibility is limited to historical base-feature entries inside `features`: absent, null, or blank `definition_type` means a lenient `BASE`; missing `type` maps to `UNKNOWN`; blank `raw_name` falls back to `name`; and an unnamed compatibility entry is ignored. A complete historical entry still participates in the DAG when referenced, while an unused one is removed by reachable-subgraph construction. The old split top-level `derivedFeatures` format is intentionally unsupported.
 
 ## Testing and Documentation
 

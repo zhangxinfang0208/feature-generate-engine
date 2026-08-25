@@ -56,6 +56,9 @@ public final class FeatureConfigLoader {
                     throw new IllegalArgumentException(
                             "features[" + index + "] must not be null");
                 }
+                // to_use=false 的条目不进入 DAG 定义映射；加载层也不对其
+                // 扩展字段或实体域施加进一步约束，仅保留 DTO 供映射层记录禁用名。
+                if (Boolean.FALSE.equals(feature.toUse())) continue;
                 for (int scopeIndex = 0; scopeIndex < feature.entityScopes().size(); scopeIndex++) {
                     if (feature.entityScopes().get(scopeIndex) == null) {
                         throw new IllegalArgumentException(

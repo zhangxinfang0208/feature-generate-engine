@@ -58,19 +58,39 @@ public final class FeatureConfigMapper {
         String featureSetName = requireText(config.featureSetName(), "feature_set_name");
         String version = requireText(config.version(), "version");
         Map<String, DefinitionEntry> entries = new LinkedHashMap<>();
+        Set<String> disabledFeatureNames = new LinkedHashSet<>();
         List<FeatureDefinition> definitions = new ArrayList<>();
         List<DerivedEntry> enabledDerived = new ArrayList<>();
         int declarationIndex = 0;
-        // 第二阶段：逐条配置转换为不可变 FeatureDefinition；禁用项只保留索引信息用于引用校验。
+        // 第二阶段：逐条配置转换为不可变 FeatureDefinition；禁用项在严格字段
+        // 校验前过滤，只保留非空名称用于禁用引用和显式目标诊断。
         for (FeatureConfig feature : config.features()) {
+            boolean enabled = isEnabled(feature.toUse());
+            if (!enabled) {
+                if (hasText(feature.name())) {
+                    putDisabledFeature(
+                            entries, disabledFeatureNames, feature.name().trim());
+                }
+                declarationIndex++;
+                continue;
+            }
+            boolean explicitDefinition = hasText(feature.definitionType());
+            // 未显式进入 DAG 定义协议的历史元数据可能无名且不可达；直接略过，
+            // 避免对模型未使用的宽表字段施加定义层必填约束。
+            if (!explicitDefinition && !hasText(feature.name())) {
+                declarationIndex++;
+                continue;
+            }
             String name = requireText(feature.name(), "features[].name");
             DefinitionType definitionType = parseDefinitionType(feature.definitionType(), name);
-            boolean enabled = isEnabled(feature.toUse());
             OutputPolicy configuredOutputPolicy = parseOutputPolicy(feature.outputPolicy(), name);
             ValueShape declaredValueShape = parseValueShape(feature.valueShape(), name);
             Integer sequenceMaxLength = validateSequenceMaxLength(
                     feature.sequenceMaxLength(), name);
-            if (definitionType == DefinitionType.BASE
+            DataType configuredType = parseFeatureType(
+                    feature.type(), name, explicitDefinition);
+            if (explicitDefinition
+                    && definitionType == DefinitionType.BASE
                     && feature.outputPolicy() != null && !feature.outputPolicy().isBlank()
                     && configuredOutputPolicy != OutputPolicy.OUTPUT) {
                 throw new IllegalArgumentException(
@@ -78,66 +98,66 @@ public final class FeatureConfigMapper {
             }
             OutputPolicy outputPolicy = definitionType == DefinitionType.BASE
                     ? OutputPolicy.OUTPUT : configuredOutputPolicy;
-            putUnique(entries, name, new DefinitionEntry(
-                    definitionType, enabled, outputPolicy, declarationIndex));
+            putUnique(entries, disabledFeatureNames, name, new DefinitionEntry(
+                    definitionType, outputPolicy));
 
             if (definitionType == DefinitionType.BASE) {
-                // C2：BASE 对应 RAW，只允许源绑定，不允许表达式；实体域可由初始化参数覆盖。
-                requireBlank(feature.expression(), "expression for BASE feature " + name);
-                String sourceBinding = requireText(feature.rawName(), "raw_name for BASE feature " + name);
+                // C2：显式 BASE 对应严格 RAW 定义，禁止表达式；未显式声明的历史
+                // 条目按宽松 BASE 兼容，缺失类型使用 UNKNOWN，便于不可达特征在 C3 裁剪。
+                if (explicitDefinition) {
+                    requireBlank(feature.expression(), "expression for BASE feature " + name);
+                }
+                String sourceBinding = textOrDefault(feature.rawName(), name);
                 Set<EntityScope> scopes = resolveScopes(name, feature.entityScopes(), scopeOverrides);
                 if (scopes.isEmpty()) {
                     scopes = defaultBaseScopes;
                 }
-                if (enabled) {
-                    DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
-                    FeatureDefinition.Builder builder = FeatureDefinition.builder()
-                            .name(name)
-                            .role(FeatureRole.RAW)
-                            .dataType(type)
-                            .entityScopes(scopes)
-                            .sourceBinding(sourceBinding)
-                            .outputPolicy(OutputPolicy.OUTPUT)
-                            .declaredValueShape(resolveBaseValueShape(
-                                    declaredValueShape, sequenceMaxLength));
-                    // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
-                    if (feature.defaultValue() != null) {
-                        builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
-                    }
-                    definitions.add(builder.build());
+                FeatureDefinition.Builder builder = FeatureDefinition.builder()
+                        .name(name)
+                        .role(FeatureRole.RAW)
+                        .dataType(configuredType)
+                        .entityScopes(scopes)
+                        .sourceBinding(sourceBinding)
+                        .outputPolicy(OutputPolicy.OUTPUT)
+                        .declaredValueShape(resolveBaseValueShape(
+                                declaredValueShape, sequenceMaxLength));
+                // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
+                if (feature.defaultValue() != null) {
+                    builder.defaultValue(convertDefault(
+                            feature.defaultValue(), configuredType, name));
                 }
+                definitions.add(builder.build());
             } else {
                 // C2：DERIVED 必须携带表达式；声明形状和实体域将在逻辑推断后按 C6 再次核对。
                 String expression = requireText(feature.expression(), "expression for DERIVED feature " + name);
                 Set<EntityScope> configuredScopes = resolveScopes(name, feature.entityScopes(), Map.of());
-                if (enabled) {
-                    DataType type = parseEnum(DataType.class, feature.type(), "type for feature " + name);
-                    FeatureDefinition.Builder builder = FeatureDefinition.builder()
-                            .name(name)
-                            .role(FeatureRole.DERIVED)
-                            .dataType(type)
-                            .entityScopes(configuredScopes)
-                            .expressionContent(expression)
-                            .outputPolicy(outputPolicy)
-                            .declaredValueShape(declaredValueShape)
-                            .description(feature.description());
-                    // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
-                    if (feature.defaultValue() != null) {
-                        builder.defaultValue(convertDefault(feature.defaultValue(), type, name));
-                    }
-                    FeatureDefinition definition = builder.build();
-                    definitions.add(definition);
-                    enabledDerived.add(new DerivedEntry(feature, definition, declarationIndex));
+                FeatureDefinition.Builder builder = FeatureDefinition.builder()
+                        .name(name)
+                        .role(FeatureRole.DERIVED)
+                        .dataType(configuredType)
+                        .entityScopes(configuredScopes)
+                        .expressionContent(expression)
+                        .outputPolicy(outputPolicy)
+                        .declaredValueShape(declaredValueShape)
+                        .description(feature.description());
+                // dft 缺失或显式为 null 都表示没有非空默认值，保持公共配置契约。
+                if (feature.defaultValue() != null) {
+                    builder.defaultValue(convertDefault(
+                            feature.defaultValue(), configuredType, name));
                 }
+                FeatureDefinition definition = builder.build();
+                definitions.add(definition);
+                enabledDerived.add(new DerivedEntry(feature, definition, declarationIndex));
             }
             declarationIndex++;
         }
 
         // 在目标裁剪前检查所有启用派生特征，避免禁用依赖因“暂未选为目标”而潜伏到后续初始化。
-        validateDisabledReferences(entries, enabledDerived);
+        validateDisabledReferences(disabledFeatureNames, enabledDerived);
 
         // 第三阶段：确定真正需要构图的根，并生成稳定排序的外部输出描述。
-        Set<String> targets = selectTargets(entries, enabledDerived, requestedTargets);
+        Set<String> targets = selectTargets(
+                entries, disabledFeatureNames, enabledDerived, requestedTargets);
         List<FeatureOutputDescriptor> outputs = enabledDerived.stream()
                 .filter(entry -> targets.contains(entry.definition().name()))
                 .map(FeatureConfigMapper::toOutputDescriptor)
@@ -163,6 +183,12 @@ public final class FeatureConfigMapper {
         if (value == null || value.isBlank()) return DefinitionType.BASE;
         return parseEnum(DefinitionType.class, value,
                 "definition_type for feature " + featureName);
+    }
+
+    private static DataType parseFeatureType(
+            String value, String featureName, boolean explicitDefinition) {
+        if (!hasText(value) && !explicitDefinition) return DataType.UNKNOWN;
+        return parseEnum(DataType.class, value, "type for feature " + featureName);
     }
 
     private static OutputPolicy parseOutputPolicy(String value, String featureName) {
@@ -198,14 +224,28 @@ public final class FeatureConfigMapper {
     }
 
     private static void putUnique(
-            Map<String, DefinitionEntry> entries, String name, DefinitionEntry entry) {
-        if (entries.putIfAbsent(name, entry) != null) {
+            Map<String, DefinitionEntry> entries,
+            Set<String> disabledFeatureNames,
+            String name,
+            DefinitionEntry entry) {
+        if (disabledFeatureNames.contains(name)
+                || entries.putIfAbsent(name, entry) != null) {
+            throw new IllegalArgumentException("Duplicate feature definition: " + name);
+        }
+    }
+
+    private static void putDisabledFeature(
+            Map<String, DefinitionEntry> entries,
+            Set<String> disabledFeatureNames,
+            String name) {
+        if (entries.containsKey(name) || !disabledFeatureNames.add(name)) {
             throw new IllegalArgumentException("Duplicate feature definition: " + name);
         }
     }
 
     private static Set<String> selectTargets(
             Map<String, DefinitionEntry> entries,
+            Set<String> disabledFeatureNames,
             List<DerivedEntry> enabledDerived,
             Set<String> requestedTargets) {
         // 未显式指定时，以所有启用且允许输出的派生特征作为根；INTERNAL_ONLY 只能作为中间依赖。
@@ -220,10 +260,12 @@ public final class FeatureConfigMapper {
         // 显式目标必须同时满足“存在、派生、启用、可输出”，尽量在构图前给出配置级错误。
         for (String requested : requestedTargets) {
             String name = requireText(requested, "target feature");
+            if (disabledFeatureNames.contains(name)) {
+                throw new IllegalArgumentException("Target feature is disabled: " + name);
+            }
             DefinitionEntry entry = entries.get(name);
             if (entry == null) throw new IllegalArgumentException("Target feature is not defined: " + name);
             if (entry.base()) throw new IllegalArgumentException("Target feature must be derived: " + name);
-            if (!entry.enabled()) throw new IllegalArgumentException("Target feature is disabled: " + name);
             if (entry.outputPolicy() != OutputPolicy.OUTPUT) {
                 throw new IllegalArgumentException("Target feature is INTERNAL_ONLY: " + name);
             }
@@ -232,7 +274,7 @@ public final class FeatureConfigMapper {
     }
 
     private static void validateDisabledReferences(
-            Map<String, DefinitionEntry> entries,
+            Set<String> disabledFeatureNames,
             List<DerivedEntry> enabledDerived) {
         ExpressionParser parser = new ExpressionParser();
         for (DerivedEntry entry : enabledDerived) {
@@ -241,8 +283,7 @@ public final class FeatureConfigMapper {
             collectFeatureReferences(
                     parser.parse(entry.definition().expressionContent()), references);
             for (String reference : references) {
-                DefinitionEntry referenced = entries.get(reference);
-                if (referenced != null && !referenced.enabled()) {
+                if (disabledFeatureNames.contains(reference)) {
                     throw new IllegalArgumentException(
                             "Referenced feature is disabled: " + reference
                                     + " (from " + entry.definition().name() + ")");
@@ -373,6 +414,14 @@ public final class FeatureConfigMapper {
         return value == null || value;
     }
 
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String textOrDefault(String value, String defaultValue) {
+        return hasText(value) ? value.trim() : defaultValue;
+    }
+
     private static void requireBlank(String value, String field) {
         if (value != null && !value.isBlank()) {
             throw new IllegalArgumentException(field + " must be blank");
@@ -398,9 +447,7 @@ public final class FeatureConfigMapper {
 
     private record DefinitionEntry(
             DefinitionType definitionType,
-            boolean enabled,
-            OutputPolicy outputPolicy,
-            int declarationIndex) {
+            OutputPolicy outputPolicy) {
         boolean base() { return definitionType == DefinitionType.BASE; }
     }
 

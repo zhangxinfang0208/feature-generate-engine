@@ -14,7 +14,7 @@ import java.util.List;
  *
  * <p>精确十进制求积后按输入载体定宽：双方均为整型载体时产出 Long（溢出直接失败
  * 不回绕，与 to_bigint 的失败语义一致），任一浮点载体产出 Double。
- * 类型推断沿用宽度上界：任一 DOUBLE 输入提升为 DOUBLE，否则 INT。
+ * 类型推断按 DOUBLE &gt; BIGINT &gt; INT 取宽度上界。
  *
  * <p>不提供原生 BatchOperatorKernel：每行只做一次轻量十进制乘法，批内没有可复用的
  * 中间量，key 分配与查找开销反噬（成本模型见 AGENTS.md），

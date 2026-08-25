@@ -121,7 +121,7 @@ public GenerateResult generate(GenerateRequest request);
 |---|---|---|
 | `name` | 必填 | DAG 内唯一名称，映射到 `FeatureDefinition.name`。表达式只使用此名称引用特征。 |
 | `raw_name` | 必填 | `generate` 输入 Map 中的字段名，映射到 `sourceBinding`。 |
-| `type` | 必填 | 映射到 `DataType`。支持 `INT`、`DOUBLE`、`STRING`、`BOOLEAN`、`OBJECT`、`EVENT_SEQUENCE` 和 `UNKNOWN`。 |
+| `type` | 必填 | 映射到 `DataType`。支持 `INT`、`BIGINT`、`DOUBLE`、`STRING`、`BOOLEAN`、`OBJECT`、`EVENT_SEQUENCE` 和 `UNKNOWN`。 |
 | `dft` | 可选 | 输入字段缺失时的默认值，按 `type` 校验或转换。显式 JSON `null` 表示没有非空默认值。 |
 | `entity_scopes` | 在线必需 | 可包含 `USER`、`SCENE`、`ITEM`；也可由 `InitOptions.rawFeatureScopes` 提供或覆盖。 |
 | `to_use` | 可选 | 缺省为 `true`。`false` 的定义在构图前排除。 |

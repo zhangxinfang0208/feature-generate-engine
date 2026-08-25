@@ -67,7 +67,7 @@ public final class NumericCastAndExtremeOperatorsTest {
         assertEquals(Set.of(EntityScope.USER), toInt.entityScopes());
 
         OperatorInference toBigint = registry.infer("to_bigint", List.of(doubleInput));
-        assertEquals(DataType.INT, toBigint.outputType());
+        assertEquals(DataType.BIGINT, toBigint.outputType());
         assertEquals(ValueShape.SCALAR, toBigint.valueShape());
         assertEquals(Set.of(EntityScope.ITEM), toBigint.entityScopes());
 
@@ -138,13 +138,18 @@ public final class NumericCastAndExtremeOperatorsTest {
         OperatorRegistry registry = OperatorRegistry.standard();
         TestInput intInput = new TestInput(
                 DataType.INT, Set.of(EntityScope.USER), ValueShape.SCALAR);
+        TestInput bigintInput = new TestInput(
+                DataType.BIGINT, Set.of(EntityScope.USER), ValueShape.SCALAR);
         TestInput doubleInput = new TestInput(
                 DataType.DOUBLE, Set.of(EntityScope.ITEM), ValueShape.SCALAR);
 
-        // 全 INT 输入保持 INT；任一 DOUBLE 输入提升为 DOUBLE；实体域取输入并集。
+        // 宽度按 DOUBLE > BIGINT > INT 提升；实体域取输入并集。
         assertEquals(
                 DataType.INT,
                 registry.infer("min", List.of(intInput, intInput)).outputType());
+        assertEquals(
+                DataType.BIGINT,
+                registry.infer("min", List.of(intInput, bigintInput)).outputType());
         OperatorInference promoted = registry.infer("max", List.of(intInput, doubleInput));
         assertEquals(DataType.DOUBLE, promoted.outputType());
         assertEquals(Set.of(EntityScope.USER, EntityScope.ITEM), promoted.entityScopes());
@@ -253,15 +258,22 @@ public final class NumericCastAndExtremeOperatorsTest {
                 FeatureDefinition.derived(
                         "score_int", DataType.INT, "to_int(score)", OutputPolicy.OUTPUT),
                 FeatureDefinition.derived(
+                        "score_bigint", DataType.BIGINT, "to_bigint(score)", OutputPolicy.OUTPUT),
+                FeatureDefinition.derived(
                         "score_cap", DataType.DOUBLE, "min(score, 5)", OutputPolicy.OUTPUT));
         LogicalDag dag = new LogicalDagBuilder(
                 new ExpressionParser(), OperatorRegistry.standard())
-                .build(definitions, Set.of("score_int", "score_cap"));
+                .build(definitions, Set.of("score_int", "score_bigint", "score_cap"));
 
         OperatorNode castNode =
                 (OperatorNode) dag.node(dag.featureOutput("score_int").producerNodeId());
         assertEquals("to_int", castNode.operatorName());
         assertEquals(DataType.INT, castNode.outputType());
+
+        OperatorNode bigintNode =
+                (OperatorNode) dag.node(dag.featureOutput("score_bigint").producerNodeId());
+        assertEquals("to_bigint", bigintNode.operatorName());
+        assertEquals(DataType.BIGINT, bigintNode.outputType());
 
         OperatorNode capNode =
                 (OperatorNode) dag.node(dag.featureOutput("score_cap").producerNodeId());

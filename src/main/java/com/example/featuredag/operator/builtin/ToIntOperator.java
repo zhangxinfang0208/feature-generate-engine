@@ -10,8 +10,8 @@ import java.util.List;
 /**
  * to_int：把数值标量转换为 32 位 int 载体（java.lang.Integer）。
  *
- * <p>DataType.INT 同时覆盖 Integer 与 Long 载体，本算子固定产出 Integer：
- * 小数部分向零截断（与 SQL CAST 语义一致），超出 int 范围直接失败而非回绕；
+ * <p>本算子固定推断为 DataType.INT 并产出 Integer：小数部分向零截断
+ * （与 SQL CAST 语义一致），超出 int 范围直接失败而非回绕；
  * 字符串不做隐式数值转换，非数值输入在求值期拒绝。
  *
  * <p>不提供原生 BatchOperatorKernel：每行只做一次十进制截断，批内没有可复用的

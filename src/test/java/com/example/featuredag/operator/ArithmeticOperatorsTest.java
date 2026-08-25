@@ -60,14 +60,19 @@ public final class ArithmeticOperatorsTest {
         OperatorRegistry registry = OperatorRegistry.standard();
         TestInput intInput = new TestInput(
                 DataType.INT, Set.of(EntityScope.USER), ValueShape.SCALAR);
+        TestInput bigintInput = new TestInput(
+                DataType.BIGINT, Set.of(EntityScope.USER), ValueShape.SCALAR);
         TestInput doubleInput = new TestInput(
                 DataType.DOUBLE, Set.of(EntityScope.ITEM), ValueShape.SCALAR);
 
-        // add/sub/mul：全 INT 输入保持 INT；任一 DOUBLE 输入提升为 DOUBLE；实体域取输入并集。
+        // add/sub/mul：按 DOUBLE > BIGINT > INT 提升；实体域取输入并集。
         for (String name : new String[] {"add", "sub", "mul"}) {
             assertEquals(
                     DataType.INT,
                     registry.infer(name, List.of(intInput, intInput)).outputType());
+            assertEquals(
+                    DataType.BIGINT,
+                    registry.infer(name, List.of(intInput, bigintInput)).outputType());
             OperatorInference promoted = registry.infer(name, List.of(intInput, doubleInput));
             assertEquals(DataType.DOUBLE, promoted.outputType());
             assertEquals(ValueShape.SCALAR, promoted.valueShape());
@@ -253,7 +258,7 @@ public final class ArithmeticOperatorsTest {
         for (String output : new String[] {
                 "creative_industry_ctr", "creative_industry_cvr",
                 "app_category_ctr", "app_category_cvr", "media_ctr", "media_cvr"}) {
-            assertEquals(output, DataType.INT, dag.featureOutput(output).outputType());
+            assertEquals(output, DataType.BIGINT, dag.featureOutput(output).outputType());
         }
 
         // C5：同维度的点击长度子表达式在 ctr 的分子与 cvr 的分母间共享同一逻辑节点。
@@ -337,7 +342,7 @@ public final class ArithmeticOperatorsTest {
             String name, String numeratorSequence, String denominatorSequence, String category) {
         return FeatureDefinition.derived(
                 name,
-                DataType.INT,
+                DataType.BIGINT,
                 "to_bigint(mul(div("
                         + "get_seq_length(find_indices(" + numeratorSequence + ", '" + category + "')),"
                         + "get_seq_length(find_indices(" + denominatorSequence + ", '" + category + "'))),"

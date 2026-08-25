@@ -119,8 +119,8 @@ public final class LogicalDagBuilder {
                 default -> definition.outputPolicy() == OutputPolicy.OUTPUT
                         ? OutputRole.TRANSFORM_OUTPUT : OutputRole.INTERNAL;
             };
-            // 边界类型优先取声明类型：C6 唯一放宽的声明 DOUBLE / 推断 INT 场景下，
-            // 特征输出节点仍需对外承诺 DOUBLE（供运行时定宽、下游算子按声明类型推断）。
+            // 边界类型优先取声明类型：C6 的安全数值提升场景下，特征输出节点仍需对外
+            // 承诺声明类型（供运行时定宽、下游算子按声明类型推断）。
             DataType boundaryType = definition.dataType() != DataType.UNKNOWN
                     ? definition.dataType()
                     : producer.outputType();
@@ -423,18 +423,22 @@ public final class LogicalDagBuilder {
         return nodeId;
     }
 
-    /**
-     * 约束 C6：声明类型与推断类型必须一致；唯一例外是声明 DOUBLE、推断为 INT 的放宽。
-     */
+    /** 约束 C6：声明类型与推断类型必须一致，或仅沿 INT → BIGINT → DOUBLE 安全提升。 */
     private static void validateDeclaredType(FeatureDefinition definition, DataType inferredType) {
         if (definition.dataType() != DataType.UNKNOWN
                 && inferredType != DataType.UNKNOWN
                 && definition.dataType() != inferredType
-                && !(definition.dataType() == DataType.DOUBLE && inferredType == DataType.INT)) {
+                && !isSafeNumericWidening(inferredType, definition.dataType())) {
             throw new DagBuildException(
                     "Declared type mismatch for feature " + definition.name()
                             + ": declared=" + definition.dataType() + ", inferred=" + inferredType);
         }
+    }
+
+    private static boolean isSafeNumericWidening(DataType inferredType, DataType declaredType) {
+        return (inferredType == DataType.INT
+                        && (declaredType == DataType.BIGINT || declaredType == DataType.DOUBLE))
+                || (inferredType == DataType.BIGINT && declaredType == DataType.DOUBLE);
     }
 
     private static void validateDeclaredShapeAndScopes(
@@ -506,7 +510,10 @@ public final class LogicalDagBuilder {
     private static DataType inferLiteralType(Object value) {
         // 字面量只做构图所需的最小类型归类；复杂集合统一视为 OBJECT，不推断元素泛型。
         if (value == null) return DataType.UNKNOWN;
-        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
+        if (value instanceof Long || value instanceof java.math.BigInteger) {
+            return DataType.BIGINT;
+        }
+        if (value instanceof Integer || value instanceof Short || value instanceof Byte) {
             return DataType.INT;
         }
         if (value instanceof Number) return DataType.DOUBLE;

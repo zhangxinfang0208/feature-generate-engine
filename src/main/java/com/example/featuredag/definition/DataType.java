@@ -2,6 +2,7 @@ package com.example.featuredag.definition;
 
 public enum DataType {
     INT,
+    BIGINT,
     DOUBLE,
     STRING,
     BOOLEAN,
@@ -10,6 +11,6 @@ public enum DataType {
     UNKNOWN;
 
     public boolean isNumeric() {
-        return this == INT || this == DOUBLE;
+        return this == INT || this == BIGINT || this == DOUBLE;
     }
 }

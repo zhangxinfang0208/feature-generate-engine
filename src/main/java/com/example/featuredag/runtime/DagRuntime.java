@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.UnaryOperator;
 
 /**
  * 运行时只消费已确定的物理计划：按拓扑序读取输入槽并写入唯一输出槽（C9），
@@ -641,8 +642,8 @@ public final class DagRuntime {
 
     /**
      * 衍生特征边界语义：算子成功返回后，若整个特征值为 null 或空容器，使用模型 dft；
-     * 异常不会进入本方法，仍由节点执行边界原样上抛。默认值替换先于 DOUBLE 定宽，
-     * 确保声明 DOUBLE、dft 为整数配置值时对外仍得到 Double（C6/C10）。
+     * 异常不会进入本方法，仍由节点执行边界原样上抛。默认值替换先于数值定宽，
+     * 确保 BIGINT/DOUBLE 的整数配置值对外得到声明对应的 Long/Double（C6/C10）。
      */
     private static ValueHandle executeFeatureOutput(
             PhysicalNode node,
@@ -654,8 +655,14 @@ public final class DagRuntime {
                 node.logicalValueShape(),
                 context.executionId(),
                 state);
-        return widenIntegralFeatureOutput(
-                value, node.executorConfig().get("widenIntegralToDouble"));
+        value = normalizeIntegralFeatureOutput(
+                value,
+                node.executorConfig().get("widenIntegralToBigint"),
+                DagRuntime::widenIntegralToBigint);
+        return normalizeIntegralFeatureOutput(
+                value,
+                node.executorConfig().get("widenIntegralToDouble"),
+                DagRuntime::widenIntegralToDouble);
     }
 
     private static ValueHandle applyFeatureDefault(
@@ -777,28 +784,30 @@ public final class DagRuntime {
     }
 
     /**
-     * DOUBLE 边界定宽：覆盖 C6 声明 DOUBLE/推断 INT，以及推断为 DOUBLE 但算子保留
-     * 胜出整数载体的场景；仅把整型载体统一为 Double，不按算子名特判（C10）。
-     * 容器采用 copy-on-write，未发现整型载体时直接复用原句柄。
+     * 数值边界定宽：由物理计划分别启用 BIGINT/DOUBLE 安全提升策略，不按算子名特判
+     * （C10）。容器采用 copy-on-write，未发现需提升的载体时直接复用原句柄。
      */
-    private static ValueHandle widenIntegralFeatureOutput(ValueHandle handle, Object enabled) {
+    private static ValueHandle normalizeIntegralFeatureOutput(
+            ValueHandle handle,
+            Object enabled,
+            UnaryOperator<Object> normalizer) {
         if (!Boolean.TRUE.equals(enabled)) return handle;
 
         return switch (handle) {
             case ScalarValue scalar -> {
-                Object widened = widenIntegralToDouble(scalar.value());
+                Object widened = normalizer.apply(scalar.value());
                 yield widened == scalar.value() ? handle : new ScalarValue(widened);
             }
             case ListSequenceValue sequence -> {
-                List<?> widened = widenScalars(sequence.values());
+                List<?> widened = normalizeScalars(sequence.values(), normalizer);
                 yield widened != sequence.values()
                         ? new ListSequenceValue(sequence.alignmentId(), widened)
                         : handle;
             }
             case CandidateVectorValue vector -> {
-                List<?> widened = widenScalars(vector.values());
+                List<?> widened = normalizeScalars(vector.values(), normalizer);
                 if (widened == vector.values()) yield handle;
-                // widenScalars 对 List<Object> 入参总是返回 List<Object>（未改写时原样透传，
+                // normalizeScalars 对 List<Object> 入参总是返回 List<Object>（未改写时原样透传，
                 // 改写时内部就地构建）；这里按已知的实际运行时类型转换，避免再拷贝一次——
                 // CandidateVectorValue 的构造器本身已经会拷贝一次。
                 @SuppressWarnings("unchecked")
@@ -806,24 +815,24 @@ public final class DagRuntime {
                 yield new CandidateVectorValue(objectValues);
             }
             case OfflineBatchValue batch -> {
-                List<?> widened = widenBatchValues(
-                        batch.values(), batch.elementShape());
+                List<?> widened = normalizeBatchValues(
+                        batch.values(), batch.elementShape(), normalizer);
                 if (widened == batch.values()) yield handle;
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) widened;
                 yield OfflineBatchValue.owned(objectValues, batch.elementShape());
             }
             case RequestBatchValue batch -> {
-                List<?> widened = widenBatchValues(
-                        batch.values(), batch.elementShape());
+                List<?> widened = normalizeBatchValues(
+                        batch.values(), batch.elementShape(), normalizer);
                 if (widened == batch.values()) yield handle;
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) widened;
                 yield RequestBatchValue.owned(objectValues, batch.elementShape());
             }
             case CandidateBatchValue batch -> {
-                List<?> widened = widenBatchValues(
-                        batch.values(), batch.elementShape());
+                List<?> widened = normalizeBatchValues(
+                        batch.values(), batch.elementShape(), normalizer);
                 if (widened == batch.values()) yield handle;
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) widened;
@@ -834,11 +843,13 @@ public final class DagRuntime {
     }
 
     /** Copy-on-write：没有整型载体时沿用原列表；首次发现后才复制已扫描前缀。 */
-    private static List<?> widenScalars(List<?> values) {
+    private static List<?> normalizeScalars(
+            List<?> values,
+            UnaryOperator<Object> normalizer) {
         List<Object> widened = null;
         for (int index = 0; index < values.size(); index++) {
             Object value = values.get(index);
-            Object normalized = widenIntegralToDouble(value);
+            Object normalized = normalizer.apply(value);
             if (widened == null && normalized != value) {
                 widened = new ArrayList<>(values.size());
                 for (int prefix = 0; prefix < index; prefix++) {
@@ -851,10 +862,11 @@ public final class DagRuntime {
         return Collections.unmodifiableList(widened);
     }
 
-    private static List<?> widenBatchValues(
+    private static List<?> normalizeBatchValues(
             List<?> values,
-            ValueShape elementShape) {
-        if (elementShape != ValueShape.SEQUENCE) return widenScalars(values);
+            ValueShape elementShape,
+            UnaryOperator<Object> normalizer) {
+        if (elementShape != ValueShape.SEQUENCE) return normalizeScalars(values, normalizer);
 
         IdentityHashMap<List<?>, List<?>> widenedSequences = null;
         List<?> lastSequence = null;
@@ -874,7 +886,7 @@ public final class DagRuntime {
                     if (cached != null) {
                         normalized = cached;
                     } else {
-                        List<?> sequenceResult = widenScalars(sequence);
+                        List<?> sequenceResult = normalizeScalars(sequence, normalizer);
                         normalized = sequenceResult;
                         if (sequenceResult != sequence) {
                             if (widenedSequences == null) widenedSequences = new IdentityHashMap<>();
@@ -890,7 +902,7 @@ public final class DagRuntime {
                     lastResult = normalized;
                 }
             } else {
-                normalized = widenIntegralToDouble(value);
+                normalized = normalizer.apply(value);
             }
             if (widened == null && normalized != value) {
                 widened = new ArrayList<>(values.size());
@@ -902,6 +914,20 @@ public final class DagRuntime {
         }
         if (widened == null) return values;
         return Collections.unmodifiableList(widened);
+    }
+
+    private static Object widenIntegralToBigint(Object value) {
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer) {
+            return Long.valueOf(((Number) value).longValue());
+        }
+        if (value instanceof java.math.BigInteger integer) {
+            try {
+                return Long.valueOf(integer.longValueExact());
+            } catch (ArithmeticException error) {
+                throw new IllegalArgumentException("BIGINT feature output overflow: " + value);
+            }
+        }
+        return value;
     }
 
     private static Object widenIntegralToDouble(Object value) {

@@ -543,7 +543,7 @@
       "encode": "dense",
       "regexp": "",
       "to_use": true,
-      "type": "int",
+      "type": "bigint",
       "raw_name": "",
       "discrete_type": "",
       "output_policy": "OUTPUT",

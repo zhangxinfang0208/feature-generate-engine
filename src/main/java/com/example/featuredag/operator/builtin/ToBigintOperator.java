@@ -10,8 +10,8 @@ import java.util.List;
 /**
  * to_bigint：把数值标量转换为 64 位 bigint 载体（java.lang.Long）。
  *
- * <p>DataType.INT 同时覆盖 Integer 与 Long 载体，本算子固定产出 Long，
- * 与 {@link ToIntOperator} 只差载体宽度：小数部分向零截断（与 SQL CAST 语义一致），
+ * <p>本算子固定推断为独立的 DataType.BIGINT 并产出 Long，
+ * 与 {@link ToIntOperator} 只差类型及载体宽度：小数部分向零截断（与 SQL CAST 语义一致），
  * 超出 long 范围直接失败而非回绕；字符串不做隐式数值转换，非数值输入在求值期拒绝。
  *
  * <p>不提供原生 BatchOperatorKernel：每行只做一次十进制截断，批内没有可复用的
@@ -26,7 +26,7 @@ public final class ToBigintOperator extends AbstractBuiltinOperator {
     @Override
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
         OperatorSupport.rejectEventSequence(name(), inputs);
-        return OperatorSupport.fixedInference(inputs, DataType.INT, ValueShape.SCALAR);
+        return OperatorSupport.fixedInference(inputs, DataType.BIGINT, ValueShape.SCALAR);
     }
 
     @Override

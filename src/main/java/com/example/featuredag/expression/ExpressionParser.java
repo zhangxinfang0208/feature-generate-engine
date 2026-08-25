@@ -257,7 +257,12 @@ public final class ExpressionParser {
                 if (token.text().contains(".")) {
                     value = Double.parseDouble(token.text());
                 } else {
-                    value = Integer.parseInt(token.text());
+                    try {
+                        value = Integer.parseInt(token.text());
+                    } catch (NumberFormatException intOverflow) {
+                        // 整数字面量先保持 32 位兼容；超过 int 后提升为独立 BIGINT/Long。
+                        value = Long.parseLong(token.text());
+                    }
                 }
             } catch (NumberFormatException ex) {
                 throw error("Invalid numeric literal '" + token.text() + "'", token.start());

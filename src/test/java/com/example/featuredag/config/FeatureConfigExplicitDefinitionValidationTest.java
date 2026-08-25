@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 
 /** 覆盖显式 DAG 定义与历史宽松特征条目的校验边界。 */
@@ -114,6 +115,116 @@ public class FeatureConfigExplicitDefinitionValidationTest {
                 missingExpression.getMessage());
     }
 
+    @Test
+    public void disabledEntriesAreFilteredBeforeDagFieldValidation() {
+        MappedFeatureSet mapped = map("""
+                {
+                  "feature_set_name": "disabled-entry-filter",
+                  "version": "1",
+                  "features": [
+                    {
+                      "name": "disabled_invalid",
+                      "to_use": false,
+                      "definition_type": "DERIVED",
+                      "type": "",
+                      "expression": "",
+                      "output_policy": "NOT_VALID",
+                      "value_shap": "NOT_VALID",
+                      "seq_max_length": 0,
+                      "entity_scopes": [null]
+                    },
+                    {
+                      "to_use": "",
+                      "definition_type": "NOT_VALID"
+                    },
+                    {
+                      "name": "source",
+                      "type": "STRING",
+                      "definition_type": "BASE",
+                      "entity_scopes": ["USER"]
+                    },
+                    {
+                      "name": "output",
+                      "type": "STRING",
+                      "definition_type": "DERIVED",
+                      "expression": "source",
+                      "output_policy": "OUTPUT",
+                      "entity_scopes": ["USER"]
+                    }
+                  ]
+                }
+                """);
+
+        assertEquals(2, mapped.definitions().size());
+        assertFalse(mapped.definitions().stream()
+                .anyMatch(definition -> definition.name().equals("disabled_invalid")));
+    }
+
+    @Test
+    public void enabledDerivedStillRejectsDisabledDependency() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> map("""
+                        {
+                          "feature_set_name": "disabled-dependency",
+                          "version": "1",
+                          "features": [
+                            {
+                              "name": "disabled_source",
+                              "to_use": false,
+                              "definition_type": "BASE"
+                            },
+                            {
+                              "name": "output",
+                              "type": "STRING",
+                              "definition_type": "DERIVED",
+                              "expression": "disabled_source",
+                              "output_policy": "OUTPUT"
+                            }
+                          ]
+                        }
+                        """));
+
+        assertEquals(
+                "Referenced feature is disabled: disabled_source (from output)",
+                error.getMessage());
+    }
+
+    @Test
+    public void requestedDisabledTargetKeepsDisabledDiagnostic() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> map("""
+                        {
+                          "feature_set_name": "disabled-target",
+                          "version": "1",
+                          "features": [
+                            {
+                              "name": "disabled_output",
+                              "to_use": false,
+                              "definition_type": "DERIVED"
+                            },
+                            {
+                              "name": "source",
+                              "type": "STRING",
+                              "definition_type": "BASE",
+                              "entity_scopes": ["USER"]
+                            },
+                            {
+                              "name": "output",
+                              "type": "STRING",
+                              "definition_type": "DERIVED",
+                              "expression": "source",
+                              "output_policy": "OUTPUT",
+                              "entity_scopes": ["USER"]
+                            }
+                          ]
+                        }
+                        """, Set.of("disabled_output")));
+
+        assertEquals("Target feature is disabled: disabled_output", error.getMessage());
+    }
+
     private static String configWithDerived(String derived) {
         return """
                 {
@@ -134,8 +245,12 @@ public class FeatureConfigExplicitDefinitionValidationTest {
     }
 
     private static MappedFeatureSet map(String json) {
+        return map(json, Set.of());
+    }
+
+    private static MappedFeatureSet map(String json, Set<String> targets) {
         return FeatureConfigMapper.map(
-                FeatureConfigLoader.load(json), Set.of(), Map.of());
+                FeatureConfigLoader.load(json), targets, Map.of());
     }
 
     private static FeatureDefinition definition(MappedFeatureSet mapped, String name) {

@@ -22,6 +22,9 @@ The obsolete top-level `derivedFeatures` property is rejected with an explicit c
 ## Mapping Rules
 
 The mapper iterates the unified list in declaration order and dispatches by normalized `definition_type`.
+Entries whose normalized `to_use` value is `false` are filtered before DAG-field validation. A non-blank
+name is retained only for disabled-dependency and explicitly requested disabled-target diagnostics; no
+`FeatureDefinition` is created. Missing or null `to_use` continues to mean enabled.
 
 For an explicitly declared `BASE` feature:
 

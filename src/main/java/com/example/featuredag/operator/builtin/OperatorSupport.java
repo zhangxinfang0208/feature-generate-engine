@@ -51,14 +51,15 @@ final class OperatorSupport {
     }
 
     static DataType numericResultType(List<OperatorInputMetadata> inputs) {
-        // 数值运算结果的宽度上界：任一 DOUBLE 输入即提升为 DOUBLE，否则保持 INT，
-        // 与 C6「声明 DOUBLE 可接受推断 INT」的放宽方向保持一致。
+        // 数值运算结果按 DOUBLE > BIGINT > INT 取宽度上界，与 C6 的安全提升方向一致。
+        boolean hasBigint = false;
         for (OperatorInputMetadata input : inputs) {
             if (input.outputType() == DataType.DOUBLE) {
                 return DataType.DOUBLE;
             }
+            if (input.outputType() == DataType.BIGINT) hasBigint = true;
         }
-        return DataType.INT;
+        return hasBigint ? DataType.BIGINT : DataType.INT;
     }
 
     static BigDecimal arithmeticOperand(Object value, String operator) {

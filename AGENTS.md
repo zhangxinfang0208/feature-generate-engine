@@ -15,7 +15,7 @@
 - C3 逻辑层：`LogicalDagBuilder` 从 targetFeatures 逆向构建可达子图；表达式 AST 构建后丢弃，不进入持久化计划模型。
 - C4 无环约束：构建期用 DFS 三色标记检测依赖环，拓扑排序再次校验。
 - C5 节点去重与命名：节点按 canonical 签名合并；ID 使用 `source:`、`literal:`、`operator:`、`feature:` 前缀。
-- C6 声明与推断一致：声明类型、值形状和实体域必须与推断结果一致；唯一例外是声明 DOUBLE 可接受推断 INT。
+- C6 声明与推断一致：声明类型、值形状和实体域必须与推断结果一致；数值类型仅允许沿 INT → BIGINT → DOUBLE 安全提升。
 - C7 逻辑节点不可变：依赖通过 `NodeInput` 的节点 ID 与端口引用。
 - C8 规划层只读：引用计数、可达根、缓存资格和大小估算放在 `NodePlanningMetadata`，融合由注册的物理改写规则匹配。
 - C9 物理转换：每个未融合逻辑节点只产生一个物理输出槽；融合节点记录全部 consumed logical node IDs，并遵守共享节点与根节点安全约束。

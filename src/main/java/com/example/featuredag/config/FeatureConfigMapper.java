@@ -13,6 +13,7 @@ import com.example.featuredag.expression.AstNode;
 import com.example.featuredag.expression.AstObjectLiteral;
 import com.example.featuredag.expression.ExpressionParser;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -386,6 +387,15 @@ public final class FeatureConfigMapper {
                     throw invalidDefault(featureName, type, value);
                 }
                 yield (int) longValue;
+            }
+            case BIGINT -> {
+                if (!(value instanceof Number number)) throw invalidDefault(featureName, type, value);
+                try {
+                    // 配置默认值必须是 long 范围内的精确整数，禁止小数截断或溢出回绕。
+                    yield Long.valueOf(new BigDecimal(number.toString()).longValueExact());
+                } catch (ArithmeticException | NumberFormatException error) {
+                    throw invalidDefault(featureName, type, value);
+                }
             }
             case DOUBLE -> {
                 if (!(value instanceof Number number)) throw invalidDefault(featureName, type, value);

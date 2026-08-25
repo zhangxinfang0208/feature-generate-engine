@@ -28,7 +28,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
- * 覆盖 C6 唯一放宽场景（声明 DOUBLE、推断 INT）下运行时边界定宽：
+ * 覆盖 C6 安全数值提升场景（声明 DOUBLE、推断 INT）下运行时边界定宽：
  * FEATURE_OUTPUT 节点必须把整型运行时载体统一转换为 Double，使对外产出的运行时类型
  * 与声明类型一致（此前 add/sub/mul/min/max 按输入操作数载体定宽，忽略了声明类型）。
  */

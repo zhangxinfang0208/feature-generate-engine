@@ -7,6 +7,7 @@ import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.SourceNode;
 import com.example.featuredag.runtime.SequenceBlock;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,10 +103,16 @@ final class FeatureInputDecoder {
             if (source.dataType() == DataType.EVENT_SEQUENCE) {
                 return decodeEventSequence(source.sourceBinding(), values);
             }
+            if (source.dataType() == DataType.BIGINT) {
+                return decodeBigintValues(source.sourceBinding(), values);
+            }
             return FeatureValueCollections.immutableList(values);
         }
         if (source.shape() == ValueShape.CANDIDATE_VECTOR) {
             // 向量保持全部元素；标量则遵循公共 API 的单元素 List 契约，只读取首项。
+            if (source.dataType() == DataType.BIGINT) {
+                return decodeBigintValues(source.sourceBinding(), values);
+            }
             return FeatureValueCollections.immutableList(values);
         }
         if (values.isEmpty()) {
@@ -113,7 +120,37 @@ final class FeatureInputDecoder {
                     "Feature " + source.sourceBinding()
                             + " expects a non-empty List for " + source.shape());
         }
-        return values.getFirst();
+        Object value = values.getFirst();
+        return source.dataType() == DataType.BIGINT
+                ? decodeBigintValue(source.sourceBinding(), value, 0)
+                : value;
+    }
+
+    private static List<?> decodeBigintValues(String sourceBinding, List<?> values) {
+        List<Long> decoded = new ArrayList<>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            decoded.add(decodeBigintValue(sourceBinding, values.get(index), index));
+        }
+        return FeatureValueCollections.immutableList(decoded);
+    }
+
+    private static Long decodeBigintValue(String sourceBinding, Object value, int index) {
+        if (!(value instanceof Number number)) {
+            throw invalidBigint(sourceBinding, index, value);
+        }
+        try {
+            // API 输入边界把所有合法整数载体统一为 Long，保证 BIGINT 运行时契约稳定。
+            return Long.valueOf(new BigDecimal(number.toString()).longValueExact());
+        } catch (ArithmeticException | NumberFormatException error) {
+            throw invalidBigint(sourceBinding, index, value);
+        }
+    }
+
+    private static IllegalArgumentException invalidBigint(
+            String sourceBinding, int index, Object value) {
+        return new IllegalArgumentException(
+                "Invalid BIGINT feature " + sourceBinding + " at index " + index
+                        + ": expected an exact 64-bit integer, got " + value);
     }
 
     /**

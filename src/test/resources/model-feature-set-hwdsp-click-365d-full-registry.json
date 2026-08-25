@@ -350,7 +350,7 @@
       "encode": "separate",
       "regexp": "",
       "to_use": true,
-      "type": "int",
+      "type": "bigint",
       "raw_name": "",
       "discrete_type": "",
       "output_policy": "OUTPUT",
@@ -517,7 +517,7 @@
       "catalog": "root",
       "encode": "dense",
       "to_use": true,
-      "type": "int",
+      "type": "bigint",
       "raw_name": "",
       "output_policy": "OUTPUT",
       "expression": "to_bigint(add(auid, 5))",
@@ -531,7 +531,7 @@
       "feature_type": "dense",
       "dft": 0,
       "entity_scopes": ["USER"],
-      "description": "派生 INT 再经 to_bigint 固定为 Long 载体的嵌套用例。"
+      "description": "派生 INT 再经 to_bigint 转换为独立 BIGINT/Long 的嵌套用例。"
     }
   ],
   "table_configs": {

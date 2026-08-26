@@ -13,7 +13,7 @@ calc_delta_seq(sequence, base, config)
 
 - `sequence`：数值序列；
 - `base`：有限数值标量；
-- `config`：可选对象，控制减法方向和单位换算。
+- `config`：可选对象，控制减法方向、单位换算和是否向上取整。
 
 两参数调用默认使用 `base - element` 语义：
 
@@ -36,6 +36,7 @@ calc_delta_seq([2, 5, 9], 10)
 |---|---|---|---|
 | `direction` | STRING | `BASE_MINUS_ELEMENT` | 减法方向 |
 | `divisor` | NUMBER | `1.0` | 差值的除数，必须是有限正数 |
+| `need_ceil` | NUMBER | `0` | 是否对换算结果向上取整，只接受 `0` 或 `1` |
 
 `direction` 支持：
 
@@ -44,7 +45,11 @@ calc_delta_seq([2, 5, 9], 10)
 | `ELEMENT_MINUS_BASE` | `(sequence[i] - base) / divisor` |
 | `BASE_MINUS_ELEMENT` | `(base - sequence[i]) / divisor` |
 
-配置对象包含未知字段、非法方向，或者 `divisor <= 0`、`NaN`、无穷大时，算子会直接失败。
+当 `need_ceil=1` 时，算子在除以 `divisor` 后执行 `Math.ceil`；例如 `1.2` 得到
+`2.0`，`-1.2` 得到 `-1.0`。取整产生的负零会规范为 `0.0`。
+
+配置对象包含未知字段、非法方向，或者 `divisor <= 0`、`NaN`、无穷大，或者
+`need_ceil` 不是数值 `0/1` 时，算子会直接失败。
 
 ## 3. 毫秒时间戳的单位换算
 
@@ -168,4 +173,5 @@ zip_concat(
 - 时间戳序列和请求时间必须是有限数值；毫秒时间戳建议在特征配置中声明为 `DOUBLE`。
 - `EVENT_SEQUENCE` 不做隐式字段投影；应先提供独立的数值时间戳序列。
 - `calc_delta_seq` 只计算差值，不负责365D时间窗过滤。若源数据没有按365D截取，还需要在上游完成时间窗选择或另行提供范围过滤能力。
-- Native Batch 在同一 group 内按序列对象身份、`base`、`direction` 和 `divisor` 共同复用结果；不同单位或方向不会互相污染。
+- Native Batch 在同一 group 内按序列对象身份、`base`、`direction`、`divisor` 和
+  `need_ceil` 共同复用结果；不同单位、方向或取整配置不会互相污染。

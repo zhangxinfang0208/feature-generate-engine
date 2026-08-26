@@ -2,11 +2,11 @@
 
 这是一个三层特征表达式 DAG 引擎参考实现。引擎将特征定义转换为不可变逻辑 DAG，经只读规划分析生成物理计划，再由 Runtime 执行。
 
-项目整体使用 Java 21 构建。首期内置算子源码位于 `operator.builtin`，这部分代码只使用 JDK 1.8 可用的语法和 API，便于后续独立抽取或生成；这不代表整个仓库可直接使用 JDK 1.8 编译。
+项目整体使用 Java 21 构建。标准算子源码位于 `operator.builtin`，这部分代码只使用 JDK 1.8 可用的语法和 API，便于后续独立抽取或生成；这不代表整个仓库可直接使用 JDK 1.8 编译。
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 17 个算子：
+`OperatorRegistry.standard()` 注册以下 20 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -17,8 +17,11 @@
 | `get_seq_length` | `get_seq_length(sequence)` | 返回序列长度 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
+| `concat` | `concat(value1, value2, ...)` | 使用 `#` 拼接两个或更多标量；末尾对象可配置 `delimiter` |
+| `list_concat` | `list_concat(sequence, suffixSequence)` | 将第二个序列首元素广播并拼接到第一个序列的每个元素 |
+| `hit` | `hit(eventSequence, keySequence)` | 按字符串 key 集合过滤事件序列并保持原顺序和重复事件 |
 | `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
-| `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
+| `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 默认逐元素计算 `baseline - value`；配置对象可调整方向和除数 |
 | `to_int` | `to_int(value)` | 数值标量转 32 位 int 载体，小数向零截断，超范围失败 |
 | `to_bigint` | `to_bigint(value)` | 数值标量转 64 位 bigint 载体，小数向零截断，超范围失败 |
 | `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
@@ -30,7 +33,7 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 13 个（包括 `group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 16 个（包括 `concat`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
 ## 目录结构
 
@@ -62,7 +65,7 @@ mvn clean package
 
 `mvn clean package` 会生成 thin JAR，以及包含并重定位 Jackson 的 `target/feature-dag-engine-1.0.0-SNAPSHOT-all.jar`。这两个产物都是库文件，不包含 Demo `Main-Class`。
 
-自测试使用 Java `assert`，覆盖标准算子的注册清单、独立实现类与参数数量，以及首期 8 个算子的求值、异常校验、Batch 路由和 DAG 类型/shape 推断。
+存量自测试使用 Java `assert`，覆盖标准算子的注册清单、独立实现类与参数数量，以及首期 8 个算子的求值、异常校验、Batch 路由和 DAG 类型/shape 推断；后续算子使用独立的 JUnit 4 测试覆盖。
 
 ## 调测 Demo
 

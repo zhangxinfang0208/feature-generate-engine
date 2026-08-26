@@ -19,6 +19,7 @@ public final class InitialBusinessOperators {
                 new GetSequenceLengthOperator(),
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
+                new ConcatOperator(),
                 new ListConcatOperator(),
                 new HitOperator(),
                 new GroupCountConcatOperator(),

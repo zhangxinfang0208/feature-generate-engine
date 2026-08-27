@@ -16,6 +16,7 @@ public final class InitialBusinessOperators {
                 new LogBaseOperator(),
                 new SliceByIndicesOperator(),
                 new FindIndicesOperator(),
+                new FindIndicesAnyOperator(),
                 new GetSequenceLengthOperator(),
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),

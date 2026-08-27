@@ -47,6 +47,40 @@ public final class GroupCountConcatOperatorTest {
     }
 
     @Test
+    public void sortsByCountDescendingAndUsesFirstOccurrenceAsTieBreaker() {
+        GroupCountConcatOperator operator = new GroupCountConcatOperator();
+        Map<String, Object> config = new LinkedHashMap<String, Object>();
+        config.put("delimiter", "#");
+        config.put("order", "COUNT_DESC");
+
+        assertEquals(
+                Arrays.asList("c2#3", "c1#2", "c3#1", "c4#1"),
+                operator.evaluate(Arrays.<Object>asList(
+                        Arrays.asList("c1", "c2", "c3", "c2", "c1", "c2", "c4"),
+                        config)));
+    }
+
+    @Test
+    public void acceptsExplicitFirstOccurrenceOrderAndRejectsUnknownOrder() {
+        GroupCountConcatOperator operator = new GroupCountConcatOperator();
+        Map<String, Object> firstOccurrence = new LinkedHashMap<String, Object>();
+        firstOccurrence.put("order", "FIRST_OCCURRENCE");
+        assertEquals(
+                Arrays.asList("c1#2", "c2#3", "c3#1"),
+                operator.evaluate(Arrays.<Object>asList(
+                        Arrays.asList("c1", "c2", "c3", "c2", "c1", "c2"),
+                        firstOccurrence)));
+
+        Map<String, Object> invalid = new LinkedHashMap<String, Object>();
+        invalid.put("order", "COUNT_ASC");
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class,
+                () -> operator.evaluate(Arrays.<Object>asList(
+                        Collections.singletonList("c1"), invalid)));
+        assertTrue(failure.getMessage().contains("COUNT_DESC"));
+    }
+
+    @Test
     public void rejectsNonObjectConfigAndStructuredEventElements() {
         GroupCountConcatOperator operator = new GroupCountConcatOperator();
 
@@ -68,12 +102,14 @@ public final class GroupCountConcatOperatorTest {
     public void usesScalarBatchAdapterWithRowEquivalentResults() {
         OperatorRegistry registry = new OperatorRegistry().register(
                 new GroupCountConcatOperator());
-        Map<String, Object> config = Collections.<String, Object>singletonMap("delimiter", "#");
+        Map<String, Object> config = new LinkedHashMap<String, Object>();
+        config.put("delimiter", "#");
+        config.put("order", "COUNT_DESC");
         BatchOperatorCall call = new BatchOperatorCall(
                 new OfflineLayout(2),
                 Arrays.<BatchColumn>asList(
                         new ListBatchColumn(Arrays.<Object>asList(
-                                Arrays.asList("a", "a", "b"),
+                                Arrays.asList("a", "b", "b"),
                                 Arrays.asList("c", "d", "c"))),
                         new ListBatchColumn(Arrays.<Object>asList(config, config))));
 
@@ -81,7 +117,7 @@ public final class GroupCountConcatOperatorTest {
                 registry.batchKernelKind("group_count_concat"));
         assertEquals(
                 Arrays.asList(
-                        Arrays.asList("a#2", "b#1"),
+                        Arrays.asList("b#2", "a#1"),
                         Arrays.asList("c#2", "d#1")),
                 ((ListBatchColumn) registry.evaluateBatch(
                         "group_count_concat", call).values()).values());

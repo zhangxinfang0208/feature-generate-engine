@@ -344,8 +344,28 @@ public final class DagRuntime {
             EvaluationDomain domain,
             ExecutionContext context,
             RuntimeNodeState state) {
-        RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context);
-        state.setBatchRowCount(layout.rowCount());
+        int originalSize = evaluationSize(domain, context);
+        state.setBatchRowCount(originalSize);
+        List<Integer> healthyRows = new ArrayList<>(originalSize);
+        List<Object> merged = new ArrayList<>(Collections.nCopies(originalSize, null));
+        for (int originalRow = 0; originalRow < originalSize; originalRow++) {
+            EvaluationFailure inherited = null;
+            for (ValueHandle inputHandle : inputHandles) {
+                Object argument = argumentAt(inputHandle, domain, originalRow, context);
+                if (argument instanceof EvaluationFailure failure) {
+                    inherited = failure;
+                    break;
+                }
+            }
+            if (inherited == null) {
+                healthyRows.add(originalRow);
+            } else {
+                merged.set(originalRow, inherited);
+            }
+        }
+        if (healthyRows.isEmpty()) return merged;
+
+        RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context, healthyRows);
         SequenceViewInputMode sequenceMode = sequenceViewInputMode(node);
         // 不支持视图的算子按组复用物化结果；支持视图的算子则直接读取零拷贝序列协议。
         Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup =
@@ -362,7 +382,7 @@ public final class DagRuntime {
             BatchKernelKind plannedKind = plannedBatchKernelKind(node);
             String batchKernelId = String.valueOf(node.executorConfig().getOrDefault(
                     "batchKernelId", operatorName));
-            result = operatorRegistry.evaluateBatch(
+            result = operatorRegistry.evaluateBatchRecovering(
                     batchKernelId, new BatchOperatorCall(layout, arguments), plannedKind);
         } catch (BatchOperatorEvaluationException error) {
             int originalRow = layout.originalRowIndex(error.rowIndex());
@@ -374,11 +394,20 @@ public final class DagRuntime {
                             + batchLocation(domain) + ": " + error.getMessage(),
                     error);
         }
-        List<Object> values = new ArrayList<>(result.values().size());
-        for (int rowIndex = 0; rowIndex < result.values().size(); rowIndex++) {
-            values.add(result.values().valueAt(rowIndex));
+        state.addOperatorFailures(result.rowFailures().size());
+        for (int localRow = 0; localRow < result.values().size(); localRow++) {
+            int originalRow = layout.originalRowIndex(localRow);
+            RuntimeException error = result.rowFailures().get(localRow);
+            merged.set(
+                    originalRow,
+                    error == null
+                            ? result.values().valueAt(localRow)
+                            : EvaluationFailure.batch(
+                                    node.physicalNodeId(),
+                                    evaluationLocation(domain, originalRow, context),
+                                    error));
         }
-        return values;
+        return merged;
     }
 
     private static IllegalArgumentException batchRowFailure(
@@ -521,17 +550,30 @@ public final class DagRuntime {
     private static final class RuntimeBatchLayout implements BatchLayout {
         private final EvaluationDomain evaluationDomain;
         private final ExecutionContext context;
-        private final int rowCount;
+        private final List<Integer> originalRowIndexes;
 
         private RuntimeBatchLayout(
                 EvaluationDomain evaluationDomain,
-                ExecutionContext context) {
+                ExecutionContext context,
+                List<Integer> originalRowIndexes) {
             if (evaluationDomain == EvaluationDomain.NONE) {
                 throw new IllegalArgumentException("Scalar evaluation does not have a Batch layout");
             }
             this.evaluationDomain = evaluationDomain;
             this.context = context;
-            this.rowCount = evaluationSize(evaluationDomain, context);
+            int evaluationSize = evaluationSize(evaluationDomain, context);
+            List<Integer> copiedRows = List.copyOf(originalRowIndexes);
+            int previous = -1;
+            for (Integer originalRow : copiedRows) {
+                if (originalRow == null || originalRow < 0 || originalRow >= evaluationSize) {
+                    throw new IllegalArgumentException("Invalid projected Batch row: " + originalRow);
+                }
+                if (originalRow <= previous) {
+                    throw new IllegalArgumentException("Projected Batch rows must be strictly ordered");
+                }
+                previous = originalRow;
+            }
+            this.originalRowIndexes = copiedRows;
         }
 
         @Override
@@ -541,7 +583,7 @@ public final class DagRuntime {
 
         @Override
         public int rowCount() {
-            return rowCount;
+            return originalRowIndexes.size();
         }
 
         @Override
@@ -562,11 +604,12 @@ public final class DagRuntime {
         }
 
         private int originalRowIndex(int rowIndex) {
-            if (rowIndex < 0 || rowIndex >= rowCount) {
+            if (rowIndex < 0 || rowIndex >= originalRowIndexes.size()) {
                 throw new IndexOutOfBoundsException(
-                        "Batch row " + rowIndex + " out of bounds for size " + rowCount);
+                        "Batch row " + rowIndex + " out of bounds for size "
+                                + originalRowIndexes.size());
             }
-            return rowIndex;
+            return originalRowIndexes.get(rowIndex);
         }
     }
 
@@ -694,72 +737,102 @@ public final class DagRuntime {
             state.addFallbacks(1);
             return defaultHandle(defaultValue, logicalValueShape, alignmentId);
         }
+        EvaluationFailure batchFailure = firstBatchFailure(handle);
+        if (batchFailure != null && defaultValue == null) {
+            throw new FeatureEvaluationException(
+                    featureName, batchFailure.location(), batchFailure.cause());
+        }
         if (defaultValue == null) return handle;
 
-        ValueHandle result = switch (handle) {
+        DefaultApplication application = switch (handle) {
             case ScalarValue scalar -> isEmptyFeatureValue(scalar.value())
-                    ? defaultHandle(defaultValue, logicalValueShape, alignmentId)
-                    : handle;
+                    ? new DefaultApplication(
+                            defaultHandle(defaultValue, logicalValueShape, alignmentId), 1)
+                    : new DefaultApplication(handle, 0);
             case ListSequenceValue sequence -> sequence.size() == 0
-                    ? defaultHandle(defaultValue, ValueShape.SEQUENCE, sequence.alignmentId())
-                    : handle;
+                    ? new DefaultApplication(
+                            defaultHandle(
+                                    defaultValue,
+                                    ValueShape.SEQUENCE,
+                                    sequence.alignmentId()),
+                            1)
+                    : new DefaultApplication(handle, 0);
             case SequenceValue sequence -> sequence.size() == 0
-                    ? defaultHandle(defaultValue, ValueShape.SEQUENCE, alignmentId)
-                    : handle;
+                    ? new DefaultApplication(
+                            defaultHandle(defaultValue, ValueShape.SEQUENCE, alignmentId), 1)
+                    : new DefaultApplication(handle, 0);
             case CandidateVectorValue vector -> {
-                List<?> replaced = replaceEmptyElements(
+                ElementReplacement replaced = replaceEmptyElements(
                         vector.values(), defaultValue, logicalValueShape);
-                if (replaced == vector.values()) yield handle;
+                if (replaced.replacementCount() == 0) {
+                    yield new DefaultApplication(handle, 0);
+                }
                 @SuppressWarnings("unchecked")
-                List<Object> objectValues = (List<Object>) replaced;
-                yield new CandidateVectorValue(objectValues);
+                List<Object> objectValues = (List<Object>) replaced.values();
+                yield new DefaultApplication(
+                        new CandidateVectorValue(objectValues),
+                        replaced.replacementCount());
             }
             case OfflineBatchValue batch -> {
-                List<?> replaced = replaceEmptyElements(
+                ElementReplacement replaced = replaceEmptyElements(
                         batch.values(), defaultValue, batch.elementShape());
-                if (replaced == batch.values()) yield handle;
+                if (replaced.replacementCount() == 0) {
+                    yield new DefaultApplication(handle, 0);
+                }
                 @SuppressWarnings("unchecked")
-                List<Object> objectValues = (List<Object>) replaced;
-                yield OfflineBatchValue.owned(objectValues, batch.elementShape());
+                List<Object> objectValues = (List<Object>) replaced.values();
+                yield new DefaultApplication(
+                        OfflineBatchValue.owned(objectValues, batch.elementShape()),
+                        replaced.replacementCount());
             }
             case RequestBatchValue batch -> {
-                List<?> replaced = replaceEmptyElements(
+                ElementReplacement replaced = replaceEmptyElements(
                         batch.values(), defaultValue, batch.elementShape());
-                if (replaced == batch.values()) yield handle;
+                if (replaced.replacementCount() == 0) {
+                    yield new DefaultApplication(handle, 0);
+                }
                 @SuppressWarnings("unchecked")
-                List<Object> objectValues = (List<Object>) replaced;
-                yield RequestBatchValue.owned(objectValues, batch.elementShape());
+                List<Object> objectValues = (List<Object>) replaced.values();
+                yield new DefaultApplication(
+                        RequestBatchValue.owned(objectValues, batch.elementShape()),
+                        replaced.replacementCount());
             }
             case CandidateBatchValue batch -> {
-                List<?> replaced = replaceEmptyElements(
+                ElementReplacement replaced = replaceEmptyElements(
                         batch.values(), defaultValue, batch.elementShape());
-                if (replaced == batch.values()) yield handle;
+                if (replaced.replacementCount() == 0) {
+                    yield new DefaultApplication(handle, 0);
+                }
                 @SuppressWarnings("unchecked")
-                List<Object> objectValues = (List<Object>) replaced;
-                yield CandidateBatchValue.owned(objectValues, batch.elementShape());
+                List<Object> objectValues = (List<Object>) replaced.values();
+                yield new DefaultApplication(
+                        CandidateBatchValue.owned(objectValues, batch.elementShape()),
+                        replaced.replacementCount());
             }
-            default -> handle;
+            default -> new DefaultApplication(handle, 0);
         };
-        if (result != handle) {
+        if (application.replacementCount() > 0) {
             state.setFallbackUsed(true);
-            state.addFallbacks(1);
+            state.addFallbacks(application.replacementCount());
         }
-        return result;
+        return application.handle();
     }
 
     /** Copy-on-write：批/候选中没有空元素时保持原容器引用。 */
-    private static List<?> replaceEmptyElements(
+    private static ElementReplacement replaceEmptyElements(
             List<?> values,
             Object defaultValue,
             ValueShape elementShape) {
         List<Object> replaced = null;
         Object replacement = null;
+        int replacementCount = 0;
         for (int index = 0; index < values.size(); index++) {
             Object value = values.get(index);
-            boolean empty = isEmptyFeatureValue(value);
+            boolean empty = value instanceof EvaluationFailure || isEmptyFeatureValue(value);
             if (empty && replacement == null) {
                 replacement = defaultRawValue(defaultValue, elementShape);
             }
+            if (empty) replacementCount++;
             Object normalized = empty ? replacement : value;
             if (replaced == null && empty) {
                 replaced = new ArrayList<>(values.size());
@@ -769,8 +842,28 @@ public final class DagRuntime {
             }
             if (replaced != null) replaced.add(normalized);
         }
-        if (replaced == null) return values;
-        return Collections.unmodifiableList(replaced);
+        if (replaced == null) return new ElementReplacement(values, 0);
+        return new ElementReplacement(
+                Collections.unmodifiableList(replaced), replacementCount);
+    }
+
+    private static EvaluationFailure firstBatchFailure(ValueHandle handle) {
+        List<?> values;
+        if (handle instanceof CandidateVectorValue vector) values = vector.values();
+        else if (handle instanceof OfflineBatchValue batch) values = batch.values();
+        else if (handle instanceof RequestBatchValue batch) values = batch.values();
+        else if (handle instanceof CandidateBatchValue batch) values = batch.values();
+        else return null;
+        for (Object value : values) {
+            if (value instanceof EvaluationFailure failure) return failure;
+        }
+        return null;
+    }
+
+    private record DefaultApplication(ValueHandle handle, int replacementCount) {
+    }
+
+    private record ElementReplacement(List<?> values, int replacementCount) {
     }
 
     private static ValueHandle defaultHandle(

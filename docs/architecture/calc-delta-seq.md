@@ -171,6 +171,9 @@ zip_concat(
 ## 5. 边界与执行约束
 
 - 时间戳序列和请求时间必须是有限数值；毫秒时间戳建议在特征配置中声明为 `DOUBLE`。
+- 若外部平台只能把请求时间声明为 `STRING`，应在表达式中显式转换，例如
+  `calc_delta_seq(timestamp_seq, to_bigint(request_time), {"divisor":60000})`；
+  `calc_delta_seq` 本身不会隐式解析字符串。
 - `EVENT_SEQUENCE` 不做隐式字段投影；应先提供独立的数值时间戳序列。
 - `calc_delta_seq` 只计算差值，不负责365D时间窗过滤。若源数据没有按365D截取，还需要在上游完成时间窗选择或另行提供范围过滤能力。
 - Native Batch 在同一 group 内按序列对象身份、`base`、`direction`、`divisor` 和

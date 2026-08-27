@@ -19,8 +19,8 @@
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
 | `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
-| `to_int` | `to_int(value)` | 数值标量或数值序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
-| `to_bigint` | `to_bigint(value)` | 数值标量或数值序列转 64 位 bigint 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
+| `to_int` | `to_int(value)` | 数值或十进制数字字符串标量/序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
+| `to_bigint` | `to_bigint(value)` | 数值或十进制数字字符串标量/序列转 64 位 bigint 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
 | `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
 | `max` | `max(value1, value2, ...)` | 计算数值标量最大值，精确十进制比较，相等保留最左输入 |
 | `add` | `add(value1, value2)` | 数值标量加法，精确十进制求和后按输入载体定宽 |

@@ -8,6 +8,7 @@ import com.example.featuredag.operator.BatchLayout;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorEvaluationException;
 import com.example.featuredag.operator.BatchOperatorResult;
+import com.example.featuredag.operator.OperatorEvaluationResult;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.operator.OperatorSequence;
 import com.example.featuredag.physical.ExecutorType;
@@ -243,6 +244,11 @@ public final class DagRuntime {
             ExecutionContext context,
             RuntimeNodeState state,
             ValueShape logicalValueShape) {
+        for (ValueHandle inputHandle : inputHandles) {
+            if (inputHandle instanceof FailedValueHandle failed) {
+                return new FailedValueHandle(logicalValueShape, failed.failure());
+            }
+        }
         EvaluationDomain domain = evaluationDomain(inputHandles);
         if (domain == EvaluationDomain.NONE) {
             state.recordOperatorInvocation(OperatorInvocationKind.SINGLE, null, 0);
@@ -255,10 +261,15 @@ public final class DagRuntime {
             }
             String singleKernelId = String.valueOf(node.executorConfig().getOrDefault(
                     "singleKernelId", operatorName));
-            return wrap(
-                    operatorRegistry.evaluate(singleKernelId, args),
-                    logicalValueShape,
-                    context.executionId());
+            OperatorEvaluationResult result = operatorRegistry.evaluateRecovering(
+                    singleKernelId, args);
+            if (result.failed()) {
+                state.addOperatorFailures(1);
+                return new FailedValueHandle(
+                        logicalValueShape,
+                        EvaluationFailure.single(node.physicalNodeId(), result.failure()));
+            }
+            return wrap(result.value(), logicalValueShape, context.executionId());
         }
         // C10：批维度来自执行上下文，标量/字面量在批内广播，不在运行时改变执行阶段。
         int size = evaluationSize(domain, context);
@@ -641,8 +652,8 @@ public final class DagRuntime {
     }
 
     /**
-     * 衍生特征边界语义：算子成功返回后，若整个特征值为 null 或空容器，使用模型 dft；
-     * 异常不会进入本方法，仍由节点执行边界原样上抛。默认值替换先于数值定宽，
+     * 衍生特征边界语义：算子失败、null 或空容器可使用模型 dft；没有 dft 的算子失败
+     * 在此转换为可定位的 FeatureEvaluationException。默认值替换先于数值定宽，
      * 确保 BIGINT/DOUBLE 的整数配置值对外得到声明对应的 Long/Double（C6/C10）。
      */
     private static ValueHandle executeFeatureOutput(
@@ -651,6 +662,7 @@ public final class DagRuntime {
             RuntimeNodeState state) {
         ValueHandle value = applyFeatureDefault(
                 requireSingleInput(node, context),
+                String.valueOf(node.executorConfig().get("featureName")),
                 node.executorConfig().get("defaultValue"),
                 node.logicalValueShape(),
                 context.executionId(),
@@ -667,10 +679,21 @@ public final class DagRuntime {
 
     private static ValueHandle applyFeatureDefault(
             ValueHandle handle,
+            String featureName,
             Object defaultValue,
             ValueShape logicalValueShape,
             String alignmentId,
             RuntimeNodeState state) {
+        if (handle instanceof FailedValueHandle failed) {
+            EvaluationFailure failure = failed.failure();
+            if (defaultValue == null) {
+                throw new FeatureEvaluationException(
+                        featureName, failure.location(), failure.cause());
+            }
+            state.setFallbackUsed(true);
+            state.addFallbacks(1);
+            return defaultHandle(defaultValue, logicalValueShape, alignmentId);
+        }
         if (defaultValue == null) return handle;
 
         ValueHandle result = switch (handle) {
@@ -717,7 +740,10 @@ public final class DagRuntime {
             }
             default -> handle;
         };
-        if (result != handle) state.setFallbackUsed(true);
+        if (result != handle) {
+            state.setFallbackUsed(true);
+            state.addFallbacks(1);
+        }
         return result;
     }
 

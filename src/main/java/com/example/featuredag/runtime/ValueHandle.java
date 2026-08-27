@@ -11,7 +11,7 @@ import com.example.featuredag.definition.ValueShape;
 public sealed interface ValueHandle
         permits ScalarValue, CandidateVectorValue, OfflineBatchValue,
                 RequestBatchValue, CandidateBatchValue,
-                SequenceValue, IndexValue, ListSequenceValue {
+                SequenceValue, IndexValue, ListSequenceValue, FailedValueHandle {
     ValueShape shape();
     Object raw();
 }

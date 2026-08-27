@@ -108,7 +108,9 @@ public final class FeatureConfigMapper {
                 if (explicitDefinition) {
                     requireBlank(feature.expression(), "expression for BASE feature " + name);
                 }
-                String sourceBinding = textOrDefault(feature.rawName(), name);
+                // 模型特征以 name 作为唯一身份；raw_name 仅作为历史配置字段保留，
+                // 不再影响请求输入键或后续 DAG 节点的 sourceBinding。
+                String sourceBinding = name;
                 Set<EntityScope> scopes = resolveScopes(name, feature.entityScopes(), scopeOverrides);
                 if (scopes.isEmpty()) {
                     scopes = defaultBaseScopes;
@@ -426,10 +428,6 @@ public final class FeatureConfigMapper {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
-    }
-
-    private static String textOrDefault(String value, String defaultValue) {
-        return hasText(value) ? value.trim() : defaultValue;
     }
 
     private static void requireBlank(String value, String field) {

@@ -20,17 +20,20 @@ public final class SequenceViewOperatorSupportTest {
     @Test
     public void sequenceViewCapabilitiesAndDirectEvaluation() {
         OperatorRegistry registry = OperatorRegistry.standard();
-        Map<String, Boolean> expected = Map.of(
-                "discrete", false,
-                "log_base", false,
-                "slice_by_indices", true,
-                "find_indices", true,
-                "get_seq_length", true,
-                "count_distinct", true,
-                "zip_concat", true,
-                "list_concat", true,
-                "hit", true,
-                "calc_delta_seq", false);
+        Map<String, Boolean> expected = Map.ofEntries(
+                Map.entry("discrete", false),
+                Map.entry("log_base", false),
+                Map.entry("slice_by_indices", true),
+                Map.entry("find_indices", true),
+                Map.entry("find_indices_any", true),
+                Map.entry("get_seq_length", true),
+                Map.entry("count_distinct", true),
+                Map.entry("zip_concat", true),
+                Map.entry("concat", false),
+                Map.entry("list_concat", true),
+                Map.entry("hit", true),
+                Map.entry("group_count_concat", true),
+                Map.entry("calc_delta_seq", false));
         for (Map.Entry<String, Boolean> entry : expected.entrySet()) {
             assertEquals(
                     entry.getKey() + " supportsSequenceView",
@@ -54,6 +57,9 @@ public final class SequenceViewOperatorSupportTest {
         assertEquals(Integer.valueOf(2), registry.evaluate("get_seq_length", List.of(view)));
         assertEquals(Integer.valueOf(2), registry.evaluate("count_distinct", List.of(view)));
         assertEquals(List.of(1), registry.evaluate("find_indices", List.of(view, third)));
+        assertEquals(
+                List.of(0, 1),
+                registry.evaluate("find_indices_any", List.of(view, List.of(first, third))));
         assertEquals(List.of(third), registry.evaluate("slice_by_indices", List.of(view, List.of(1))));
 
         Map<String, Object> hitFirst = Map.of("key", "a", "selected", true, "value", 1);

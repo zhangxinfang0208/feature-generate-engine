@@ -4,8 +4,9 @@
 
 本方案已在通用算子链路落地：`PhysicalPlanner` 将能力固化为
 `SequenceViewInputMode.DIRECT/MATERIALIZE`，`DagRuntime` 在 Single 与 Batch Kernel 共同入口执行
-适配，内置算子通过 `OperatorSequence` 统一读取逻辑视图。当前直接支持视图的首期算子为
-`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`；
+适配，内置算子通过 `OperatorSequence` 统一读取逻辑视图。当前直接支持视图的相关序列算子为
+`slice_by_indices`、`find_indices`、`find_indices_any`、`get_seq_length`、`count_distinct`、
+`zip_concat`、`list_concat`、`hit`、`group_count_concat`；
 `calc_delta_seq` 保持物化模式，并拒绝事件元素（不做隐式数值投影，见第 2.4 节）。
 
 事件模型已泛化（2026-08-13）：固定 5 字段的 `SequenceEvent` record 已删除，事件统一为不可变
@@ -289,7 +290,7 @@ static Object sequenceElementAt(
 两者至少支持 `OperatorSequence` 与 `List<?>`。如果某算子还声明支持 Java 数组或其他集合，必须
 在其自身推断与求值契约中明确，不能由该工具无条件扩大标准算子输入面。
 
-首期 8 个算子的目标口径如下：
+相关标准算子的目标口径如下：
 
 | 算子 | 目标声明 | 实施要求 |
 |---|---:|---|
@@ -297,9 +298,13 @@ static Object sequenceElementAt(
 | `log_base` | `false` | 只消费标量，无需视图直通 |
 | `slice_by_indices` | `true` | 第一个参数通过统一序列访问函数读取；下标列表仍按普通 `List` 校验 |
 | `find_indices` | `true` | Single 扫描和 Native Batch 建索引都通过统一序列访问函数读取 |
+| `find_indices_any` | `true` | 源序列和目标序列均通过统一序列访问函数读取；集合匹配保持源序列顺序 |
 | `get_seq_length` | `true` | 已通过 `OperatorSequence.size()` 支持，修正声明 |
 | `count_distinct` | `true` | 已通过 `OperatorSequence` 遍历，修正声明并验证 Native Batch |
 | `zip_concat` | `true` | 每个序列参数都通过统一序列访问函数读取；尾部配置 Map 保持原语义；事件 Map 元素拒绝拼接并明确报错 |
+| `list_concat` | `true` | 两个序列参数均通过统一序列访问函数读取；事件 Map 元素保持拒绝 |
+| `hit` | `true` | 事件序列和查询 key 序列均通过统一序列访问函数读取 |
+| `group_count_concat` | `true` | 通过统一序列访问函数分组计数；事件 Map 元素保持拒绝 |
 | `calc_delta_seq` | `false` | 元素必须是数值；事件 Map 元素保持拒绝并明确报错，不做隐式 value 投影 |
 
 `calc_delta_seq` 若未来需要支持事件视图，应先显式定义输入投影协议，例如增加专门的数值序列抽象或

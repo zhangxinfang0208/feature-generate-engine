@@ -21,7 +21,8 @@ batch(arguments)[i] == single(arguments[i])
 
 - 输出行数等于输入行数，零行 Batch 返回零行结果；
 - 不改变行顺序，不把运行时 Batch 维度混入逻辑 `ValueShape`；
-- `BatchOperatorEvaluationException` 携带 Batch 内行号；
+- 可恢复调用通过 `BatchOperatorResult.rowFailures()` 按行报告 Kernel `RuntimeException`；
+- 直接 fail-fast 调用把最小失败行转换为携带 Batch 内行号的 `BatchOperatorEvaluationException`；
 - Kernel 实例无请求状态并可被并发复用。
 
 `BatchLayout` 描述 `OFFLINE_ROW`、`ONLINE_REQUEST`、`ONLINE_CANDIDATE` 三种批域，在线候选行
@@ -47,6 +48,11 @@ sequenceViewInputMode = DIRECT | MATERIALIZE
 运行时无批值输入时调用 Single Kernel；存在 `OfflineBatchValue`、`RequestBatchValue`、
 `CandidateVectorValue` 或 `CandidateBatchValue` 时调用计划声明的 Batch Kernel。这是对输入载体的
 固定分派，不是运行时物理改写。
+
+`NodePlanningMetadata.failureRecoveryRequired` 表示节点可到达至少一个具有非空 `dft` 的衍生特征
+边界。恢复路径选择 Batch Kernel 时，只有实现 `RecoverableBatchOperatorKernel` 的 Native Kernel
+仍使用 `NATIVE`；旧扩展 Native Kernel 自动改用 `SCALAR_ADAPTER`，其普通 fail-fast 路径不受影响。
+这使旧扩展无需立即修改，也避免无法定位行号的 Native 异常扩大成整批失败。
 
 `sequenceViewInputMode` 由 `OperatorDefinition.supportsSequenceView()` 推导并固化。`DIRECT` 表示
 Single 与 Native Batch Kernel 可以直接消费 operator 层的 `OperatorSequence`；`MATERIALIZE`
@@ -77,9 +83,15 @@ Single 与 Native Batch Kernel 可以直接消费 operator 层的 `OperatorSeque
 批内重复计算由 Native Batch 的身份键复用消除。Rewrite 仍负责跨节点消除中间物化和改变算法复杂度，例如
 把“按 key 过滤序列后 count”转换为“一次建索引后按 key 查询”。两者是互补能力。
 
-直接实现 `BatchOperatorKernel` 的扩展算子必须把行级失败包装为
-`BatchOperatorEvaluationException`。如果 Kernel 直接抛出无法关联行号的异常，运行时只能保留
-Batch 域和原始 cause，不能推断具体 row/group/candidate。
+Single 恢复调用使用 `OperatorEvaluationResult` 表示成功值或 Kernel `RuntimeException`。Batch 恢复调用
+使用 `BatchOperatorResultBuilder` 保持结果行和失败行一一对齐；原生 Batch 若要在恢复路径继续走
+`NATIVE`，必须实现 `RecoverableBatchOperatorKernel` 并返回每个失败行。运行时先排除已经从上游继承失败
+的行，只把健康行投影给 Kernel，再按原始 row/group/candidate 位置散射结果。失败单元不会重试，失败
+对象不会进入缓存。
+
+融合改写还必须用 `PhysicalRewrite.failureRecoverySupported` 声明专用执行器是否具有等价的隔离能力。
+恢复必需路径不会选择未声明能力的 Rewrite；声明支持后，专用执行器必须逐 group/candidate 隔离失败，
+并保持融合前后的影响范围一致。
 
 ## 6. 运行时观测
 
@@ -93,9 +105,12 @@ BATCH_SCALAR_ADAPTER
 SPECIALIZED
 ```
 
-Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表示真正提交给 Batch Kernel 的
-行数：普通 Batch 等于运行域行数。Single、SPECIALIZED 和非算子节点不携带 Batch 域，行数为零。
+Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表示该节点在原始运行域中的
+求值单元数；恢复路径即使只把健康投影行提交给 Kernel，也保持原始 row/group/candidate 规模。
+Single、SPECIALIZED 和非算子节点不携带 Batch 域，行数为零。
 失败节点保留失败前已经确定的调用路径，便于判断问题发生在 Single、Native Batch、Adapter 还是融合执行器。
+成功恢复的节点通过 `operatorFailureCount` 和 `fallbackCount` 记录 Kernel 失败数与实际默认值替换数；
+快照不包含结果值、异常消息或 `Throwable`。
 
 ## 7. 测试要求
 
@@ -107,6 +122,8 @@ Batch 路径同时记录 `batchDomain` 和 `batchRowCount`。`batchRowCount` 表
 - 零行、单行、多行 Batch；
 - request-to-candidate 广播及多 group 隔离；
 - Batch 错误映射到 offline row 或 online group/candidate；
+- 恢复路径只调用健康行，失败行短路且后续健康行继续执行；
+- 旧 Native 扩展在恢复路径改用 Adapter，带恢复标记的 Native 保持原生路由；
 - 原生 Batch 按 identity 键复用与 Single 逐行结果一致；
 - 命中 Rewrite 时仍执行 SPECIALIZED 物理节点，未命中时才走普通 Batch Kernel；
 - 节点诊断准确区分 Single、Native Batch、Adapter Batch 和 SPECIALIZED，并记录批实际行数。

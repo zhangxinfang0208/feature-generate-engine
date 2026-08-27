@@ -32,6 +32,22 @@
 
 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 13 个（包括 `group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
+## 算子异常与衍生默认值
+
+在特征 DAG 内执行时，所有已注册算子（包括公共扩展入口注册的算子）的 Kernel 若抛出
+`RuntimeException`，运行时会把失败传递到所属衍生特征的 `FEATURE_OUTPUT` 边界：
+
+- 特征配置了非空 `dft`：Single 使用一次默认值；Batch 只替换失败的 row、request group 或
+  candidate，健康单元保持原顺序和值并继续执行；
+- 特征未配置非空 `dft`：本次生成仍失败，公共 `FeatureGenerationException` 保留特征名和原始 cause；
+- 嵌套表达式中的失败单元会短路后续算子。短路只跳过该失败单元，不会终止进程，也不会阻止
+  其他健康 Batch 单元或无关 DAG 分支执行；
+- 引擎不会重试失败算子。直接调用 `OperatorRegistry.evaluate/evaluateBatch` 仍保持 fail-fast。
+
+该能力只覆盖算子 Kernel 内的运行期异常。配置、表达式解析/推断、RAW 解码与绑定、DAG/物理计划、
+Batch 协议、缓存类型、输出编码错误以及 `Error` 不会被衍生 `dft` 掩盖。完整边界和扩展兼容规则见
+[`docs/architecture/operator-failure-default-fallback.md`](docs/architecture/operator-failure-default-fallback.md)。
+
 ## 目录结构
 
 ```text
@@ -105,6 +121,7 @@ Demo 源码本身只使用 JDK 1.8 语法/API，但运行完整项目仍需要 J
 - [`docs/architecture/calc-delta-seq.md`](docs/architecture/calc-delta-seq.md)
 - [`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)
 - [`docs/architecture/operator-single-batch-execution.md`](docs/architecture/operator-single-batch-execution.md)
+- [`docs/architecture/operator-failure-default-fallback.md`](docs/architecture/operator-failure-default-fallback.md)
 - [`docs/architecture/online-grouped-batch-execution.md`](docs/architecture/online-grouped-batch-execution.md)
 - [`docs/architecture/runtime-observability.md`](docs/architecture/runtime-observability.md)
 - [`docs/architecture/physical-node-fusion.md`](docs/architecture/physical-node-fusion.md)

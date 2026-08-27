@@ -118,7 +118,7 @@ public final class CountAfterKeyedSequenceFilterRule implements PhysicalRewriteR
                 ExecutionMode.CANDIDATE_KEY,
                 CachePolicy.CANDIDATE_KEY,
                 MaterializationPolicy.LAZY,
-                false,
+                true,
                 Map.of("keyDomain", filterSemantic.keyDomain().value())));
     }
 

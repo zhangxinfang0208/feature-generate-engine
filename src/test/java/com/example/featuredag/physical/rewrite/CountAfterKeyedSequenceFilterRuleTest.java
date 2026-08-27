@@ -93,13 +93,13 @@ public class CountAfterKeyedSequenceFilterRuleTest {
     }
 
     @Test
-    public void registryExcludesRewriteThatCannotRecoverOperatorFailure() {
+    public void registryKeepsRewriteAfterExecutorGainsFailureRecovery() {
         Map<String, PhysicalRewrite> failFastRewrites = selectRewrites(false);
         assertTrue("无 dft 路径仍可使用既有融合", !failFastRewrites.isEmpty());
-        assertFalse(failFastRewrites.values().iterator().next().failureRecoverySupported());
+        assertTrue(failFastRewrites.values().iterator().next().failureRecoverySupported());
 
         Map<String, PhysicalRewrite> recoveredRewrites = selectRewrites(true);
-        assertTrue("带 dft 的路径不得使用不支持失败恢复的融合", recoveredRewrites.isEmpty());
+        assertTrue("带 dft 的路径可使用已支持失败恢复的融合", !recoveredRewrites.isEmpty());
     }
 
     private static Optional<PhysicalRewrite> matchRewrite(EntityScope sequenceScope) {

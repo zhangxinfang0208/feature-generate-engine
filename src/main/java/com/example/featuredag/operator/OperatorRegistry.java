@@ -56,9 +56,21 @@ public final class OperatorRegistry {
     }
 
     public Object evaluate(String name, List<Object> arguments) {
+        OperatorEvaluationResult result = evaluateRecovering(name, arguments);
+        if (result.failed()) {
+            throw result.failure();
+        }
+        return result.value();
+    }
+
+    public OperatorEvaluationResult evaluateRecovering(String name, List<Object> arguments) {
         OperatorDefinition definition = require(name);
         validateArity(definition, arguments.size());
-        return definition.evaluate(arguments);
+        try {
+            return OperatorEvaluationResult.success(definition.evaluate(arguments));
+        } catch (RuntimeException failure) {
+            return OperatorEvaluationResult.failure(failure);
+        }
     }
 
     public BatchOperatorResult evaluateBatch(String name, BatchOperatorCall call) {
@@ -66,6 +78,24 @@ public final class OperatorRegistry {
     }
 
     public BatchOperatorResult evaluateBatch(
+            String name,
+            BatchOperatorCall call,
+            BatchKernelKind plannedKind) {
+        BatchOperatorResult result = evaluateBatchRecovering(name, call, plannedKind);
+        if (result.hasFailures()) {
+            Map.Entry<Integer, RuntimeException> firstFailure = result.rowFailures().entrySet().stream()
+                    .min(Map.Entry.comparingByKey())
+                    .orElseThrow();
+            throw new BatchOperatorEvaluationException(firstFailure.getKey(), firstFailure.getValue());
+        }
+        return result;
+    }
+
+    public BatchOperatorResult evaluateBatchRecovering(String name, BatchOperatorCall call) {
+        return evaluateBatchRecovering(name, call, batchKernelKind(name));
+    }
+
+    public BatchOperatorResult evaluateBatchRecovering(
             String name,
             BatchOperatorCall call,
             BatchKernelKind plannedKind) {

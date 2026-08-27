@@ -108,10 +108,17 @@ public final class NumericCastAndExtremeOperatorsTest {
 
         TestInput stringSequence = new TestInput(
                 DataType.STRING, Set.of(EntityScope.USER), ValueShape.SEQUENCE);
+        OperatorInference stringToInt = registry.infer(
+                "to_int", List.of(stringSequence));
+        assertEquals(DataType.INT, stringToInt.outputType());
+        assertEquals(ValueShape.SEQUENCE, stringToInt.valueShape());
+
+        TestInput booleanInput = new TestInput(
+                DataType.BOOLEAN, Set.of(EntityScope.USER), ValueShape.SCALAR);
         IllegalArgumentException nonNumeric = assertThrows(
                 IllegalArgumentException.class,
-                () -> registry.infer("to_int", List.of(stringSequence)));
-        assertTrue(nonNumeric.getMessage().contains("numeric input"));
+                () -> registry.infer("to_int", List.of(booleanInput)));
+        assertTrue(nonNumeric.getMessage().contains("numeric or decimal-string input"));
     }
 
     @Test
@@ -168,14 +175,14 @@ public final class NumericCastAndExtremeOperatorsTest {
                 IllegalArgumentException.class,
                 () -> registry.evaluate("to_bigint", List.of(1.0e19)));
 
-        // 非有限值与非数值输入在求值期拒绝：字符串不做隐式数值转换。
+        // 非有限值、非法字符串与非数值输入在求值期拒绝。
         IllegalArgumentException notFinite = assertThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("to_int", List.of(Double.NaN)));
         assertTrue(notFinite.getMessage().contains("finite"));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> registry.evaluate("to_bigint", List.of("123")));
+                () -> registry.evaluate("to_bigint", List.of("not-a-number")));
         assertThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("to_int", Arrays.<Object>asList((Object) null)));

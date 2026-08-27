@@ -61,9 +61,10 @@ final class OperatorSupport {
                     operator + " requires numeric input; event sequences are not"
                             + " supported (no implicit value projection)");
         }
-        if (!input.outputType().isNumeric()) {
+        if (!input.outputType().isNumeric() && input.outputType() != DataType.STRING) {
             throw new IllegalArgumentException(
-                    operator + " requires numeric input, got: " + input.outputType());
+                    operator + " requires numeric or decimal-string input, got: "
+                            + input.outputType());
         }
 
         ValueShape outputShape;
@@ -289,10 +290,30 @@ final class OperatorSupport {
     }
 
     private static BigDecimal truncatedDecimal(Object value, String operator) {
-        // 先经精确十进制校验有限性，再把小数部分向零截断（与 SQL CAST 语义一致），不做四舍五入。
-        BigDecimal decimal = asPreciseDecimal(
-                asNumber(value), operator + " requires a finite numeric value");
+        // 显式转换算子额外接受十进制字符串，供外部平台只能把数值字段声明为 STRING 时使用；
+        // 其他数值算子仍只接受 Number，避免在通用算术链路中引入隐式字符串转换。
+        BigDecimal decimal;
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            if (text.isEmpty()) {
+                throw invalidCastValue(operator, value);
+            }
+            try {
+                decimal = new BigDecimal(text);
+            } catch (NumberFormatException error) {
+                throw invalidCastValue(operator, value);
+            }
+        } else {
+            decimal = asPreciseDecimal(
+                    asNumber(value), operator + " requires a finite numeric value");
+        }
+        // 把小数部分向零截断（与 SQL CAST 语义一致），不做四舍五入。
         return decimal.setScale(0, RoundingMode.DOWN);
+    }
+
+    private static IllegalArgumentException invalidCastValue(String operator, Object value) {
+        return new IllegalArgumentException(
+                operator + " requires a finite numeric value or decimal string, got: " + value);
     }
 
     static Object selectExtreme(List<Object> values, boolean minimum, String operator) {

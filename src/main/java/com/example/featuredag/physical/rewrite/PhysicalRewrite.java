@@ -24,6 +24,7 @@ public record PhysicalRewrite(
         ExecutionMode executionMode,
         CachePolicy cachePolicy,
         MaterializationPolicy materializationPolicy,
+        boolean failureRecoverySupported,
         Map<String, Object> executorConfig) {
 
     public PhysicalRewrite {

@@ -12,7 +12,8 @@ public record NodePlanningMetadata(
         int referenceCount,
         Set<String> reachableRootNodeIds,
         boolean cacheEligible,
-        long estimatedSizeBytes) {
+        long estimatedSizeBytes,
+        boolean failureRecoveryRequired) {
 
     public NodePlanningMetadata {
         reachableRootNodeIds = Collections.unmodifiableSet(new LinkedHashSet<>(reachableRootNodeIds));

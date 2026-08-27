@@ -128,6 +128,15 @@ public final class OperatorRegistry {
         return batchKernel(name).batchKernelKind();
     }
 
+    public BatchKernelKind recoveringBatchKernelKind(String name) {
+        require(name);
+        BatchOperatorKernel registered = batchKernel(name);
+        return registered.batchKernelKind() == BatchKernelKind.NATIVE
+                && registered instanceof RecoverableBatchOperatorKernel
+                ? BatchKernelKind.NATIVE
+                : BatchKernelKind.SCALAR_ADAPTER;
+    }
+
     public <T extends OperatorSemantic> Optional<T> semantic(
             String operatorName,
             Class<T> semanticType) {

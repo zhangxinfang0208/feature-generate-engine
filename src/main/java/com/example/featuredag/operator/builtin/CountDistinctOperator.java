@@ -2,13 +2,13 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
-import com.example.featuredag.operator.BatchOperatorKernel;
 import com.example.featuredag.operator.BatchOperatorResult;
-import com.example.featuredag.operator.ListBatchColumn;
+import com.example.featuredag.operator.BatchOperatorResultBuilder;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorSequence;
+import com.example.featuredag.operator.RecoverableBatchOperatorKernel;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -19,7 +19,7 @@ import java.util.Map;
 
 /** 对序列元素按 equals/hashCode 去重并返回基数，兼容普通集合和零拷贝 OperatorSequence 视图。 */
 public final class CountDistinctOperator extends AbstractBuiltinOperator
-        implements BatchOperatorKernel {
+        implements RecoverableBatchOperatorKernel {
     public CountDistinctOperator() {
         super("count_distinct", 1, 1, true, true);
     }
@@ -36,26 +36,27 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator
 
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> result = new ArrayList<Object>(call.rowCount());
+        BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
         // 请求组和序列身份共同构成批内复用键；同一序列只扫描一次，输出仍逐行追加。
         Map<OperatorSupport.IdentityBatchKey, Integer> counts =
                 new LinkedHashMap<OperatorSupport.IdentityBatchKey, Integer>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+            Object sequence = call.arguments().get(0).valueAt(rowIndex);
+            int groupIndex = call.layout().groupIndexAt(rowIndex);
             try {
-                Object sequence = call.arguments().get(0).valueAt(rowIndex);
                 OperatorSupport.IdentityBatchKey key = OperatorSupport.identityBatchKey(
-                        call.layout().groupIndexAt(rowIndex), sequence);
+                        groupIndex, sequence);
                 Integer count = counts.get(key);
                 if (count == null) {
                     count = count(sequence);
                     counts.put(key, count);
                 }
-                result.add(count);
+                result.addValue(count);
             } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
+                result.addFailure(error);
             }
         }
-        return new BatchOperatorResult(ListBatchColumn.owned(result));
+        return result.build();
     }
 
     private static int count(Object sequence) {

@@ -2,12 +2,12 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
-import com.example.featuredag.operator.BatchOperatorKernel;
 import com.example.featuredag.operator.BatchOperatorResult;
-import com.example.featuredag.operator.ListBatchColumn;
+import com.example.featuredag.operator.BatchOperatorResultBuilder;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
+import com.example.featuredag.operator.RecoverableBatchOperatorKernel;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,7 +21,7 @@ import java.util.Map;
  * {@code direction} 调整减法方向，并通过 {@code divisor} 对差值做单位换算。
  */
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
-        implements BatchOperatorKernel {
+        implements RecoverableBatchOperatorKernel {
     private static final String DIRECTION_KEY = "direction";
     private static final String DIVISOR_KEY = "divisor";
 
@@ -50,30 +50,35 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
 
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> result = new ArrayList<Object>(call.rowCount());
+        BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
         // 同一请求组内若序列对象与 base 都相同，只计算一次；追加结果时仍严格保持 Batch 行顺序。
         Map<DeltaBatchKey, Object> values = new LinkedHashMap<DeltaBatchKey, Object>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+            Object sequence = call.arguments().get(0).valueAt(rowIndex);
+            Object rawBase = call.arguments().get(1).valueAt(rowIndex);
+            Object rawOptions = call.arguments().size() == 3
+                    ? call.arguments().get(2).valueAt(rowIndex)
+                    : null;
+            int groupIndex = call.layout().groupIndexAt(rowIndex);
             try {
-                Object sequence = call.arguments().get(0).valueAt(rowIndex);
                 double base = OperatorSupport.finiteDouble(
-                        call.arguments().get(1).valueAt(rowIndex), "calc_delta_seq base");
+                        rawBase, "calc_delta_seq base");
                 DeltaOptions options = call.arguments().size() == 3
-                        ? DeltaOptions.from(call.arguments().get(2).valueAt(rowIndex))
+                        ? DeltaOptions.from(rawOptions)
                         : DeltaOptions.defaults();
                 DeltaBatchKey key = new DeltaBatchKey(
-                        call.layout().groupIndexAt(rowIndex), sequence, base, options);
+                        groupIndex, sequence, base, options);
                 Object value = values.get(key);
                 if (value == null) {
                     value = calculateWithBase(sequence, base, options);
                     values.put(key, value);
                 }
-                result.add(value);
+                result.addValue(value);
             } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
+                result.addFailure(error);
             }
         }
-        return new BatchOperatorResult(ListBatchColumn.owned(result));
+        return result.build();
     }
 
     private List<Double> calculate(

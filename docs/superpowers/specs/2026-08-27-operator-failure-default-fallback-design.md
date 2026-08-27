@@ -239,6 +239,221 @@ Offline Batch 输入 `[12.8, 1.0E20, 3.6]` 时输出 `[22, -1, 13]`。第二行�
 `-1` 和 `999`。若其中一个没有非空 `dft`，执行到该特征边界时本次请求仍失败并保留原始
 cause。
 
+## 可恢复场景清单
+
+以下清单描述“请求已经成功进入 DAG，异常在算子 Kernel 求值期间发生”的情况。相同的非法
+数据如果已在配置解析、逻辑推断或公共输入解码阶段被拒绝，则不属于算子失败，不能使用衍生
+特征 `dft`。方案按 `InitialBusinessOperators` 的实际注册清单及公共扩展入口中的全部算子
+统一生效，不依赖下列具体算子名称。
+
+### 数值转换、比较和算术
+
+`to_int` 可恢复：
+
+- 数值超出 `Integer.MIN_VALUE` 到 `Integer.MAX_VALUE`；
+- 输入为 NaN、正负 Infinity、`null` 或非数值；
+- 自定义 `Number` 无法转换为有效十进制。
+
+`to_bigint` 可恢复：
+
+- 数值、`BigDecimal` 或 `BigInteger` 超出 `Long` 范围；
+- 输入为 NaN、正负 Infinity、`null` 或非数值；
+- 自定义 `Number` 无法转换为有效十进制。
+
+`min`、`max` 可恢复：
+
+- 任一比较值为 `null`、非数值、NaN 或 Infinity；
+- 自定义数值载体无法解析为精确十进制。
+
+`add`、`sub`、`mul` 可恢复：
+
+- 任一操作数为 `null`、非数值、NaN 或 Infinity；
+- 整型计算结果超出 `Long` 范围；
+- 浮点计算结果超出有限 `Double` 范围；
+- 自定义数值载体无法进行精确十进制运算。
+
+`div` 可恢复：
+
+- 被除数或除数为 `null`、非数值、NaN 或 Infinity；
+- 非零除法结果超过有限 `Double` 范围。
+
+分母为 `0` 或 `-0.0` 仍沿用现有语义返回 `0.0`，不会产生失败，也不会触发 `dft`。
+
+### 数值变换
+
+`discrete` 可恢复：
+
+- 待分桶值不是数值，或者为 NaN/Infinity；
+- 边界参数不是列表；
+- 某个边界不是数值，或者为 NaN/Infinity；
+- 边界没有严格递增。
+
+`log_base` 可恢复：
+
+- value、base、upbound 不是数值，或者为 NaN/Infinity；
+- `value <= 0` 或 `upbound <= 0`；
+- `base <= 0` 或 `base == 1`。
+
+### 序列和下标
+
+`slice_by_indices` 可恢复：
+
+- sequence 或 indices 不是序列；
+- 下标不是数值，是小数、NaN、Infinity，或超出整数范围；
+- 下标为负数或超过序列长度；
+- `OperatorSequence` 的 `size()` 或 `elementAt()` 抛出运行时异常。
+
+切片过程中任一下标失败时，整个当前特征求值单元使用 `dft`，不会返回已经切出的部分结果。
+
+`find_indices` 可恢复：
+
+- 第一个参数不是序列；
+- 序列视图读取大小或元素时失败。
+
+目标值允许为 `null`，未命中正常返回空序列，因此这两种情况不会触发 `dft`。
+
+`get_seq_length` 可恢复：
+
+- 输入既不是支持的集合、数组，也不是 `OperatorSequence`；
+- 自定义序列读取长度时抛出运行时异常。
+
+正常空序列返回 `0`，不会触发 `dft`。
+
+`count_distinct` 可恢复：
+
+- 输入不是集合、数组或 `OperatorSequence`；
+- 序列迭代或元素读取失败；
+- 元素的 `hashCode()` 或 `equals()` 抛出运行时异常。
+
+普通 `null` 元素本身允许参与去重，不会触发 `dft`。
+
+### 标量和序列拼接
+
+`concat` 可恢复：
+
+- 运行期实际有效标量少于两个；
+- 值位置意外出现序列或对象；
+- 自定义值的 `toString()` 抛出运行时异常。
+
+普通 `null` 按现有行为拼成字符串 `"null"`，不会触发 `dft`。
+
+`zip_concat` 可恢复：
+
+- 有效序列少于两个，或者任一输入不是序列；
+- 各序列长度不一致；
+- 序列元素为不支持的事件对象；
+- 序列读取或元素字符串转换失败。
+
+`list_concat` 可恢复：
+
+- 主序列或后缀序列类型错误；
+- 后缀序列为空；
+- 配置参数不是对象；
+- 后缀首元素或主序列元素是事件对象；
+- 序列视图读取失败。
+
+`group_count_concat` 可恢复：
+
+- 输入不是序列，或者配置不是对象；
+- 序列中出现事件对象；
+- 元素的 `hashCode()`、`equals()` 或字符串转换抛出运行时异常。
+
+### 事件序列和差值序列
+
+`hit` 可恢复：
+
+- 查询 key 序列中存在非字符串元素；
+- 事件序列中存在非 Map 元素；
+- 事件缺少 `key` 字段，或者 `key` 不是字符串；
+- 事件序列、key 序列或集合比较过程抛出运行时异常。
+
+`calc_delta_seq` 可恢复：
+
+- 输入不是序列；
+- base 或序列元素不是数值、不是有限值，或者为 `null`；
+- 序列元素是事件对象；
+- config 不是对象或者包含未知字段；
+- direction 类型或枚举值非法；
+- divisor 不是有限数或 `<= 0`；
+- 差值或换算结果超出有限 `Double` 范围。
+
+### 融合路径
+
+`SequenceKeyCountExecutor` 所代表的融合算子链可恢复：
+
+- candidate key 规范化失败；
+- 请求序列索引构建失败；
+- 某个 key 的计数查询失败；
+- 自定义索引提供者抛出运行时异常。
+
+请求级索引失败影响该请求组的相关候选；单个 candidate key 失败只影响对应候选。融合前后
+必须保持相同失败范围。
+
+### 扩展算子
+
+通过公共入口注册的自定义算子，只要异常发生在 `OperatorDefinition.evaluate` 内，业务校验
+异常、第三方库异常、`IllegalStateException`、`NullPointerException`、
+`ClassCastException` 和自定义 `RuntimeException` 都能传播到特征边界并使用 `dft`。
+
+捕获所有 Kernel `RuntimeException` 也意味着扩展算子的代码缺陷可能被默认值掩盖，因此
+fallback 和算子失败计数必须可观测。引擎不重试失败算子，也不回滚异常前已发生的外部副作用。
+
+## 恢复后的组合效果
+
+### 嵌套表达式
+
+对于：
+
+```text
+to_bigint(mul(div(click_count, impression_count), 1000))
+```
+
+`div` 输入非法、`mul` 溢出或 `to_bigint` 超出范围时，对应求值单元都跳过余下算子，并在
+整个特征边界使用该特征 `dft`。不得在表达式中间注入 `dft` 后继续参与运算。
+
+### 中间特征
+
+```text
+feature_a = to_int(raw_score), dft = 0
+feature_b = add(feature_a, 10), dft = -1
+```
+
+`feature_a` 的转换失败在自身边界解析为 `0`，随后 `feature_b` 正常得到 `10`。如果失败发生
+在 `feature_b` 自己的表达式内部，则 `feature_b` 使用 `-1`。
+
+### 共享节点
+
+两个特征共享同一失败 producer，但分别配置 `dft: -1` 和 `dft: 999` 时，分别输出 `-1`
+和 `999`。如果任一目标特征没有非空 `dft`，本次请求执行到该特征边界时仍然失败。
+
+### Batch 隔离
+
+原始行序为 `[正常, 正常, 异常, 正常]` 时，输出保持 `[结果, 结果, dft, 结果]`。该隔离
+分别适用于 Offline Row、Online Request Group、Online Candidate 和 Online Grouped Batch。
+失败行之后的健康行仍会执行，正常值不重算、不乱序。
+
+## 明确不能恢复的场景
+
+以下异常发生在算子 Kernel 边界之外，不能使用衍生特征 `dft`：
+
+- JSON 格式、枚举或字段配置错误；
+- `dft` 本身类型非法或超出声明类型范围；
+- 表达式语法、未知算子、参数数量、类型/shape/entity scope 推断错误；
+- DAG 依赖环；
+- RAW 字段缺失且 RAW 没有默认值；
+- 公共输入解码失败，包括声明为 BIGINT 的 RAW 值在解码时已超出 `Long` 范围；
+- Batch 请求结构、行数、请求组或候选映射非法；
+- 物理计划环境不匹配、输入槽缺失、跨域句柄混用；
+- Kernel 返回错误行数、非法失败下标或其他协议错误；
+- 缓存类型损坏和输出编码错误；
+- 所有 `Error`；
+- 直接调用 `OperatorRegistry.evaluate` 或 `evaluateBatch`；
+- 特征没有配置合法的非空 `dft`。
+
+边界示例：RAW 声明为 BIGINT 且输入 `1.0E20` 时，异常发生在输入解码阶段，衍生 `dft`
+不能恢复；RAW 声明为 DOUBLE、表达式为 `to_bigint(raw)` 且输入 `1.0E20` 时，异常发生在
+算子 Kernel 内，可以使用衍生特征 `dft`。
+
 ## 测试设计
 
 所有新增测试使用独立 JUnit 4 `*Test.java`，不修改冻结的 `DagEngineSelfTest.java`。

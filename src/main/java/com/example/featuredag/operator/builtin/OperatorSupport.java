@@ -18,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /** 首期内置算子共享的包内辅助方法：集中处理推断、数值校验、序列下标和批内身份键。 */
 final class OperatorSupport {
@@ -48,6 +49,36 @@ final class OperatorSupport {
                                 + " supported (no implicit value projection)");
             }
         }
+    }
+
+    static OperatorInference numericCastInference(
+            String operator,
+            List<OperatorInputMetadata> inputs,
+            DataType outputType) {
+        OperatorInputMetadata input = inputs.get(0);
+        if (input.outputType() == DataType.EVENT_SEQUENCE) {
+            throw new IllegalArgumentException(
+                    operator + " requires numeric input; event sequences are not"
+                            + " supported (no implicit value projection)");
+        }
+        if (!input.outputType().isNumeric() && input.outputType() != DataType.STRING) {
+            throw new IllegalArgumentException(
+                    operator + " requires numeric or decimal-string input, got: "
+                            + input.outputType());
+        }
+
+        ValueShape outputShape;
+        if (input.valueShape() == ValueShape.SEQUENCE) {
+            outputShape = ValueShape.SEQUENCE;
+        } else if (input.valueShape() == ValueShape.SCALAR
+                || input.valueShape() == ValueShape.CANDIDATE_VECTOR) {
+            // Batch/候选维度不进入逻辑 ValueShape；Kernel 仍按行执行标量转换（C6/C10）。
+            outputShape = ValueShape.SCALAR;
+        } else {
+            throw new IllegalArgumentException(
+                    operator + " does not support value shape: " + input.valueShape());
+        }
+        return fixedInference(inputs, outputType, outputShape);
     }
 
     static DataType numericResultType(List<OperatorInputMetadata> inputs) {
@@ -145,6 +176,30 @@ final class OperatorSupport {
                 operator + " expects List for " + argument + ", got: " + typeName(value));
     }
 
+    static boolean isSequence(Object value) {
+        return value instanceof OperatorSequence || value instanceof List<?>;
+    }
+
+    static <T> List<T> mapSequence(
+            Object value,
+            String operator,
+            Function<Object, T> converter) {
+        int size = sequenceSize(value, operator, "value");
+        List<T> result = new ArrayList<T>(size);
+        for (int index = 0; index < size; index++) {
+            Object element = sequenceElementAt(value, index, operator, "value");
+            try {
+                result.add(converter.apply(element));
+            } catch (RuntimeException error) {
+                throw new IllegalArgumentException(
+                        operator + " failed at sequence index " + index
+                                + ": " + error.getMessage(),
+                        error);
+            }
+        }
+        return immutableList(result);
+    }
+
     static int sequenceSize(Object value, String operator, String argument) {
         if (value instanceof OperatorSequence) {
             return ((OperatorSequence) value).size();
@@ -235,10 +290,30 @@ final class OperatorSupport {
     }
 
     private static BigDecimal truncatedDecimal(Object value, String operator) {
-        // 先经精确十进制校验有限性，再把小数部分向零截断（与 SQL CAST 语义一致），不做四舍五入。
-        BigDecimal decimal = asPreciseDecimal(
-                asNumber(value), operator + " requires a finite numeric value");
+        // 显式转换算子额外接受十进制字符串，供外部平台只能把数值字段声明为 STRING 时使用；
+        // 其他数值算子仍只接受 Number，避免在通用算术链路中引入隐式字符串转换。
+        BigDecimal decimal;
+        if (value instanceof String) {
+            String text = ((String) value).trim();
+            if (text.isEmpty()) {
+                throw invalidCastValue(operator, value);
+            }
+            try {
+                decimal = new BigDecimal(text);
+            } catch (NumberFormatException error) {
+                throw invalidCastValue(operator, value);
+            }
+        } else {
+            decimal = asPreciseDecimal(
+                    asNumber(value), operator + " requires a finite numeric value");
+        }
+        // 把小数部分向零截断（与 SQL CAST 语义一致），不做四舍五入。
         return decimal.setScale(0, RoundingMode.DOWN);
+    }
+
+    private static IllegalArgumentException invalidCastValue(String operator, Object value) {
+        return new IllegalArgumentException(
+                operator + " requires a finite numeric value or decimal string, got: " + value);
     }
 
     static Object selectExtreme(List<Object> values, boolean minimum, String operator) {

@@ -6,25 +6,21 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 21 个算子：
+`OperatorRegistry.standard()` 注册以下 17 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
 | `discrete` | `discrete(value, boundaries)` | 返回数值所在分桶的零基下标 |
 | `log_base` | `log_base(value, base, maxValue)` | 对截断后的正数计算指定底数的对数 |
 | `slice_by_indices` | `slice_by_indices(sequence, indices)` | 按下标选取序列元素 |
-| `find_indices` | `find_indices(sequence, target)` | 返回所有匹配单个目标值的下标 |
-| `find_indices_any` | `find_indices_any(sequence, targets)` | 返回源序列中命中任一目标值的下标，保持源序列顺序 |
+| `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
 | `get_seq_length` | `get_seq_length(sequence)` | 返回序列长度 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
-| `concat` | `concat(value1, value2, ..., config?)` | 使用可配置分隔符拼接两个或更多标量值 |
-| `list_concat` | `list_concat(sequence, suffixSequence, config?)` | 将后缀序列首元素广播并逐元素拼接 |
-| `hit` | `hit(eventSequence, keys)` | 按事件 `key` 集合过滤事件序列 |
-| `group_count_concat` | `group_count_concat(sequence, config?)` | 分组计数并拼接；可用 `order=COUNT_DESC` 按频次降序 |
+| `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
-| `to_int` | `to_int(value)` | 数值标量转 32 位 int 载体，小数向零截断，超范围失败 |
-| `to_bigint` | `to_bigint(value)` | 数值标量转 64 位 bigint 载体，小数向零截断，超范围失败 |
+| `to_int` | `to_int(value)` | 数值或十进制数字字符串标量/序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
+| `to_bigint` | `to_bigint(value)` | 数值或十进制数字字符串标量/序列转 64 位 bigint 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
 | `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
 | `max` | `max(value1, value2, ...)` | 计算数值标量最大值，精确十进制比较，相等保留最左输入 |
 | `add` | `add(value1, value2)` | 数值标量加法，精确十进制求和后按输入载体定宽 |
@@ -34,21 +30,7 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 17 个（包括 `find_indices_any`、`concat` 和 `group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。
-
-多目标过滤后按频次降序输出可直接写成：
-
-```text
-group_count_concat(
-    slice_by_indices(
-        user_cluster_id_seq,
-        find_indices_any(user_cluster_id_seq, Item.i2i_top5_cluster_id)
-    ),
-    {"delimiter":"#", "order":"COUNT_DESC"}
-)
-```
-
-`find_indices_any` 对 `targets` 按集合语义匹配：目标重复不会放大下标，源序列重复会保留各自下标。`group_count_concat` 未配置 `order` 或配置为 `FIRST_OCCURRENCE` 时保持原有首次出现顺序；`COUNT_DESC` 按频次降序，同频时仍按首次出现顺序。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 13 个（包括 `group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
 ## 目录结构
 
@@ -121,7 +103,6 @@ Demo 源码本身只使用 JDK 1.8 语法/API，但运行完整项目仍需要 J
 详细设计见：
 
 - [`docs/architecture/calc-delta-seq.md`](docs/architecture/calc-delta-seq.md)
-- [`docs/architecture/find-indices-any-and-group-count-order.md`](docs/architecture/find-indices-any-and-group-count-order.md)
 - [`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)
 - [`docs/architecture/operator-single-batch-execution.md`](docs/architecture/operator-single-batch-execution.md)
 - [`docs/architecture/online-grouped-batch-execution.md`](docs/architecture/online-grouped-batch-execution.md)

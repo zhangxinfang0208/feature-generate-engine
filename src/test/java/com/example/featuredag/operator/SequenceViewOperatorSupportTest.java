@@ -25,15 +25,14 @@ public final class SequenceViewOperatorSupportTest {
                 Map.entry("log_base", false),
                 Map.entry("slice_by_indices", true),
                 Map.entry("find_indices", true),
-                Map.entry("find_indices_any", true),
                 Map.entry("get_seq_length", true),
                 Map.entry("count_distinct", true),
                 Map.entry("zip_concat", true),
-                Map.entry("concat", false),
                 Map.entry("list_concat", true),
                 Map.entry("hit", true),
-                Map.entry("group_count_concat", true),
-                Map.entry("calc_delta_seq", false));
+                Map.entry("calc_delta_seq", false),
+                Map.entry("to_int", true),
+                Map.entry("to_bigint", true));
         for (Map.Entry<String, Boolean> entry : expected.entrySet()) {
             assertEquals(
                     entry.getKey() + " supportsSequenceView",
@@ -57,9 +56,6 @@ public final class SequenceViewOperatorSupportTest {
         assertEquals(Integer.valueOf(2), registry.evaluate("get_seq_length", List.of(view)));
         assertEquals(Integer.valueOf(2), registry.evaluate("count_distinct", List.of(view)));
         assertEquals(List.of(1), registry.evaluate("find_indices", List.of(view, third)));
-        assertEquals(
-                List.of(0, 1),
-                registry.evaluate("find_indices_any", List.of(view, List.of(first, third))));
         assertEquals(List.of(third), registry.evaluate("slice_by_indices", List.of(view, List.of(1))));
 
         Map<String, Object> hitFirst = Map.of("key", "a", "selected", true, "value", 1);

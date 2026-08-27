@@ -58,8 +58,8 @@ Single 与 Native Batch Kernel 可以直接消费 operator 层的 `OperatorSeque
 
 通用候选批去重路径（CANDIDATE_KEY）已移除：批内重复计算由原生 Batch 的 identity 键复用消除
 （`find_indices`/`count_distinct`/`zip_concat`/`calc_delta_seq` 在 Kernel 内部按
-`(group, sequence, 参数)` 身份键缓存；其中 `calc_delta_seq` 的参数键覆盖 `base`、`direction`
-和 `divisor`）；未提供原生 Batch 的算子由 `SCALAR_ADAPTER` 逐行计算。
+`(group, sequence, 参数)` 身份键缓存；其中 `calc_delta_seq` 的参数键覆盖 `base`、`direction`、
+`divisor` 和 `need_ceil`）；未提供原生 Batch 的算子由 `SCALAR_ADAPTER` 逐行计算。
 缓存资格仍以 deterministic 且 sideEffectFree 为准（C8 元数据）。
 
 专用序列索引缓存仍由注册式 `PhysicalExecutor` 管理。跨 group 不得共享请求级序列、索引或

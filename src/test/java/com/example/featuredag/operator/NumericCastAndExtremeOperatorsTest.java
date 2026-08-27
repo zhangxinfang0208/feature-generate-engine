@@ -11,11 +11,19 @@ import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
 import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.operator.builtin.InitialBusinessOperators;
+import com.example.featuredag.planning.LogicalDagOptimizer;
+import com.example.featuredag.physical.ExecutionEnvironment;
+import com.example.featuredag.physical.PhysicalPlan;
+import com.example.featuredag.physical.PhysicalPlanner;
+import com.example.featuredag.runtime.DagRuntime;
+import com.example.featuredag.runtime.ExecutionContext;
+import com.example.featuredag.runtime.ExecutionResult;
 import org.junit.Test;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
@@ -31,17 +39,22 @@ import static org.junit.Assert.assertTrue;
 public final class NumericCastAndExtremeOperatorsTest {
     @Test
     public void registryManifestAndMetadata() {
-        assertEquals(21, InitialBusinessOperators.definitions().size());
+        assertEquals(20, InitialBusinessOperators.definitions().size());
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String name : new String[] {"to_int", "to_bigint", "min", "max"}) {
             OperatorDefinition definition = registry.require(name);
             assertTrue(name + " deterministic", definition.deterministic());
             assertTrue(name + " sideEffectFree", definition.sideEffectFree());
-            assertFalse(name + " sequence view", definition.supportsSequenceView());
             assertEquals(
                     name + " batch kernel kind",
                     BatchKernelKind.SCALAR_ADAPTER,
                     registry.batchKernelKind(name));
+        }
+        for (String name : new String[] {"to_int", "to_bigint"}) {
+            assertTrue(name + " sequence view", registry.require(name).supportsSequenceView());
+        }
+        for (String name : new String[] {"min", "max"}) {
+            assertFalse(name + " sequence view", registry.require(name).supportsSequenceView());
         }
         assertEquals(1, registry.require("to_int").minArguments());
         assertEquals(1, registry.require("to_int").maxArguments());
@@ -71,6 +84,19 @@ public final class NumericCastAndExtremeOperatorsTest {
         assertEquals(ValueShape.SCALAR, toBigint.valueShape());
         assertEquals(Set.of(EntityScope.ITEM), toBigint.entityScopes());
 
+        TestInput doubleSequence = new TestInput(
+                DataType.DOUBLE, Set.of(EntityScope.USER), ValueShape.SEQUENCE);
+        OperatorInference sequenceToInt = registry.infer("to_int", List.of(doubleSequence));
+        assertEquals(DataType.INT, sequenceToInt.outputType());
+        assertEquals(ValueShape.SEQUENCE, sequenceToInt.valueShape());
+        assertEquals(Set.of(EntityScope.USER), sequenceToInt.entityScopes());
+
+        TestInput candidateVector = new TestInput(
+                DataType.INT, Set.of(EntityScope.ITEM), ValueShape.CANDIDATE_VECTOR);
+        assertEquals(
+                ValueShape.SCALAR,
+                registry.infer("to_bigint", List.of(candidateVector)).valueShape());
+
         TestInput eventSequence = new TestInput(
                 DataType.EVENT_SEQUENCE, Set.of(EntityScope.USER), ValueShape.SEQUENCE);
         for (String name : new String[] {"to_int", "to_bigint"}) {
@@ -79,6 +105,20 @@ public final class NumericCastAndExtremeOperatorsTest {
                     () -> registry.infer(name, List.of(eventSequence)));
             assertTrue(rejected.getMessage().contains("event sequences"));
         }
+
+        TestInput stringSequence = new TestInput(
+                DataType.STRING, Set.of(EntityScope.USER), ValueShape.SEQUENCE);
+        OperatorInference stringToInt = registry.infer(
+                "to_int", List.of(stringSequence));
+        assertEquals(DataType.INT, stringToInt.outputType());
+        assertEquals(ValueShape.SEQUENCE, stringToInt.valueShape());
+
+        TestInput booleanInput = new TestInput(
+                DataType.BOOLEAN, Set.of(EntityScope.USER), ValueShape.SCALAR);
+        IllegalArgumentException nonNumeric = assertThrows(
+                IllegalArgumentException.class,
+                () -> registry.infer("to_int", List.of(booleanInput)));
+        assertTrue(nonNumeric.getMessage().contains("numeric or decimal-string input"));
     }
 
     @Test
@@ -99,6 +139,21 @@ public final class NumericCastAndExtremeOperatorsTest {
         assertEquals(
                 Long.valueOf(9007199254740993L),
                 registry.evaluate("to_bigint", List.of(9007199254740993L)));
+
+        assertEquals(
+                List.of(3, 5, -2),
+                registry.evaluate("to_int", List.of(List.of(3.7, 5, -2.9))));
+        assertEquals(
+                List.of(3L, 5L, -2L),
+                registry.evaluate("to_bigint", List.of(List.of(3.7, 5, -2.9))));
+        assertEquals(
+                List.of(),
+                registry.evaluate("to_int", List.of(List.of())));
+
+        TestOperatorSequence sequenceView = new TestOperatorSequence(List.of(1.9, 2.1));
+        assertEquals(
+                List.of(1, 2),
+                registry.evaluate("to_int", List.of(sequenceView)));
     }
 
     @Test
@@ -120,17 +175,24 @@ public final class NumericCastAndExtremeOperatorsTest {
                 IllegalArgumentException.class,
                 () -> registry.evaluate("to_bigint", List.of(1.0e19)));
 
-        // 非有限值与非数值输入在求值期拒绝：字符串不做隐式数值转换。
+        // 非有限值、非法字符串与非数值输入在求值期拒绝。
         IllegalArgumentException notFinite = assertThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("to_int", List.of(Double.NaN)));
         assertTrue(notFinite.getMessage().contains("finite"));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> registry.evaluate("to_bigint", List.of("123")));
+                () -> registry.evaluate("to_bigint", List.of("not-a-number")));
         assertThrows(
                 IllegalArgumentException.class,
                 () -> registry.evaluate("to_int", Arrays.<Object>asList((Object) null)));
+
+        IllegalArgumentException sequenceOverflow = assertThrows(
+                IllegalArgumentException.class,
+                () -> registry.evaluate(
+                        "to_int", List.of(List.of(1.0, 2147483648L))));
+        assertTrue(sequenceOverflow.getMessage().contains("sequence index 1"));
+        assertTrue(sequenceOverflow.getMessage().contains("overflow"));
     }
 
     @Test
@@ -230,6 +292,16 @@ public final class NumericCastAndExtremeOperatorsTest {
         assertEquals(Integer.valueOf(5), toIntResult.values().valueAt(1));
         assertEquals(Integer.valueOf(-2), toIntResult.values().valueAt(2));
 
+        BatchOperatorCall toIntSequenceCall = new BatchOperatorCall(
+                new FixedBatchLayout(BatchDomain.OFFLINE_ROW, 2),
+                List.of(new ListBatchColumn(List.of(
+                        List.of(3.7, -2.9),
+                        List.of(5L)))));
+        BatchOperatorResult toIntSequenceResult = registry.evaluateBatch(
+                "to_int", toIntSequenceCall, BatchKernelKind.SCALAR_ADAPTER);
+        assertEquals(List.of(3, -2), toIntSequenceResult.values().valueAt(0));
+        assertEquals(List.of(5), toIntSequenceResult.values().valueAt(1));
+
         // 默认路由读取注册内核种类，同样落在 SCALAR_ADAPTER 上。
         assertEquals(
                 Integer.valueOf(3), registry.evaluateBatch("min", minCall).values().valueAt(0));
@@ -249,6 +321,18 @@ public final class NumericCastAndExtremeOperatorsTest {
                 BatchOperatorEvaluationException.class,
                 () -> registry.evaluateBatch("min", badCall, BatchKernelKind.SCALAR_ADAPTER));
         assertEquals(0, failure.rowIndex());
+
+        BatchOperatorCall badSequenceCall = new BatchOperatorCall(
+                new FixedBatchLayout(BatchDomain.OFFLINE_ROW, 2),
+                List.of(new ListBatchColumn(List.of(
+                        List.of(1.0),
+                        List.of(2.0, 2147483648L)))));
+        BatchOperatorEvaluationException sequenceFailure = assertThrows(
+                BatchOperatorEvaluationException.class,
+                () -> registry.evaluateBatch(
+                        "to_int", badSequenceCall, BatchKernelKind.SCALAR_ADAPTER));
+        assertEquals(1, sequenceFailure.rowIndex());
+        assertTrue(sequenceFailure.getCause().getMessage().contains("sequence index 1"));
     }
 
     @Test
@@ -293,6 +377,52 @@ public final class NumericCastAndExtremeOperatorsTest {
                         .build(mismatched, Set.of("bad_cap")));
     }
 
+    @Test
+    public void sequenceCastDagExecutesEndToEnd() {
+        FeatureDefinition numbers = FeatureDefinition.builder()
+                .name("numbers")
+                .role(com.example.featuredag.definition.FeatureRole.RAW)
+                .dataType(DataType.DOUBLE)
+                .addEntityScope(EntityScope.USER)
+                .sourceBinding("numbers")
+                .declaredValueShape(ValueShape.SEQUENCE)
+                .build();
+        FeatureDefinition intNumbers = FeatureDefinition.builder()
+                .name("int_numbers")
+                .role(com.example.featuredag.definition.FeatureRole.DERIVED)
+                .dataType(DataType.INT)
+                .expressionContent("to_int(numbers)")
+                .outputPolicy(OutputPolicy.OUTPUT)
+                .declaredValueShape(ValueShape.SEQUENCE)
+                .build();
+        FeatureDefinition bigintNumbers = FeatureDefinition.builder()
+                .name("bigint_numbers")
+                .role(com.example.featuredag.definition.FeatureRole.DERIVED)
+                .dataType(DataType.BIGINT)
+                .expressionContent("to_bigint(numbers)")
+                .outputPolicy(OutputPolicy.OUTPUT)
+                .declaredValueShape(ValueShape.SEQUENCE)
+                .build();
+
+        OperatorRegistry registry = OperatorRegistry.standard();
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry)
+                .build(
+                        List.of(numbers, intNumbers, bigintNumbers),
+                        Set.of("int_numbers", "bigint_numbers"));
+        PhysicalPlan plan = new PhysicalPlanner(registry).plan(
+                new LogicalDagOptimizer(registry).analyze(dag),
+                ExecutionEnvironment.OFFLINE,
+                "numeric-sequence-cast");
+        ExecutionResult result = new DagRuntime(registry).execute(
+                plan,
+                ExecutionContext.offlineRow(
+                        "numeric-sequence-cast",
+                        Map.of("numbers", List.of(3.7, 5.0, -2.9))));
+
+        assertEquals(List.of(3, 5, -2), result.feature("int_numbers").raw());
+        assertEquals(List.of(3L, 5L, -2L), result.feature("bigint_numbers").raw());
+    }
+
     /** 算子推断所需的最小输入元数据：类型、实体域和值形状。 */
     private record TestInput(
             DataType outputType,
@@ -315,6 +445,29 @@ public final class NumericCastAndExtremeOperatorsTest {
         @Override
         public int indexInGroupAt(int rowIndex) {
             return domain == BatchDomain.ONLINE_CANDIDATE ? rowIndex % 2 : rowIndex;
+        }
+    }
+
+    private static final class TestOperatorSequence implements OperatorSequence {
+        private final List<?> values;
+
+        private TestOperatorSequence(List<?> values) {
+            this.values = List.copyOf(values);
+        }
+
+        @Override
+        public int size() {
+            return values.size();
+        }
+
+        @Override
+        public Object elementAt(int index) {
+            return values.get(index);
+        }
+
+        @Override
+        public OperatorSequence filterByColumn(String column, Object value) {
+            return this;
         }
     }
 }

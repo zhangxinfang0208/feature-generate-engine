@@ -4,8 +4,9 @@
 
 本方案已在通用算子链路落地：`PhysicalPlanner` 将能力固化为
 `SequenceViewInputMode.DIRECT/MATERIALIZE`，`DagRuntime` 在 Single 与 Batch Kernel 共同入口执行
-适配，内置算子通过 `OperatorSequence` 统一读取逻辑视图。当前直接支持视图的首期算子为
-`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`；
+适配，内置算子通过 `OperatorSequence` 统一读取逻辑视图。当前直接支持视图的算子为
+`slice_by_indices`、`find_indices`、`get_seq_length`、`count_distinct`、`zip_concat`、
+`list_concat`、`hit`、`to_int`、`to_bigint`；
 `calc_delta_seq` 保持物化模式，并拒绝事件元素（不做隐式数值投影，见第 2.4 节）。
 
 事件模型已泛化（2026-08-13）：固定 5 字段的 `SequenceEvent` record 已删除，事件统一为不可变
@@ -302,6 +303,11 @@ static Object sequenceElementAt(
 | `zip_concat` | `true` | 每个序列参数都通过统一序列访问函数读取；尾部配置 Map 保持原语义；事件 Map 元素拒绝拼接并明确报错 |
 | `calc_delta_seq` | `false` | 元素必须是数值；事件 Map 元素保持拒绝并明确报错，不做隐式 value 投影 |
 
+后续增量算子中，`list_concat` 与 `hit` 按同一契约直接消费视图；
+`to_int` 与 `to_bigint` 对数值序列逐元素转换，推断结果保持 `SEQUENCE`
+shape，并通过统一序列访问函数直接消费 `OperatorSequence`。事件序列仍在构图期拒绝，
+不做隐式字段投影。
+
 `calc_delta_seq` 若未来需要支持事件视图，应先显式定义输入投影协议，例如增加专门的数值序列抽象或
 上游投影算子。不能在 `calc_delta_seq` 中隐式取事件 Map 的 `value` 字段，否则普通数值序列与事件
 序列会产生隐藏的双重语义。同理，`zip_concat` 不隐式投影事件字段：事件无既定字符串契约，结构
@@ -357,7 +363,7 @@ keyDomain + concrete SequenceValue [+ normalizedKey]
 
 ### 8.1 元数据与计划测试
 
-- 8 个标准算子的 `supportsSequenceView` 声明与第 6 节一致；
+- 相关标准算子的 `supportsSequenceView` 声明与第 6 节一致；
 - `PhysicalPlanner` 为普通算子写入正确的 `SequenceViewInputMode`；
 - 旧计划缺失字段时按约定默认 `MATERIALIZE`，或在完成兼容窗口后 fail-fast；
 - 专用 Rewrite 不被通用输入模式错误覆盖。

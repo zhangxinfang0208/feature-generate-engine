@@ -18,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /** 首期内置算子共享的包内辅助方法：集中处理推断、数值校验、序列下标和批内身份键。 */
 final class OperatorSupport {
@@ -48,6 +49,35 @@ final class OperatorSupport {
                                 + " supported (no implicit value projection)");
             }
         }
+    }
+
+    static OperatorInference numericCastInference(
+            String operator,
+            List<OperatorInputMetadata> inputs,
+            DataType outputType) {
+        OperatorInputMetadata input = inputs.get(0);
+        if (input.outputType() == DataType.EVENT_SEQUENCE) {
+            throw new IllegalArgumentException(
+                    operator + " requires numeric input; event sequences are not"
+                            + " supported (no implicit value projection)");
+        }
+        if (!input.outputType().isNumeric()) {
+            throw new IllegalArgumentException(
+                    operator + " requires numeric input, got: " + input.outputType());
+        }
+
+        ValueShape outputShape;
+        if (input.valueShape() == ValueShape.SEQUENCE) {
+            outputShape = ValueShape.SEQUENCE;
+        } else if (input.valueShape() == ValueShape.SCALAR
+                || input.valueShape() == ValueShape.CANDIDATE_VECTOR) {
+            // Batch/候选维度不进入逻辑 ValueShape；Kernel 仍按行执行标量转换（C6/C10）。
+            outputShape = ValueShape.SCALAR;
+        } else {
+            throw new IllegalArgumentException(
+                    operator + " does not support value shape: " + input.valueShape());
+        }
+        return fixedInference(inputs, outputType, outputShape);
     }
 
     static DataType numericResultType(List<OperatorInputMetadata> inputs) {
@@ -143,6 +173,30 @@ final class OperatorSupport {
         if (value instanceof List<?>) return (List<?>) value;
         throw new IllegalArgumentException(
                 operator + " expects List for " + argument + ", got: " + typeName(value));
+    }
+
+    static boolean isSequence(Object value) {
+        return value instanceof OperatorSequence || value instanceof List<?>;
+    }
+
+    static <T> List<T> mapSequence(
+            Object value,
+            String operator,
+            Function<Object, T> converter) {
+        int size = sequenceSize(value, operator, "value");
+        List<T> result = new ArrayList<T>(size);
+        for (int index = 0; index < size; index++) {
+            Object element = sequenceElementAt(value, index, operator, "value");
+            try {
+                result.add(converter.apply(element));
+            } catch (RuntimeException error) {
+                throw new IllegalArgumentException(
+                        operator + " failed at sequence index " + index
+                                + ": " + error.getMessage(),
+                        error);
+            }
+        }
+        return immutableList(result);
     }
 
     static int sequenceSize(Object value, String operator, String argument) {

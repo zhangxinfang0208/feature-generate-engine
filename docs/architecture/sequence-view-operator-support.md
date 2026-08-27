@@ -301,6 +301,9 @@ static Object sequenceElementAt(
 | `get_seq_length` | `true` | 已通过 `OperatorSequence.size()` 支持，修正声明 |
 | `count_distinct` | `true` | 已通过 `OperatorSequence` 遍历，修正声明并验证 Native Batch |
 | `zip_concat` | `true` | 每个序列参数都通过统一序列访问函数读取；尾部配置 Map 保持原语义；事件 Map 元素拒绝拼接并明确报错 |
+| `list_concat` | `true` | 两个序列参数均通过统一序列访问函数读取；事件 Map 元素保持拒绝 |
+| `hit` | `true` | 事件序列和查询 key 序列均通过统一序列访问函数读取 |
+| `group_count_concat` | `true` | 通过统一序列访问函数分组计数；事件 Map 元素保持拒绝 |
 | `calc_delta_seq` | `false` | 元素必须是数值；事件 Map 元素保持拒绝并明确报错，不做隐式 value 投影 |
 
 后续增量算子中，`list_concat` 与 `hit` 按同一契约直接消费视图；

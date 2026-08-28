@@ -20,17 +20,19 @@ public final class SequenceViewOperatorSupportTest {
     @Test
     public void sequenceViewCapabilitiesAndDirectEvaluation() {
         OperatorRegistry registry = OperatorRegistry.standard();
-        Map<String, Boolean> expected = Map.of(
-                "discrete", false,
-                "log_base", false,
-                "slice_by_indices", true,
-                "find_indices", true,
-                "get_seq_length", true,
-                "count_distinct", true,
-                "zip_concat", true,
-                "list_concat", true,
-                "hit", true,
-                "calc_delta_seq", false);
+        Map<String, Boolean> expected = Map.ofEntries(
+                Map.entry("discrete", false),
+                Map.entry("log_base", false),
+                Map.entry("slice_by_indices", true),
+                Map.entry("find_indices", true),
+                Map.entry("get_seq_length", true),
+                Map.entry("count_distinct", true),
+                Map.entry("zip_concat", true),
+                Map.entry("list_concat", true),
+                Map.entry("hit", true),
+                Map.entry("calc_delta_seq", false),
+                Map.entry("to_int", true),
+                Map.entry("to_bigint", true));
         for (Map.Entry<String, Boolean> entry : expected.entrySet()) {
             assertEquals(
                     entry.getKey() + " supportsSequenceView",

@@ -6,6 +6,7 @@ import com.example.featuredag.api.InitOptions;
 import com.example.featuredag.api.OfflineGenerateRequest;
 import org.junit.Test;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,6 +64,20 @@ public final class CalculateDeltaSequenceConfigurationTest {
     }
 
     @Test
+    public void needCeilRoundsConvertedResultTowardPositiveInfinity() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+
+        assertEquals(
+                Arrays.asList(1.0, 0.0),
+                registry.evaluate(
+                        "calc_delta_seq",
+                        Arrays.<Object>asList(
+                                Arrays.asList(8, 12),
+                                10,
+                                config("BASE_MINUS_ELEMENT", 3, 1))));
+    }
+
+    @Test
     public void nativeBatchSeparatesDirectionAndDivisorInReuseKey() {
         OperatorRegistry registry = OperatorRegistry.standard();
         List<Long> timestamps = Arrays.asList(REQUEST_TIMESTAMP_MS - 7_200_000L);
@@ -88,6 +103,26 @@ public final class CalculateDeltaSequenceConfigurationTest {
     }
 
     @Test
+    public void nativeBatchSeparatesNeedCeilInReuseKey() {
+        OperatorRegistry registry = OperatorRegistry.standard();
+        List<Integer> sequence = Arrays.asList(8);
+        BatchOperatorCall call = new BatchOperatorCall(
+                new FixedBatchLayout(BatchDomain.OFFLINE_ROW, 2),
+                Arrays.<BatchColumn>asList(
+                        new ListBatchColumn(Arrays.asList(sequence, sequence)),
+                        new ListBatchColumn(Arrays.asList(10, 10)),
+                        new ListBatchColumn(Arrays.asList(
+                                config("BASE_MINUS_ELEMENT", 3, 0),
+                                config("BASE_MINUS_ELEMENT", 3, 1)))));
+
+        BatchOperatorResult result = registry.evaluateBatch(
+                "calc_delta_seq", call, BatchKernelKind.NATIVE);
+
+        assertEquals(Arrays.asList(0.6666666666666666), result.values().valueAt(0));
+        assertEquals(Arrays.asList(1.0), result.values().valueAt(1));
+    }
+
+    @Test
     public void rejectsInvalidConfiguration() {
         OperatorRegistry registry = OperatorRegistry.standard();
         List<Long> timestamps = Arrays.asList(REQUEST_TIMESTAMP_MS - 3_600_000L);
@@ -100,6 +135,20 @@ public final class CalculateDeltaSequenceConfigurationTest {
                 registry, timestamps, config("BASE_MINUS_ELEMENT", -1), "greater than 0");
         assertFailureContains(
                 registry, timestamps, config("BASE_MINUS_ELEMENT", Double.NaN), "finite");
+        assertFailureContains(
+                registry, timestamps, config("BASE_MINUS_ELEMENT", 1, 2), "0 or 1");
+        assertFailureContains(
+                registry, timestamps, config("BASE_MINUS_ELEMENT", 1, "1"), "0 or 1");
+        assertFailureContains(
+                registry, timestamps, config("BASE_MINUS_ELEMENT", 1, 0.5), "0 or 1");
+        assertFailureContains(
+                registry,
+                timestamps,
+                config(
+                        "BASE_MINUS_ELEMENT",
+                        1,
+                        new BigDecimal("1.000000000000000000000000001")),
+                "0 or 1");
 
         Map<String, Object> unknownKey = config("BASE_MINUS_ELEMENT", 3_600_000);
         unknownKey.put("unit", "HOUR");
@@ -130,7 +179,7 @@ public final class CalculateDeltaSequenceConfigurationTest {
     }
 
     @Test
-    public void expressionConfigCalculatesTimegapHoursEndToEnd() {
+    public void expressionConfigCalculatesCeiledTimegapHoursEndToEnd() {
         String configJson = "{"
                 + "\"feature_set_name\":\"timegap-example\","
                 + "\"version\":\"1\","
@@ -147,27 +196,36 @@ public final class CalculateDeltaSequenceConfigurationTest {
                 + "\"definition_type\":\"DERIVED\","
                 + "\"expression\":\"calc_delta_seq(behavior_timestamp_ms, "
                 + "request_timestamp_ms, {\\\"direction\\\":\\\"BASE_MINUS_ELEMENT\\\","
-                + "\\\"divisor\\\":3600000})\","
+                + "\\\"divisor\\\":3600000,\\\"need_ceil\\\":1})\","
                 + "\"output_policy\":\"OUTPUT\",\"entity_scopes\":[\"USER\"],"
                 + "\"value_shape\":\"SEQUENCE\"}]}";
         FeatureDagEngine engine = FeatureDagEngine.init(
                 configJson, InitOptions.offline("timegap-example-plan"));
         Map<String, List<?>> inputs = new LinkedHashMap<String, List<?>>();
         inputs.put("behavior_timestamp_ms", Arrays.asList(
-                REQUEST_TIMESTAMP_MS - 3_600_000L,
+                REQUEST_TIMESTAMP_MS - 5_400_000L,
                 REQUEST_TIMESTAMP_MS - 10_800_000L));
         inputs.put("request_timestamp_ms", Arrays.asList(REQUEST_TIMESTAMP_MS));
 
         GenerateResult result = engine.generate(
                 new OfflineGenerateRequest("timegap-example-row", inputs));
 
-        assertEquals(Arrays.asList(1.0, 3.0), result.featureValues().get("timegap_hours"));
+        assertEquals(Arrays.asList(2.0, 3.0), result.featureValues().get("timegap_hours"));
     }
 
     private static Map<String, Object> config(String direction, Object divisor) {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("direction", direction);
         result.put("divisor", divisor);
+        return result;
+    }
+
+    private static Map<String, Object> config(
+            String direction,
+            Object divisor,
+            Object needCeil) {
+        Map<String, Object> result = config(direction, divisor);
+        result.put("need_ceil", needCeil);
         return result;
     }
 

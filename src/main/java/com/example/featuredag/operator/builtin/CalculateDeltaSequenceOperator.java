@@ -9,6 +9,7 @@ import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,12 +19,14 @@ import java.util.Map;
  * 按元素计算差值，输出长度和顺序与输入序列完全一致。
  *
  * <p>两参数调用默认计算 {@code base - sequence[i]}；可选第三个配置对象支持通过
- * {@code direction} 调整减法方向，并通过 {@code divisor} 对差值做单位换算。
+ * {@code direction} 调整减法方向，通过 {@code divisor} 对差值做单位换算，并通过
+ * {@code need_ceil} 控制是否对换算结果向上取整。
  */
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
         implements BatchOperatorKernel {
     private static final String DIRECTION_KEY = "direction";
     private static final String DIVISOR_KEY = "divisor";
+    private static final String NEED_CEIL_KEY = "need_ceil";
 
     public CalculateDeltaSequenceOperator() {
         super("calc_delta_seq", 2, 3, true, false);
@@ -51,7 +54,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         List<Object> result = new ArrayList<Object>(call.rowCount());
-        // 同一请求组内若序列对象与 base 都相同，只计算一次；追加结果时仍严格保持 Batch 行顺序。
+        // 同一请求组内若序列对象、base 与配置都相同，只计算一次；追加结果时仍严格保持 Batch 行顺序。
         Map<DeltaBatchKey, Object> values = new LinkedHashMap<DeltaBatchKey, Object>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
             try {
@@ -105,6 +108,12 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
                     ? base - value
                     : value - base;
             double converted = delta / options.divisor();
+            if (options.needCeil()) {
+                converted = Math.ceil(converted);
+                if (converted == 0.0) {
+                    converted = 0.0;
+                }
+            }
             if (!Double.isFinite(converted)) {
                 throw new IllegalArgumentException(
                         "calc_delta_seq result at index " + index + " must be finite");
@@ -135,14 +144,19 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
 
     private static final class DeltaOptions {
         private static final DeltaOptions DEFAULTS = new DeltaOptions(
-                DeltaDirection.BASE_MINUS_ELEMENT, 1.0);
+                DeltaDirection.BASE_MINUS_ELEMENT, 1.0, false);
 
         private final DeltaDirection direction;
         private final double divisor;
+        private final boolean needCeil;
 
-        private DeltaOptions(DeltaDirection direction, double divisor) {
+        private DeltaOptions(
+                DeltaDirection direction,
+                double divisor,
+                boolean needCeil) {
             this.direction = direction;
             this.divisor = divisor;
+            this.needCeil = needCeil;
         }
 
         private static DeltaOptions defaults() {
@@ -156,7 +170,9 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
             }
             Map<?, ?> config = (Map<?, ?>) rawConfig;
             for (Object key : config.keySet()) {
-                if (!DIRECTION_KEY.equals(key) && !DIVISOR_KEY.equals(key)) {
+                if (!DIRECTION_KEY.equals(key)
+                        && !DIVISOR_KEY.equals(key)
+                        && !NEED_CEIL_KEY.equals(key)) {
                     throw new IllegalArgumentException(
                             "calc_delta_seq config contains unknown key: " + key);
                 }
@@ -173,10 +189,29 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
                 throw new IllegalArgumentException(
                         "calc_delta_seq divisor must be greater than 0");
             }
-            if (direction == DeltaDirection.BASE_MINUS_ELEMENT && divisor == 1.0) {
+            boolean needCeil = config.containsKey(NEED_CEIL_KEY)
+                    ? parseNeedCeil(config.get(NEED_CEIL_KEY))
+                    : false;
+            if (direction == DeltaDirection.BASE_MINUS_ELEMENT
+                    && divisor == 1.0
+                    && !needCeil) {
                 return DEFAULTS;
             }
-            return new DeltaOptions(direction, divisor);
+            return new DeltaOptions(direction, divisor, needCeil);
+        }
+
+        private static boolean parseNeedCeil(Object value) {
+            String errorMessage = "calc_delta_seq need_ceil must be 0 or 1";
+            if (!(value instanceof Number)) {
+                throw new IllegalArgumentException(errorMessage);
+            }
+            BigDecimal numeric = OperatorSupport.asPreciseDecimal(
+                    (Number) value, errorMessage);
+            if (numeric.compareTo(BigDecimal.ZERO) != 0
+                    && numeric.compareTo(BigDecimal.ONE) != 0) {
+                throw new IllegalArgumentException(errorMessage);
+            }
+            return numeric.compareTo(BigDecimal.ONE) == 0;
         }
 
         private DeltaDirection direction() {
@@ -186,6 +221,10 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
         private double divisor() {
             return divisor;
         }
+
+        private boolean needCeil() {
+            return needCeil;
+        }
     }
 
     private static final class DeltaBatchKey {
@@ -194,6 +233,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
         private final long baseBits;
         private final DeltaDirection direction;
         private final long divisorBits;
+        private final boolean needCeil;
 
         private DeltaBatchKey(
                 int groupIndex,
@@ -206,6 +246,7 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
             this.baseBits = Double.doubleToLongBits(base);
             this.direction = options.direction();
             this.divisorBits = Double.doubleToLongBits(options.divisor());
+            this.needCeil = options.needCeil();
         }
 
         @Override
@@ -217,7 +258,8 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
                     && sequence == other.sequence
                     && baseBits == other.baseBits
                     && direction == other.direction
-                    && divisorBits == other.divisorBits;
+                    && divisorBits == other.divisorBits
+                    && needCeil == other.needCeil;
         }
 
         @Override
@@ -225,7 +267,8 @@ public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperato
             int hash = 31 * groupIndex + System.identityHashCode(sequence);
             hash = 31 * hash + Long.hashCode(baseBits);
             hash = 31 * hash + direction.hashCode();
-            return 31 * hash + Long.hashCode(divisorBits);
+            hash = 31 * hash + Long.hashCode(divisorBits);
+            return 31 * hash + (needCeil ? 1 : 0);
         }
     }
 }

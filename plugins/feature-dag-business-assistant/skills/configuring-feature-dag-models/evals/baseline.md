@@ -23,79 +23,84 @@ It accepts a malformed expression as syntactically valid and stops no work befor
 ### Raw output
 
 ```json
+{
+  "feature_name": "auid_hwdsp_clk_norm_tag1id_history_zip_seq_time_365d",
+  "definition_type": "DERIVED",
+  "type": "STRING",
+  "value_shape": "SEQUENCE",
+  "entity_scopes": ["USER"],
+  "seq_max_length": 365,
+  "expression": "zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {"direction":"BASE_MINUS_ELEMENT","divisor":60}), {"delimiter":"#"})"
+}
+```
+
+同时补齐/修正以下 BASE 配置：
+
+```json
 [
   {
-    "name": "auid_hwdsp_clk_crtv_clstid_seq_time_365d",
-    "definition_type": "RAW",
+    "feature_name": "auid_hwdsp_clk_norm_tag1id_seq_time_365d",
+    "definition_type": "BASE",
     "type": "STRING",
     "value_shape": "SEQUENCE",
     "entity_scopes": ["USER"],
     "seq_max_length": 365
   },
   {
-    "name": "auid_hwdsp_clk_norm_tag1id_seq_time_365d",
-    "definition_type": "RAW",
-    "type": "STRING",
-    "value_shape": "SEQUENCE",
-    "entity_scopes": ["USER"],
-    "seq_max_length": 365
-  },
-  {
-    "name": "auid_hwdsp_clk_slotid_seq_time_365d",
-    "definition_type": "RAW",
-    "type": "STRING",
-    "value_shape": "SEQUENCE",
-    "entity_scopes": ["USER"],
-    "seq_max_length": 365
-  },
-  {
-    "name": "auid_hwdsp_clk_ts_seq_time_365d",
-    "definition_type": "RAW",
-    "type": "BIGINT",
-    "value_shape": "SEQUENCE",
-    "entity_scopes": ["USER"],
-    "seq_max_length": 365
-  },
-  {
-    "name": "normalized_tag1_id_h",
-    "definition_type": "RAW",
+    "feature_name": "normalized_tag1_id_h",
+    "definition_type": "BASE",
     "type": "STRING",
     "value_shape": "SCALAR",
     "entity_scopes": ["USER"],
     "seq_max_length": 1
   },
   {
-    "name": "timestamp_s",
-    "definition_type": "RAW",
+    "feature_name": "auid_hwdsp_clk_ts_seq_time_365d",
+    "definition_type": "BASE",
+    "type": "BIGINT",
+    "value_shape": "SEQUENCE",
+    "entity_scopes": ["USER"],
+    "seq_max_length": 365
+  },
+  {
+    "feature_name": "auid_hwdsp_clk_crtv_clstid_seq_time_365d",
+    "definition_type": "BASE",
+    "type": "BIGINT",
+    "value_shape": "SEQUENCE",
+    "entity_scopes": ["USER"],
+    "seq_max_length": 365
+  },
+  {
+    "feature_name": "auid_hwdsp_clk_slotid_seq_time_365d",
+    "definition_type": "BASE",
+    "type": "BIGINT",
+    "value_shape": "SEQUENCE",
+    "entity_scopes": ["USER"],
+    "seq_max_length": 365
+  },
+  {
+    "feature_name": "timestamp_s",
+    "definition_type": "BASE",
     "type": "BIGINT",
     "value_shape": "SCALAR",
     "entity_scopes": ["USER"],
     "seq_max_length": 1
-  },
-  {
-    "name": "auid_hwdsp_clk_tag1_click_detail_seq_365d",
-    "definition_type": "DERIVED",
-    "type": "STRING",
-    "value_shape": "SEQUENCE",
-    "entity_scopes": ["USER"],
-    "seq_max_length": 365,
-    "expression": "zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {"direction":"BASE_MINUS_ELEMENT","divisor":60}), {"delimiter":"#"})"
   }
 ]
 ```
 
-注意：`auid_hwdsp_clk_ts_seq_time_365d` 必须配置为 `SEQUENCE`，否则无法作为 `slice_by_indices` 的输入。
+关键修正：`auid_hwdsp_clk_ts_seq_time_365d` 必须是 `SEQUENCE`，否则不能传入 `slice_by_indices`。
 
 ### Assertion results
 
-- FAIL — The six listed BASE candidates are not in first-seen order and include `timestamp_s` only after `slotid` and `ts`.
+- FAIL — The listed BASE candidates begin with `auid_hwdsp_clk_norm_tag1id_seq_time_365d` rather than the first-seen `auid_hwdsp_clk_crtv_clstid_seq_time_365d`.
 - PASS — The emitted feature names do not include operator names, object keys, or string literals as BASE features.
 - FAIL — The response overwrites the supplied `auid_hwdsp_clk_ts_seq_time_365d` `value_shape=SCALAR` with `SEQUENCE` instead of reporting the conflict.
 - FAIL — The response guesses absent types, shapes, scopes, and lengths rather than asking for the unknown metadata.
 
 ### Observed failure pattern
 
-It fabricates immediately copyable RAW properties, including overwriting contradictory metadata, instead of preserving uncertainty.
+It fabricates immediately copyable BASE properties, including overwriting contradictory metadata, instead of preserving uncertainty.
 
 ## reachable-only
 

@@ -4,17 +4,18 @@ Use this grammar before any metadata work. Parse the complete input; a syntax er
 
 ## Lexical rules
 
-- An identifier starts with `[A-Za-z_]` and continues with `[A-Za-z0-9_.]`. It is case-sensitive.
+- An identifier normally starts with `Character.isLetter(ch)` or `_`, and continues with `Character.isLetterOrDigit(ch)`, `_`, or `.`. It is case-sensitive; these Java `Character` methods accept Unicode letters and digits, not only ASCII. A digit run immediately followed by `(` is the parser's call-identifier exception: it is tokenized as an identifier for that call.
 - Before tokenizing, normalize each `\_` outside a quoted string to `_` and visibly state: `已将字符串外的 \_ 按 _ 规范化。` Do not normalize inside strings.
 - Strings use either `'` or `"`. Their only escapes are `\n`, `\r`, `\t`, `\\`, `\"`, and `\'`; an unrecognized escape is invalid.
-- A number is `-?(0|[1-9][0-9]*)` (integer), the same form with a fractional part (decimal), or its negative form. A signed 32-bit integer is `INT`; a remaining signed 64-bit integer is `BIGINT`; a decimal is `DOUBLE`. A non-decimal integer outside the signed 64-bit range is invalid.
+- A number is `-?[0-9]+` (integer, including leading-zero forms such as `01`) or `-?[0-9]+\.[0-9]*` (decimal, including a trailing decimal point). A signed 32-bit integer is `INT`; a remaining signed 64-bit integer is `BIGINT`; a decimal is `DOUBLE`. A non-decimal integer outside the signed 64-bit range is invalid.
 - `true`, `false`, and `null` are boolean and null literals. They are not feature references.
 
 ## Syntax
 
 ```text
 expression  := call | identifier | literal | array | object
-call        := identifier "(" arguments? ")"
+call        := identifier invocation-list+
+invocation-list := "(" arguments? ")"
 arguments   := positional-list ("," named-list)? | named-list
 positional-list := positional ("," positional)*
 named-list  := named ("," named)*
@@ -26,7 +27,7 @@ object-key  := identifier | string
 literal     := string | number | "true" | "false" | "null"
 ```
 
-Nested calls, arrays, and objects are allowed to a maximum nesting depth of 200. Positional arguments after a named argument, duplicate object keys, trailing commas, missing delimiters, unmatched quotes/brackets, and any trailing token after one expression are invalid. `\_` inside a string is not normalized and is invalid because it is not a permitted string escape.
+Nested calls, arrays, and objects are allowed to a maximum nesting depth of 200. A call may have successive invocation lists, such as `operator(first)(second)` or `operator()()`: the parser records one call with its invocation count and aggregates arguments in source order. Positional arguments after a named argument (including in a later invocation list), duplicate object keys, trailing commas, missing delimiters, unmatched quotes/brackets, and any trailing token after one expression are invalid. `\_` inside a string is not normalized and is invalid because it is not a permitted string escape.
 
 ## AST reference extraction
 

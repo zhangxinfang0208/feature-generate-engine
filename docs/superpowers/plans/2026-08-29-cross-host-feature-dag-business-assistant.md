@@ -302,7 +302,7 @@ Write positive stage contracts in this order:
 3. BASE completion: request current entries, ask only unresolved facts, emit additions only for absent fields, report conflicts.
 4. DERIVED completion: infer through operator contracts, ask for unknown max length, emit absent fields.
 5. Final validation: target + reachable dependencies only.
-6. Verdict: PASS/FAIL/INCOMPLETE with explicit rule-only boundary.
+6. Verdict: PASS/FAIL/INCOMPLETE with a boundary sentence selected for the actual remote-validator or rule-fallback path; never label one path as the other.
 ```
 
 At each stage identify the one reference that must be read. Require `operator-contracts.md` only after syntax succeeds and semantic inference is needed. Keep `SKILL.md` under 500 words excluding frontmatter.

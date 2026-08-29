@@ -29,7 +29,7 @@ BASE 引用（首次出现顺序）：`...`
 
 ### 阶段 6：结论
 PASS | FAIL | INCOMPLETE
-边界：仅规则校验，不代表引擎执行结果。
+边界：规则校验回退，不代表远程真实引擎结果。 | 远程真实引擎校验结果：按工具返回，不代表本地规则回退。
 ```
 
 `原始输入` 和 `规范化输入` 必须分别展示。没有字符串外 `\_` 时两者逐字相同；字符串外发生规范化时只复制替换 `\_`，不增删其他字符。`<EOF>` 只能单独出现在分隔符审计说明中，不能出现在任一表达式字段。语法失败不得继续 BASE 或最终校验，也不得通过补括号、补逗号或其他方式修复输入。
@@ -47,6 +47,8 @@ Stage 5 starts only when the business supplied both a named target and the compl
 ```
 
 For a gated wrapper, inspect only the target's reachable subgraph. Verdict precedence is: `FAIL` for any reachable missing/invalid declaration, missing reference, conflict, duplicate definition, or cycle; otherwise `INCOMPLETE` for an unavailable required fact or operator contract; `PASS` only when the reachable graph is complete and consistent. Before returning `FAIL`, still emit additions for missing fields whose values are fixed by a known contract. In particular, `add(...)` produces scalar `seq_max_length=1`; its addition is a `NUMBER` property whose JSON `data_value` is the unquoted number `1`. Unreachable malformed entries do not affect the result. A rule fallback is labeled `规则校验通过`, never as a remote result.
+
+Choose exactly one boundary sentence according to the path actually used: a remote validator result must say it is a remote result and must not use the rule-only wording; an unavailable or failed remote validator followed by local rules must say `规则校验回退`/`规则校验通过` and must not call it remote success.
 
 ## Frontend additions
 

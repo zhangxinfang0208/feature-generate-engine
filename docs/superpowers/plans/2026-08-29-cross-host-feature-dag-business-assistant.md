@@ -17,7 +17,7 @@
 - Shared skill frontmatter contains only `name` and `description`.
 - Initial expression validation is syntax-only; operator existence, arity, type, and shape belong to later semantic validation.
 - Existing nonblank conflicting fields are reported for manual correction and never emitted as overwrite properties.
-- `NUMBER.data_value` is a JSON number; `List.data_value` is a JSON array; `STRING.data_value` is a string; `BOOLEAN.data_value` is the string `"true"` or `"false"`.
+- `NUMBER.data_value` is a JSON number; `LIST.data_value` is a JSON string containing a serialized list such as `"[\"USER\"]"`; `STRING.data_value` is a string; `BOOLEAN.data_value` is the string `"true"` or `"false"`.
 - Every emitted property uses `default_value: ""` and `required: "true"`.
 - Final rule validation checks only the requested target and its reachable dependencies and ignores unrelated feature entries and non-engine business fields.
 - Unknown operator contracts produce `信息不完整`, not an invented valid/invalid verdict.
@@ -364,8 +364,8 @@ timestamp_s
   },
   {
     "raw_name": "entity_scopes",
-    "data_value": ["USER"],
-    "data_type": "List",
+    "data_value": "[\"USER\"]",
+    "data_type": "LIST",
     "default_value": "",
     "required": "true"
   },

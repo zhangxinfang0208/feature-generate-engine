@@ -123,7 +123,7 @@ Skill 按每个 BASE 独立维护三类结果：
 | `data_type` | `data_value` 表示 |
 | --- | --- |
 | `NUMBER` | JSON 数字，不加引号 |
-| `List` | 真实 JSON 数组 |
+| `LIST` | 包含序列化列表的 JSON 字符串，例如 `"[\"USER\"]"` |
 | `STRING` | JSON 字符串 |
 | `BOOLEAN` | 字符串 `"true"` 或 `"false"` |
 
@@ -265,7 +265,7 @@ Skill 开发遵循 RED-GREEN-REFACTOR：
 - 示例长表达式提取六个去重 BASE；
 - 单个 BASE 缺少多个字段；
 - 已有字段冲突时不生成覆盖项；
-- `NUMBER.data_value` 为 JSON 数字，`List.data_value` 为数组；
+- `NUMBER.data_value` 为 JSON 数字，`LIST.data_value` 为包含序列化列表的 JSON 字符串；
 - 衍生类型、形状、scope 和最大长度推断；
 - 完整模型忽略无关错误配置；
 - 可达依赖错误、重复定义和依赖环；

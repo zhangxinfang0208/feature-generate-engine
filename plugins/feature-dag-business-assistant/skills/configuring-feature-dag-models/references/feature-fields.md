@@ -4,7 +4,7 @@
 
 ## Completion rules
 
-Every BASE feature needs `definition_type`, `type`, `value_shape`, `entity_scopes`, and `seq_max_length`. Do not infer any unresolved BASE fact from a name or expression: ask the business user even when asked not to ask questions. `dft` is optional, but when present it must be compatible with the declared type and shape.
+Every BASE feature needs `definition_type=BASE`, `type`, `value_shape`, `entity_scopes`, and `seq_max_length`. Do not infer any unresolved BASE fact from a name or expression: ask the business user even when asked not to ask questions. `dft` is optional, but when present it must be compatible with the declared type and shape.
 
 Supported business data types are `INT`, `BIGINT`, `DOUBLE`, `STRING`, `BOOLEAN`, `OBJECT`, and `EVENT_SEQUENCE`. `UNKNOWN` is not a completed declaration; it means the fact remains unresolved. Ordinary business inputs use `SCALAR` or `SEQUENCE`; `EVENT_SEQUENCE` requires `SEQUENCE`. Scopes are `USER`, `SCENE`, and `ITEM`. Compare a declared DERIVED scope as an exact set, ignoring order and duplicates, against its inferred scope.
 

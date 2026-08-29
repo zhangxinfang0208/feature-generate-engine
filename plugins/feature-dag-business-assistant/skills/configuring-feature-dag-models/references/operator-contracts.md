@@ -4,6 +4,17 @@
 
 所有长度公式都是安全上界。`M0`、`M1` 等表示相应序列输入已知的正 `seq_max_length`；若公式所需的任一最大长度未知，向业务询问，不猜测数值。标量输出的 `seq_max_length` 为 `1`。
 
+### 长度输出闸门
+
+对包含 `slice_by_indices` 或 `zip_concat` 的 DERIVED 表达式，只有在以下条件同时满足时才可把推导出的上限交给前台：
+
+1. 所有决定源序列长度、索引长度及索引合法性的可达输入都已提供正的 `seq_max_length`；
+2. 这些输入的 `value_shape` 均已明确为所需的 `SEQUENCE`/`SCALAR`，并且实体域、类型和形状没有冲突；
+3. 每个 `slice_by_indices` 的索引来源（例如 `find_indices` 的被搜索序列）也满足上述完整性；
+4. `zip_concat` 的每条参与序列都满足等长运行时约束，且共享上界可以由已知输入安全计算。
+
+否则将 `seq_max_length` 列入“待确认事实”，不生成该字段的新增属性。任何单个已知长度（例如 `365`）都不能替代其他未知或冲突输入，也不能作为整个衍生结果的猜测值。
+
 ## `discrete`
 
 - **Signature and arity:** `discrete(value, boundaries)`，恰好 2 个参数。

@@ -37,7 +37,6 @@ Earlier terra contexts appended a closing `)` and incorrectly passed this malfor
 
 ### Raw output
 
-````text
 ### 阶段 1：语法受理
 
 状态：通过
@@ -67,7 +66,6 @@ BASE 引用（首次出现顺序）：
 - `auid_hwdsp_clk_norm_tag1id_seq_time_365d`：`value_shape`、`entity_scopes`。已有 `type=STRING`、`seq_max_length=365`。
 - `normalized_tag1_id_h`：`type`、`value_shape`、`entity_scopes`。已有 `seq_max_length=1` 不能据此推断 `SCALAR`。
 - `auid_hwdsp_clk_slotid_seq_time_365d`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`。
-- `auid_hwdsp_clk_ts_seq_time_365d`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`。
 - `timestamp_s`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`。
 - 为保证表达式可靠运行，三个被切片的业务序列、被搜索序列和时间序列需要由业务确认其序列语义；`timestamp_s` 需要确认数值标量语义。这里不从名称或表达式反推 BASE 声明。
 
@@ -75,7 +73,9 @@ BASE 引用（首次出现顺序）：
 
 - `auid_hwdsp_clk_ts_seq_time_365d.value_shape` 现为 `SCALAR`，但它作为 `slice_by_indices` 的源序列，可靠运行要求 `SEQUENCE`。该字段须人工改正；按规则不生成覆盖属性。
 
-新增属性：以下按你列出的现有字段中均没有 `definition_type` 处理。若前台尚无对应条目，先创建同名 BASE 条目；每个条目分别粘贴：
+新增属性：
+
+以下按你列出的现有字段中均没有 `definition_type` 处理。若前台尚无对应条目，先创建同名 BASE 条目；每个条目分别粘贴：
 
 `auid_hwdsp_clk_crtv_clstid_seq_time_365d`
 
@@ -167,7 +167,40 @@ BASE 引用（首次出现顺序）：
 
 待确认事实：未提供 DERIVED 特征名；`entity_scopes` 需由全部 BASE 实体域取并集。由于多个源序列的长度、形状和索引合法性信息缺失，且时间序列存在形状冲突，不能输出 DERIVED 的 `seq_max_length`。
 
-新增属性：只包含可确定的 `definition_type=DERIVED`、输出 `type=STRING`、`value_shape=SEQUENCE` 和合法转义的表达式字符串；不包含 `seq_max_length`，不猜测 365。
+新增属性：以下是新建 DERIVED 条目后可直接粘贴的确定字段；不包含猜测字段。
+
+```json
+[
+  {
+    "raw_name": "definition_type",
+    "data_value": "DERIVED",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "type",
+    "data_value": "STRING",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "value_shape",
+    "data_value": "SEQUENCE",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "expression",
+    "data_value": "zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60}), {\"delimiter\":\"#\"})",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
 
 ### 阶段 5：最终校验
 
@@ -180,7 +213,8 @@ BASE 引用（首次出现顺序）：
 `FAIL`
 
 边界：仅规则校验，不代表引擎执行结果。
-````
+
+
 
 ### Assertion results
 

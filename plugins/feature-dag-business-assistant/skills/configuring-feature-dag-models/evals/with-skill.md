@@ -248,20 +248,20 @@ Post-review r1 omitted the deterministic length addition. Post-review r2 applies
 ```text
 ### 阶段 1：语法受理
 
-状态：通过  
-原始输入：`future_transform(base_a)`  
-规范化输入：`future_transform(base_a)`  
+状态：通过
+原始输入：`future_transform(base_a)`
+规范化输入：`future_transform(base_a)`
 说明：未发现字符串外的 `\_`，两份输入完全相同。分隔符审计：在偏移 16 处压入 `(`，在偏移 23 处由 `)` 闭合；偏移 24 到达不可变边界 `<EOF>` 时栈为空，无尾随字符。
 
 ### 阶段 2：BASE 发现
 
-状态：通过  
+状态：通过
 BASE 引用（首次出现顺序）：`base_a`
 
 ### 阶段 3：BASE 补全
 
-待确认事实：无。  
-冲突：无。  
+待确认事实：无。
+冲突：无。
 新增属性：`base_a` 尚未提供可达 BASE 必需的 `to_use=true`：
 
 ```json
@@ -278,8 +278,8 @@ BASE 引用（首次出现顺序）：`base_a`
 
 ### 阶段 4：DERIVED 补全
 
-语义状态：信息不完整  
-说明：`future_transform` 没有可用的语义契约。这不表示该算子未注册或非法，但目前无法推断 `future_output` 的输出声明。  
+语义状态：信息不完整
+说明：`future_transform` 没有可用的语义契约。这不表示该算子未注册或非法，但目前无法推断 `future_output` 的输出声明。
 待确认事实：请提供 `future_transform` 的语义契约，或直接确认 `future_output` 的 `type`、`value_shape`、`entity_scopes` 和 `seq_max_length`。
 
 `future_output` 当前可确定的新增属性为：

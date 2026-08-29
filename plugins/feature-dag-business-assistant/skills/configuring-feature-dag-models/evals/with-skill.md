@@ -1,6 +1,6 @@
-# Skill-enabled behavioral evaluation
+# Historical pre-protocol behavioral evaluation
 
-Final post-review fresh-context evidence. The earlier reachable-only r1 omission is historical RED; r2 contains the minimal deterministic fix.
+These raw outputs predate deterministic conversation protocol 1.0. They remain regression evidence for expression, completion, and reachability semantics, but their Markdown response shapes are no longer the current output contract. The earlier reachable-only r1 omission is historical RED; r2 contains the earlier semantic fix.
 
 ## syntax-stop
 

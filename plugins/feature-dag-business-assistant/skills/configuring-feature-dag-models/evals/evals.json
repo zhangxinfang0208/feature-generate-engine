@@ -2,6 +2,16 @@
   "skill": "configuring-feature-dag-models",
   "cases": [
     {
+      "id": "missing-expression-entry",
+      "purpose": "A generic invocation without an expression must still enter the deterministic protocol.",
+      "prompt": "请帮我配置一个 Feature DAG 衍生特征。",
+      "assertions": [
+        "Returns the complete protocol 1.0 JSON envelope instead of echoing free text",
+        "Uses current_stage SYNTAX_INTAKE with syntax status PENDING and later stages SKIPPED",
+        "Requests EXPRESSION_INPUT with the fixed question and exact expression input shape"
+      ]
+    },
+    {
       "id": "syntax-stop",
       "purpose": "A missing closing parenthesis must stop before BASE metadata work.",
       "prompt": "请只校验这个表达式是否存在少括号等语法问题：zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {\"delimiter\":\"#\"}",
@@ -41,6 +51,19 @@
         "Semantic result is incomplete because future_transform has no contract",
         "Does not claim the operator is registered or illegal",
         "Adds only deterministic output_policy=OUTPUT and to_use=true properties, does not invent DERIVED type, shape, scope, or maximum length, and does not enter final validation without a wrapper"
+      ]
+    },
+    {
+      "id": "deterministic-conversation-protocol",
+      "purpose": "Every host must use the same protocol envelope and one fixed next-request question.",
+      "prompt": "请校验表达式 add(user_score, 1)。衍生特征名 target_score；user_score 已配置 definition_type=BASE,type=INT,value_shape=SCALAR,entity_scopes=[USER],seq_max_length=1,to_use=true。",
+      "assertions": [
+        "Returns exactly one parseable JSON object with no Markdown or prose outside it",
+        "Uses protocol_version 1.0 and the canonical top-level key order",
+        "Includes all six stage objects in canonical order and marks unexecuted stages SKIPPED",
+        "Uses exactly one allowed next_request with the fixed verbatim question",
+        "Groups every frontend addition by feature_name and feature_kind and preserves exact five-key properties",
+        "After a gated FAIL with actionable issues or additions, requests MODEL_CORRECTION instead of NONE"
       ]
     }
   ]

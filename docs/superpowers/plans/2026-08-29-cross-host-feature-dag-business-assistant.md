@@ -407,6 +407,8 @@ Define `PASS`, `FAIL`, and `INCOMPLETE`, with each issue containing `stage`, opt
 
 - [ ] **Step 6: Run static checks for core references**
 
+Final review correction: syntax evidence must show mechanically identical original/normalized expressions when no external `\_` occurs; `<EOF>` is audit-only. `feature-fields.md` must state complete BASE/DERIVED declarations, and final validation is gated on a named target plus the complete wrapper. Reachable declaration/reference/conflict/duplicate/cycle errors take FAIL precedence over INCOMPLETE; unknown operator contracts remain INCOMPLETE. Frontend LIST remains uppercase with serialized string data.
+
 Run:
 
 ```powershell
@@ -554,7 +556,7 @@ Do not provide assertions, baseline conclusions, or proposed fixes to the evalua
 
 - [ ] **Step 2: Record outputs and assertion evidence**
 
-Create `evals/with-skill.md` with the same literal case headings and evidence sections as `baseline.md`. Add `### Comparison with baseline` under every case, followed by an `Improved:` bullet naming the specific changed behavior and a `Regressed:` bullet naming a regression or the exact text `None observed`.
+Create `evals/with-skill.md` with the same literal case headings and evidence sections as `baseline.md`. Add `### Comparison with baseline` under every case, followed by an `Improved:` bullet naming the specific changed behavior and a `Regressed:` bullet naming a regression or the exact text `None observed`. After the Task 6 correction loop, historical raw outputs are not sufficient: fresh contexts must mechanically preserve syntax input, mark reachable-only `FAIL` for missing target length while ignoring unrelated entries, and keep unknown-operator completion `INCOMPLETE` without a wrapper while adding deterministic output fields.
 
 - [ ] **Step 3: Apply minimal GREEN/REFACTOR corrections**
 
@@ -580,7 +582,7 @@ foreach ($id in @('syntax-stop','extract-and-do-not-guess','reachable-only','unk
 }
 ```
 
-Expected: command exits successfully.
+Expected after fresh post-correction reruns: command exits successfully with no failed assertion bullets. Before those reruns, the evidence file must explicitly identify historical raw outputs as pending rather than presenting them as final proof.
 
 - [ ] **Step 5: Commit the verified skill behavior**
 

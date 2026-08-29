@@ -1,49 +1,49 @@
 # Skill-enabled behavioral evaluation
 
-Evaluator contexts used the shared Skill and only routed references. Syntax evidence is fresh high-reasoning `gpt-5.6-sol`; earlier `gpt-5.6-terra` contexts auto-repaired malformed input, so this does not claim cross-model determinism.
+Final post-review fresh-context evidence. The earlier reachable-only r1 omission is historical RED; r2 contains the minimal deterministic fix.
 
 ## syntax-stop
 
 ### Raw output
 
 ```text
-阶段 1｜语法校验：失败
+校验结果：**存在语法问题**。
 
-- 表达式：`zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {"delimiter":"#"})`
-- EOF 审计副本：`zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {"delimiter":"#"}<EOF>`
-- 分隔符审计：字符串外 `(` 共 3 个、`)` 共 2 个；`{` 和 `}` 各 1 个。
-- 输入末尾（字符偏移 91，按 0 起算）的未闭合栈：`zip_concat@0`。
-- 错误：输入末尾缺少 `)`；外层调用 `zip_concat` 未闭合。
+- 原始输入：`zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {"delimiter":"#"}`
+- 规范化输入：`zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {"delimiter":"#"}`
 
-仅校验了语法，未继续检查 BASE、类型、作用域或执行语义。
+在第 92 个字符位置（`<EOF>`，即输入末尾）仍有一个未闭合的 `(`，它对应 `zip_concat` 后第 11 个字符位置的左括号。因此表达式末尾少一个右括号 `)`。
 ```
 
 ### Assertion results
 
-- PASS — Declares syntax invalid.
-- PASS — Identifies the unclosed outer `zip_concat` call at end of input.
-- PASS — Does not ask for BASE configuration and stops after syntax.
+- PASS — Declares syntax invalid and shows exact original and normalized input.
+- PASS — Identifies the unclosed call near the end.
+- PASS — Does not ask for BASE configuration or continue to later stages.
 
 ### Observed failure pattern
 
-Earlier terra contexts appended a closing `)` and incorrectly passed this malformed input. The fresh Sol context preserved the exact input and stopped at syntax.
+Earlier contexts repaired malformed input by appending `)`. The final context preserved both inputs exactly and stopped at syntax.
 
 ### Comparison with baseline
 
-- Improved: preserves the submitted input with an immutable EOF marker, audits the original delimiter stream, and stops before BASE work.
+- Improved: no repair, exact input preservation, and no BASE work after syntax failure.
 - Regressed: None observed.
 
 ## extract-and-do-not-guess
 
 ### Raw output
 
+```text
 ### 阶段 1：语法受理
 
 状态：通过
 
-表达式：`zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {"direction":"BASE_MINUS_ELEMENT","divisor":60}), {"delimiter":"#"})`
+原始输入：`zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {"direction":"BASE_MINUS_ELEMENT","divisor":60}), {"delimiter":"#"})`
 
-说明：字符串外未发现 `\_`，表达式未改动。已审计完整字符流：长度 645，在偏移 645 到达不可变 `<EOF>`；10 对圆括号、2 对花括号均闭合，分隔符栈为空，无尾随 token。
+规范化输入：`zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {"direction":"BASE_MINUS_ELEMENT","divisor":60}), {"delimiter":"#"})`
+
+说明：没有字符串外的 `\_`，两份输入完全相同。逐字符扫描到不可变边界 `<EOF>` 时，圆括号、花括号和引号均已闭合，分隔符栈为 `[]`，无尾随 token。
 
 ### 阶段 2：BASE 发现
 
@@ -60,120 +60,66 @@ BASE 引用（首次出现顺序）：
 
 ### 阶段 3：BASE 补全
 
+以下 6 个 BASE 均可新增这两个确定属性：
+
+```json
+[
+  {
+    "raw_name": "definition_type",
+    "data_value": "BASE",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "to_use",
+    "data_value": "true",
+    "data_type": "BOOLEAN",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
+
 待确认事实：
 
-- `auid_hwdsp_clk_crtv_clstid_seq_time_365d`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`。
-- `auid_hwdsp_clk_norm_tag1id_seq_time_365d`：`value_shape`、`entity_scopes`。已有 `type=STRING`、`seq_max_length=365`。
-- `normalized_tag1_id_h`：`type`、`value_shape`、`entity_scopes`。已有 `seq_max_length=1` 不能据此推断 `SCALAR`。
-- `auid_hwdsp_clk_slotid_seq_time_365d`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`。
-- `timestamp_s`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`。
-- 为保证表达式可靠运行，三个被切片的业务序列、被搜索序列和时间序列需要由业务确认其序列语义；`timestamp_s` 需要确认数值标量语义。这里不从名称或表达式反推 BASE 声明。
+- `auid_hwdsp_clk_crtv_clstid_seq_time_365d`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`
+- `auid_hwdsp_clk_norm_tag1id_seq_time_365d`：`value_shape`、`entity_scopes`
+- `normalized_tag1_id_h`：`type`、`value_shape`、`entity_scopes`
+- `auid_hwdsp_clk_slotid_seq_time_365d`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`
+- `timestamp_s`：`type`、`value_shape`、`entity_scopes`、`seq_max_length`
 
 冲突：
 
-- `auid_hwdsp_clk_ts_seq_time_365d.value_shape` 现为 `SCALAR`，但它作为 `slice_by_indices` 的源序列，可靠运行要求 `SEQUENCE`。该字段须人工改正；按规则不生成覆盖属性。
+- `auid_hwdsp_clk_ts_seq_time_365d` 当前为 `value_shape=SCALAR`，但它在 `slice_by_indices` 中作为源序列使用，可靠配置要求 `SEQUENCE`。该字段必须由业务人工修正，不能用新增属性覆盖。
 
-新增属性：
-
-以下按你列出的现有字段中均没有 `definition_type` 处理。若前台尚无对应条目，先创建同名 BASE 条目；每个条目分别粘贴：
-
-`auid_hwdsp_clk_crtv_clstid_seq_time_365d`
-
-```json
-[
-  {
-    "raw_name": "definition_type",
-    "data_value": "BASE",
-    "data_type": "STRING",
-    "default_value": "",
-    "required": "true"
-  }
-]
-```
-
-`auid_hwdsp_clk_norm_tag1id_seq_time_365d`
-
-```json
-[
-  {
-    "raw_name": "definition_type",
-    "data_value": "BASE",
-    "data_type": "STRING",
-    "default_value": "",
-    "required": "true"
-  }
-]
-```
-
-`normalized_tag1_id_h`
-
-```json
-[
-  {
-    "raw_name": "definition_type",
-    "data_value": "BASE",
-    "data_type": "STRING",
-    "default_value": "",
-    "required": "true"
-  }
-]
-```
-
-`auid_hwdsp_clk_slotid_seq_time_365d`
-
-```json
-[
-  {
-    "raw_name": "definition_type",
-    "data_value": "BASE",
-    "data_type": "STRING",
-    "default_value": "",
-    "required": "true"
-  }
-]
-```
-
-`auid_hwdsp_clk_ts_seq_time_365d`
-
-```json
-[
-  {
-    "raw_name": "definition_type",
-    "data_value": "BASE",
-    "data_type": "STRING",
-    "default_value": "",
-    "required": "true"
-  }
-]
-```
-
-`timestamp_s`
-
-```json
-[
-  {
-    "raw_name": "definition_type",
-    "data_value": "BASE",
-    "data_type": "STRING",
-    "default_value": "",
-    "required": "true"
-  }
-]
-```
+未提供的 BASE 不能根据名称或表达式猜测类型、形状、实体域和长度；其 feature 条目及 `name` 也需要在前台存在。
 
 ### 阶段 4：DERIVED 补全
 
 语义状态：信息不完整
 
-待确认事实：未提供 DERIVED 特征名；`entity_scopes` 需由全部 BASE 实体域取并集。由于多个源序列的长度、形状和索引合法性信息缺失，且时间序列存在形状冲突，不能输出 DERIVED 的 `seq_max_length`。
-
-新增属性：以下是新建 DERIVED 条目后可直接粘贴的确定字段；不包含猜测字段。
+DERIVED 名称尚未提供。下面是当前能够确定、可粘贴到该 DERIVED 条目的新增属性：
 
 ```json
 [
   {
     "raw_name": "definition_type",
     "data_value": "DERIVED",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "expression",
+    "data_value": "zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60}), {\"delimiter\":\"#\"})",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "output_policy",
+    "data_value": "OUTPUT",
     "data_type": "STRING",
     "default_value": "",
     "required": "true"
@@ -193,43 +139,40 @@ BASE 引用（首次出现顺序）：
     "required": "true"
   },
   {
-    "raw_name": "expression",
-    "data_value": "zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60}), {\"delimiter\":\"#\"})",
-    "data_type": "STRING",
+    "raw_name": "to_use",
+    "data_value": "true",
+    "data_type": "BOOLEAN",
     "default_value": "",
     "required": "true"
   }
 ]
 ```
 
-### 阶段 5：最终校验
+尚不能生成：
 
-范围：尚未命名的目标及上述表达式直接可达依赖。
+- `entity_scopes`：多个可达 BASE 的实体域未知。
+- `seq_max_length`：`slice_by_indices` 和 `zip_concat` 的长度闸门未满足，且时间序列 BASE 存在形状冲突，不能用已知的 `365` 猜测。
+- DERIVED `name`：这是特征身份，不属于前台属性新增。
+- 最终模型包装：仍缺 DERIVED 名称、`feature_set_name`、`version` 和完整 `features`。
 
-结果：未发现兼容的远程校验器，已执行规则校验回退。当前为 `FAIL`：`auid_hwdsp_clk_ts_seq_time_365d.value_shape=SCALAR` 与其序列用途冲突；此外，DERIVED 名称及多项 BASE 必填事实仍不完整。
+因此本轮不进入最终校验，也不产生 `PASS`、`FAIL` 或最终验证结论。
 
-### 阶段 6：结论
-
-`FAIL`
-
-边界：仅规则校验，不代表引擎执行结果。
-
-
+```
 
 ### Assertion results
 
 - PASS — Lists exactly six BASE names in first-seen order.
-- PASS — Does not treat operator names, object keys, or string literals as BASE features.
-- PASS — Reports the existing timestamp `value_shape` conflict without emitting an overwrite property.
-- PASS — Asks for unknown type/length and does not guess a derived maximum from the single known `365`.
+- PASS — Excludes operators, object keys, and string literals.
+- PASS — Reports the existing shape conflict without an overwrite property.
+- PASS — Asks for unknown type/length instead of guessing.
 
 ### Observed failure pattern
 
-Earlier runs guessed metadata and overwrote the supplied timestamp shape; the accepted fresh run preserves uncertainty, reports the conflict, and applies the slice/zip length completeness gate.
+Earlier evidence guessed derived length and omitted deterministic BASE/DERIVED additions. The final context preserves unknown facts while emitting only deterministic fields.
 
 ### Comparison with baseline
 
-- Improved: first-seen extraction is complete; uncertainty and conflicts remain visible; the derived length gate prevents the earlier guessed `365` output.
+- Improved: exact six-reference extraction, conflict handling, deterministic additions, and no Stage 5 without wrapper.
 - Regressed: None observed.
 
 ## reachable-only
@@ -239,30 +182,63 @@ Earlier runs guessed metadata and overwrote the supplied timestamp shape; the ac
 ```text
 ### 阶段 5：最终校验
 
-范围：目标 `target_score` 及其递归可达依赖（`target_score` → `user_score`）
+范围：目标 `target_score` 及其递归可达依赖，即 `target_score` → `user_score`
 
-结果：规则校验 `PASS`。当前没有兼容的远程校验器，因此已回退至规则校验。可达子图中的声明、引用、类型、形状、实体域及 `to_use` 均一致；不存在缺失依赖、重复名称或依赖环。`unrelated_broken` 不可达，因此不影响本次结果。
+校验方式：兼容的远程校验器不可用，已执行规则校验回退。
+
+结果：规则校验失败。
+
+问题：
+
+```json
+[
+  {
+    "stage": "最终校验",
+    "feature": "target_score",
+    "field": "seq_max_length",
+    "message": "可达 DERIVED 特征缺少必填字段 seq_max_length；根据 add 算子契约，该字段应为 1。"
+  }
+]
+```
+
+新增属性：
+
+```json
+[
+  {
+    "raw_name": "seq_max_length",
+    "data_value": 1,
+    "data_type": "NUMBER",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
+
+`add(user_score, 1)` 推断为 `INT` / `SCALAR`、实体域 `USER`、`seq_max_length=1`，其余已有声明一致。`unrelated_broken` 不在目标的递归可达子图内，即使其表达式格式错误，也不影响本次目标校验。
 
 ### 阶段 6：结论
 
-PASS
+FAIL
 
 边界：仅规则校验，不代表引擎执行结果。
 ```
 
 ### Assertion results
 
-- PASS — Evaluates only `target_score` and `user_score`.
-- PASS — Does not fail on malformed unreachable `unrelated_broken`.
-- PASS — Labels the result as rule validation only and states the boundary.
+- PASS — Evaluates only target_score and user_score.
+- PASS — Does not fail because unrelated_broken is malformed and unreachable.
+- PASS — Reports FAIL for the missing reachable target field.
+- PASS — Emits the exact five-key NUMBER addition with unquoted numeric data_value 1.
+- PASS — Labels the result as rule validation only.
 
 ### Observed failure pattern
 
-An earlier run scoped validation correctly but omitted the rule-validation-only qualification. The accepted fresh run includes that boundary explicitly.
+Post-review r1 omitted the deterministic length addition. Post-review r2 applies the minimal `add` contract fix while retaining FAIL for the incomplete declaration.
 
 ### Comparison with baseline
 
-- Improved: makes the rule-validation-only boundary explicit while retaining target-rooted reachability.
+- Improved: target-rooted reachability, unrelated-entry isolation, fixed numeric addition, and correct FAIL precedence.
 - Regressed: None observed.
 
 ## unknown-operator-incomplete
@@ -270,29 +246,43 @@ An earlier run scoped validation correctly but omitted the rule-validation-only 
 ### Raw output
 
 ```text
-阶段 1：语法受理
+### 阶段 1：语法受理
 
-状态：通过
-表达式：`future_transform(base_a)<EOF>`（`<EOF>` 仅显示边界，不是语法输入。）
-说明：原表达式不含可规范化的 `\_`，规范化输入保持不变。字符串外分隔符审计结果：`(` = 1、`)` = 1、`[` = 0、`]` = 0、`{` = 0、`}` = 0；剩余开启符：无；输入末尾未闭合栈为空。完整语法解析通过，未自动修复输入。
+状态：通过  
+原始输入：`future_transform(base_a)`  
+规范化输入：`future_transform(base_a)`  
+说明：未发现字符串外的 `\_`，两份输入完全相同。分隔符审计：在偏移 16 处压入 `(`，在偏移 23 处由 `)` 闭合；偏移 24 到达不可变边界 `<EOF>` 时栈为空，无尾随字符。
 
-阶段 2：BASE 发现
+### 阶段 2：BASE 发现
 
-状态：通过
+状态：通过  
 BASE 引用（首次出现顺序）：`base_a`
 
-阶段 3：BASE 补全
+### 阶段 3：BASE 补全
 
-待确认事实：无。
-冲突：无。`base_a` 已具备 `definition_type=BASE`、`type=STRING`、`value_shape=SCALAR`、`entity_scopes=[USER]`、`seq_max_length=1`，声明内部一致。
-新增属性：`[]`
+待确认事实：无。  
+冲突：无。  
+新增属性：`base_a` 尚未提供可达 BASE 必需的 `to_use=true`：
 
-阶段 4：DERIVED 补全
+```json
+[
+  {
+    "raw_name": "to_use",
+    "data_value": "true",
+    "data_type": "BOOLEAN",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
 
-语义状态：信息不完整
-待确认事实：当前没有 `future_transform` 的可用语义契约，无法校验其参数约束，也不能推断 `future_output` 的 `type`、`value_shape`、`entity_scopes` 和 `seq_max_length`。请提供该算子的签名与参数约束、输出类型和形状、实体域传播规则及最大长度公式；这不表示该算子未注册或非法。
+### 阶段 4：DERIVED 补全
 
-目前可确定的新增属性：
+语义状态：信息不完整  
+说明：`future_transform` 没有可用的语义契约。这不表示该算子未注册或非法，但目前无法推断 `future_output` 的输出声明。  
+待确认事实：请提供 `future_transform` 的语义契约，或直接确认 `future_output` 的 `type`、`value_shape`、`entity_scopes` 和 `seq_max_length`。
+
+`future_output` 当前可确定的新增属性为：
 
 ```json
 [
@@ -311,6 +301,13 @@ BASE 引用（首次出现顺序）：`base_a`
     "required": "true"
   },
   {
+    "raw_name": "output_policy",
+    "data_value": "OUTPUT",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
     "raw_name": "to_use",
     "data_value": "true",
     "data_type": "BOOLEAN",
@@ -320,44 +317,22 @@ BASE 引用（首次出现顺序）：`base_a`
 ]
 ```
 
-在语义契约补齐前，不生成 `type`、`value_shape`、`entity_scopes` 或 `seq_max_length` 属性，以免猜测业务语义。
-
-阶段 5：最终校验
-
-范围：目标 `future_output` 及其递归可达依赖 `base_a`
-结果：当前无兼容远程校验器可用，已执行规则校验回退；结果为 `INCOMPLETE`。
-
-```json
-{
-  "verdict": "INCOMPLETE",
-  "issues": [
-    {
-      "stage": "DERIVED completion",
-      "feature": "future_output",
-      "message": "Operator semantic contract for future_transform is unavailable; output declarations cannot be inferred."
-    }
-  ]
-}
-```
-
-阶段 6：结论
-
-`INCOMPLETE`
-边界：仅规则校验，不代表引擎执行结果。
+`name=future_output` 是特征标识，不作为新增属性输出。由于缺少完整模型包装，本轮不进入最终校验阶段。
 ```
 
 ### Assertion results
 
-- PASS — Initial syntax passes.
-- PASS — Semantic result is incomplete because `future_transform` has no contract.
+- PASS — Initial syntax passes with exact original/normalized input.
+- PASS — Semantic result is incomplete because future_transform has no contract.
 - PASS — Does not claim the operator is registered or illegal.
-- PASS — Does not invent derived type, shape, scope, or maximum length.
+- PASS — Adds only deterministic output_policy=OUTPUT and to_use=true plus identity/expression; does not invent type, shape, scope, or length.
+- PASS — Does not enter Stage 5 without a complete wrapper.
 
 ### Observed failure pattern
 
-An earlier run conflated an unknown operator’s missing contract with a registry failure and skipped the successful syntax phase. The accepted fresh run records syntax success, remains neutral, and shows the complete confirmed property array.
+Earlier evidence omitted deterministic DERIVED fields or treated an unknown operator as illegal. The final context reports INCOMPLETE and asks only for unresolved semantics.
 
 ### Comparison with baseline
 
-- Improved: separates successful syntax from incomplete semantics, remains neutral about registration/legal status, and records the exact property-object shape.
+- Improved: deterministic additions, explicit unknown-contract boundary, and completion-stage stop.
 - Regressed: None observed.

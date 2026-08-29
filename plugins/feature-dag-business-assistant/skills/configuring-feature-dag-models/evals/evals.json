@@ -29,7 +29,7 @@
       "assertions": [
         "Evaluates only target_score and user_score",
         "Does not fail because unrelated_broken has malformed syntax",
-        "Labels success as rule validation only"
+        "Reports FAIL because reachable target_score is missing seq_max_length, emits a five-key NUMBER addition with unquoted data_value 1 from add(...), and ignores malformed unrelated_broken"
       ]
     },
     {
@@ -40,7 +40,7 @@
         "Initial syntax passes",
         "Semantic result is incomplete because future_transform has no contract",
         "Does not claim the operator is registered or illegal",
-        "Does not invent DERIVED type, shape, scope, or maximum length"
+        "Adds only deterministic output_policy=OUTPUT and to_use=true properties, does not invent DERIVED type, shape, scope, or maximum length, and does not enter final validation without a wrapper"
       ]
     }
   ]

@@ -5,7 +5,8 @@ Use these Chinese phase templates in order; omit future phases after a syntax fa
 ```text
 ### 阶段 1：语法受理
 状态：通过 | 失败
-表达式：`...`
+原始输入：`...`
+规范化输入：`...`
 说明：...（失败时包含偏移位置，并注明“本轮不进入 BASE 发现或元数据阶段”。）
 
 ### 阶段 2：BASE 发现
@@ -30,6 +31,22 @@ BASE 引用（首次出现顺序）：`...`
 PASS | FAIL | INCOMPLETE
 边界：仅规则校验，不代表引擎执行结果。
 ```
+
+`原始输入` 和 `规范化输入` 必须分别展示。没有字符串外 `\_` 时两者逐字相同；字符串外发生规范化时只复制替换 `\_`，不增删其他字符。`<EOF>` 只能单独出现在分隔符审计说明中，不能出现在任一表达式字段。语法失败不得继续 BASE 或最终校验，也不得通过补括号、补逗号或其他方式修复输入。
+
+## Final validation gate and verdict precedence
+
+Stage 5 starts only when the business supplied both a named target and the complete wrapper below. Without either, stop in completion, request the missing item, and do not report remote or rule-validator PASS/FAIL.
+
+```json
+{
+  "feature_set_name": "...",
+  "version": "...",
+  "features": []
+}
+```
+
+For a gated wrapper, inspect only the target's reachable subgraph. Verdict precedence is: `FAIL` for any reachable missing/invalid declaration, missing reference, conflict, duplicate definition, or cycle; otherwise `INCOMPLETE` for an unavailable required fact or operator contract; `PASS` only when the reachable graph is complete and consistent. Before returning `FAIL`, still emit additions for missing fields whose values are fixed by a known contract. In particular, `add(...)` produces scalar `seq_max_length=1`; its addition is a `NUMBER` property whose JSON `data_value` is the unquoted number `1`. Unreachable malformed entries do not affect the result. A rule fallback is labeled `规则校验通过`, never as a remote result.
 
 ## Frontend additions
 

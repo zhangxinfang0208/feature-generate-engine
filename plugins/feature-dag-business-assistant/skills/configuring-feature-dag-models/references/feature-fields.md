@@ -6,6 +6,10 @@
 
 Every BASE feature needs `definition_type=BASE`, `type`, `value_shape`, `entity_scopes`, and `seq_max_length`. Do not infer any unresolved BASE fact from a name or expression: ask the business user even when asked not to ask questions. `dft` is optional, but when present it must be compatible with the declared type and shape.
 
+Every DERIVED feature needs the complete declaration `name`, `definition_type=DERIVED`, `expression`, `output_policy=OUTPUT`, `type`, `value_shape`, `entity_scopes`, `seq_max_length`, and `to_use=true`. `name` is the feature identity and is not a frontend property addition. `output_policy=OUTPUT` and `to_use=true` are deterministic additions when absent; unresolved operator semantics must not be used to invent type, shape, scope, or length. For a reachable BASE, `to_use=true` is also required; an existing `to_use=false` is a conflict.
+
+During final validation, a missing reachable field is still a declaration defect and makes the verdict `FAIL`. Before returning that verdict, fill every missing field that the available operator contract determines exactly. For example, `add(...)` has scalar output and fixed `seq_max_length=1`; emit its absent `seq_max_length` as a five-key `NUMBER` property with numeric `data_value` `1` (without quotes). Ask the business only when the contract or required inputs do not determine the value.
+
 Supported business data types are `INT`, `BIGINT`, `DOUBLE`, `STRING`, `BOOLEAN`, `OBJECT`, and `EVENT_SEQUENCE`. `UNKNOWN` is not a completed declaration; it means the fact remains unresolved. Ordinary business inputs use `SCALAR` or `SEQUENCE`; `EVENT_SEQUENCE` requires `SEQUENCE`. Scopes are `USER`, `SCENE`, and `ITEM`. Compare a declared DERIVED scope as an exact set, ignoring order and duplicates, against its inferred scope.
 
 `seq_max_length` must be positive for every sequence. A sequence may validly have maximum length `1`; therefore a length of `1` never substitutes for an explicit `value_shape`. For compatible declared and inferred numeric output types, only safe widening is allowed: `INT -> BIGINT -> DOUBLE`.
@@ -27,3 +31,5 @@ The final model wrapper is exactly:
 ```
 
 Validation does not audit the other 21 operators or unrelated model entries. A syntax-valid operator without an available semantic contract is `INCOMPLETE`; do not call it unregistered or illegal.
+
+Final validation is gated: do not enter Stage 5 or invoke a remote/rule validator until the business provides a named target and a complete wrapper with `feature_set_name`, `version`, and `features`. Partial BASE/DERIVED configuration remains in the completion stages and must request the missing wrapper. Once gated, verdict precedence is `FAIL` for a reachable missing/invalid declaration, missing reference, conflict, duplicate, or cycle; otherwise `INCOMPLETE` for an unavailable required fact or operator contract; only a complete reachable graph can be `PASS`.

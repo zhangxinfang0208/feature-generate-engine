@@ -3,33 +3,68 @@
   "cases": [
     {
       "id": "missing-expression-entry",
-      "purpose": "A generic invocation without an expression must still enter the deterministic protocol.",
+      "purpose": "A generic invocation asks for an expression with one short business-facing example.",
       "prompt": "请帮我配置一个 Feature DAG 衍生特征。",
       "assertions": [
-        "Returns the complete protocol 1.0 JSON envelope instead of echoing free text",
-        "Uses current_stage SYNTAX_INTAKE with syntax status PENDING and later stages SKIPPED",
-        "Requests EXPRESSION_INPUT with the fixed question and exact expression input shape"
+        "Returns concise Chinese text rather than a protocol JSON envelope",
+        "Asks only for the expression",
+        "Includes one directly editable expression reply example"
       ]
     },
     {
       "id": "syntax-stop",
-      "purpose": "A missing closing parenthesis must stop before BASE metadata work.",
-      "prompt": "请只校验这个表达式是否存在少括号等语法问题：zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {\"delimiter\":\"#\"}",
+      "purpose": "A missing closing parenthesis stops before BASE configuration intake.",
+      "prompt": "请校验表达式：zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {\"delimiter\":\"#\"}",
       "assertions": [
-        "Declares syntax invalid",
-        "Identifies the unclosed call near the end",
-        "Does not ask for BASE configuration"
+        "Declares syntax invalid and identifies the unclosed call near the end",
+        "Does not repair the expression",
+        "Does not ask for BASE configuration or individual BASE fields"
+      ]
+    },
+    {
+      "id": "base-config-before-facts",
+      "purpose": "After syntax succeeds, current BASE frontend configuration is mandatory before field questions.",
+      "prompt": "表达式：add(user_score, 1)。目前还没有提供任何 BASE 特征配置。",
+      "assertions": [
+        "Lists user_score as the only BASE feature",
+        "Asks the business to copy its current frontend configuration and preserve all existing fields",
+        "Shows the features wrapper example",
+        "Does not ask for type, value_shape, entity, entity_scopes, or seq_max_length yet",
+        "Does not infer values, generate additions, invent a DERIVED name, or create a complete model"
+      ]
+    },
+    {
+      "id": "assignment-shorthand",
+      "purpose": "A business assignment shorthand supplies the DERIVED name without becoming expression syntax.",
+      "prompt": "ecpm_ctr_ratio_with_floor=log_base(min(div(slot_avg_click_bid_ecpm_3d, auid_slot_ctr_90d), 50000), 2, 16)",
+      "assertions": [
+        "Treats ecpm_ctr_ratio_with_floor as the DERIVED feature name",
+        "Parses only the right-hand expression and declares syntax valid",
+        "Lists slot_avg_click_bid_ecpm_3d and auid_slot_ctr_90d as BASE features in first-seen order",
+        "Requests their current frontend configuration before asking individual fields"
+      ]
+    },
+    {
+      "id": "base-facts-after-config",
+      "purpose": "Only after every current BASE entry arrives, request all unresolved facts grouped by feature.",
+      "prompt": "衍生特征 target_seq 的表达式：zip_concat(user_seq, other_seq, {\"delimiter\":\"#\"})。这是用于 BASE 信息检查的前台全量当前配置，不是最终模型提交：{\"feature_set_name\":\"all_features\",\"version\":\"1\",\"features\":[{\"name\":\"unrelated_broken\",\"definition_type\":\"DERIVED\",\"expression\":\"bad(\"},{\"name\":\"user_seq\",\"seq_max_length\":365},{\"name\":\"other_seq\",\"definition_type\":\"BASE\",\"type\":\"STRING\",\"value_shape\":\"SEQUENCE\",\"entity_scopes\":[\"USER\"],\"seq_max_length\":365,\"to_use\":true}]}。",
+      "assertions": [
+        "States that BASE information was checked",
+        "For user_seq, lists type, value_shape, and entity_scopes as missing business facts",
+        "Provides one editable per-feature text reply example using type, value_shape, and entity labels",
+        "Does not ask again for other_seq fields or emit guessed answers",
+        "Ignores unrelated_broken from the full configuration"
       ]
     },
     {
       "id": "extract-and-do-not-guess",
-      "purpose": "Extract six BASE refs, report an existing conflict, and refuse to guess missing metadata under pressure.",
-      "prompt": "请处理下面的表达式并马上给我可复制到前台的配置，不要向我追问。表达式：zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60}), {\"delimiter\":\"#\"})。已知配置：auid_hwdsp_clk_norm_tag1id_seq_time_365d type=STRING、seq_max_length=365，缺 definition_type/value_shape/entity_scopes；normalized_tag1_id_h 的 type 为空、seq_max_length=1，缺 definition_type/value_shape/entity_scopes；auid_hwdsp_clk_ts_seq_time_365d type=BIGINT、value_shape=SCALAR、seq_max_length=365、entity_scopes=[USER]；其余三个 BASE 尚未提供。",
+      "purpose": "Extract six BASE refs, request missing current entries first, and refuse guessed metadata under pressure.",
+      "prompt": "请处理下面的表达式并马上给我可复制到前台的配置，不要向我追问。表达式：zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60}), {\"delimiter\":\"#\"})。只提供了 auid_hwdsp_clk_norm_tag1id_seq_time_365d、normalized_tag1_id_h 和 auid_hwdsp_clk_ts_seq_time_365d 的当前配置，其余尚未提供。",
       "assertions": [
-        "Lists exactly six BASE names in first-seen order",
-        "Does not treat operator names, object keys, or string literals as BASE features",
-        "Reports existing value_shape conflict without emitting an overwrite property",
-        "Asks for unknown type or length instead of guessing"
+        "Lists exactly auid_hwdsp_clk_crtv_clstid_seq_time_365d, auid_hwdsp_clk_slotid_seq_time_365d, and timestamp_s as the three missing BASE entries in first-seen order",
+        "Does not treat operator names, object keys, or literals as BASE features",
+        "Requests current frontend configuration before asking any fields",
+        "Does not guess or generate a complete model"
       ]
     },
     {
@@ -39,31 +74,29 @@
       "assertions": [
         "Evaluates only target_score and user_score",
         "Does not fail because unrelated_broken has malformed syntax",
-        "Reports FAIL because reachable target_score is missing seq_max_length, emits a five-key NUMBER addition with unquoted data_value 1 from add(...), and ignores malformed unrelated_broken"
+        "Reports FAIL for target_score missing seq_max_length and returns its five-key NUMBER addition with unquoted data_value 1",
+        "Uses the concise final-validation text template"
       ]
     },
     {
       "id": "unknown-operator-incomplete",
       "purpose": "A syntactically valid unknown operator must not receive invented semantics.",
-      "prompt": "衍生特征 future_output 的表达式是 future_transform(base_a)。base_a 已配置 definition_type=BASE、type=STRING、value_shape=SCALAR、entity_scopes=[USER]、seq_max_length=1。请校验表达式并生成衍生特征新增属性。",
+      "prompt": "衍生特征 future_output 的表达式是 future_transform(base_a)。base_a 已配置 definition_type=BASE、type=STRING、value_shape=SCALAR、entity_scopes=[USER]、seq_max_length=1、to_use=true。请生成衍生特征新增属性。",
       "assertions": [
-        "Initial syntax passes",
-        "Semantic result is incomplete because future_transform has no contract",
+        "States that future_transform lacks an available semantic contract and future_output needs business facts",
         "Does not claim the operator is registered or illegal",
-        "Adds only deterministic output_policy=OUTPUT and to_use=true properties, does not invent DERIVED type, shape, scope, or maximum length, and does not enter final validation without a wrapper"
+        "Does not invent type, shape, scope, maximum length, or a final verdict",
+        "Returns deterministic output_policy=OUTPUT and to_use=true additions while requesting the unresolved facts"
       ]
     },
     {
-      "id": "deterministic-conversation-protocol",
-      "purpose": "Every host must use the same protocol envelope and one fixed next-request question.",
-      "prompt": "请校验表达式 add(user_score, 1)。衍生特征名 target_score；user_score 已配置 definition_type=BASE,type=INT,value_shape=SCALAR,entity_scopes=[USER],seq_max_length=1,to_use=true。",
+      "id": "cross-host-business-dialogue",
+      "purpose": "Every host uses the same concise labels, section order, feature grouping, and reply examples.",
+      "prompt": "表达式：add(user_score, 1)。目前还没有提供任何 BASE 特征配置。",
       "assertions": [
-        "Returns exactly one parseable JSON object with no Markdown or prose outside it",
-        "Uses protocol_version 1.0 and the canonical top-level key order",
-        "Includes all six stage objects in canonical order and marks unexecuted stages SKIPPED",
-        "Uses exactly one allowed next_request with the fixed verbatim question",
-        "Groups every frontend addition by feature_name and feature_kind and preserves exact five-key properties",
-        "After a gated FAIL with actionable issues or additions, requests MODEL_CORRECTION instead of NONE"
+        "Returns the BASE current-configuration request template",
+        "Does not expose protocol, stage, or validator implementation fields",
+        "Codex and Claude Code outputs use the same fixed business wording and order"
       ]
     }
   ]

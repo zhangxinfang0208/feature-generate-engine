@@ -21,7 +21,7 @@ Its result verdict is one of:
 - `FAIL`: a syntax, declaration, reachability, cycle, or contract violation is established.
 - `INCOMPLETE`: a required fact or semantic contract is unavailable, so no pass/fail claim is justified.
 
-Place the result inside the deterministic conversation protocol. Return each issue with all five protocol keys; use JSON `null` when feature, field, or offset does not apply:
+Place the result in the final business dialogue. List each issue as one concise line grouped under its feature; keep these internal fields when a structured validator result is available:
 
 ```json
 {
@@ -33,4 +33,4 @@ Place the result inside the deterministic conversation protocol. Return each iss
 }
 ```
 
-If no compatible validator is available, or it fails to run, record that fact in `final_validation.message`, then run the rule-validation workflow with `mode=RULE_FALLBACK` and `boundary=RULE_VALIDATION_ONLY`. Never relabel fallback success as a remote-validator result. Scope either route to the named target and recursively reachable dependencies only.
+If no compatible validator is available, or it fails to run, state that fact briefly, then run the rule-validation workflow and label it `规则校验结果（未调用远程校验器）`. Never relabel fallback success as a remote-validator result. Scope either route to the named target and recursively reachable dependencies only.

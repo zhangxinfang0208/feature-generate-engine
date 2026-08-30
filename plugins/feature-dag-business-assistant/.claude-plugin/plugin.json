@@ -1,7 +1,0 @@
-{
-  "name": "feature-dag-business-assistant",
-  "displayName": "Feature DAG Business Assistant",
-  "version": "0.1.0",
-  "description": "Help business users prepare and validate Feature DAG expressions and model feature metadata.",
-  "skills": "./skills/"
-}

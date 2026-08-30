@@ -1,8 +1,9 @@
 # 标准算子签名与静态校验规则
 
-21 个标准算子的参数个数、入参类型/形状、配置对象和输出推断规则，全部核对自引擎源码
-（`src/main/java/com/example/featuredag/operator/builtin/`）。第 1 步解释脚本报错、
-第 4 步终检逐算子核对时使用本表。
+标准算子的参数个数、入参类型/形状、配置对象和输出推断规则，**唯一维护点是
+[../operators.json](../operators.json)**（核对自引擎源码
+`src/main/java/com/example/featuredag/operator/builtin/`）。第 1 步解释脚本报错、
+第 4 步终检逐算子核对时读该文件；本文只保留语法、类型体系与终检方法。
 
 ## 表达式语法速查（镜像 ExpressionParser）
 
@@ -25,30 +26,21 @@
 
 ## 算子签名表
 
-| 算子 | 参数个数 | 入参要求 | 配置对象（对象字面量） | 输出 |
-|---|---|---|---|---|
-| `discrete` | 2..2 | 参数0：数值标量；参数1：数组字面量，数值严格递增 | — | INT 标量 |
-| `log_base` | 3..3 | value、base、upbound 均数值标量；base>0 且 ≠1，value>0，upbound>0（运行期校验） | — | DOUBLE 标量 |
-| `slice_by_indices` | 2..2 | 参数0：任意类型**序列**；参数1：非负整数索引**序列**（越界/负数运行期报错） | — | 透传参数0：同类型同形状序列 |
-| `find_indices` | 2..2 | 参数0：**序列**；参数1：标量目标值（equals 匹配，类型需与元素一致） | — | INT 序列 |
-| `find_indices_any` | 2..2 | 两个参数都必须是**序列**（参数1为目标值集合，集合语义）；命名参数 `sequence` / `targets` | — | INT 序列 |
-| `get_seq_length` | 1..1 | 序列 | — | INT 标量 |
-| `count_distinct` | 1..1 | 序列 | — | INT 标量 |
-| `zip_concat` | ≥2 | ≥2 个**等长序列**（长度不等运行期报错）；EVENT_SEQUENCE 拒绝 | 末尾可选 `{"delimiter": "#"}` | STRING 序列（逐位拼接） |
-| `concat` | ≥2 | ≥2 个**标量**（序列、对象拒绝） | 末尾可选 `{"delimiter": "#"}` | STRING 标量 |
-| `list_concat` | 2..3 | 参数0、1 均为**序列**，参数1 非空（首元素广播）；EVENT_SEQUENCE 拒绝 | 第 3 参可选 `{"delimiter": "#"}` | STRING 序列 |
-| `hit` | 2..2 | 参数0：EVENT_SEQUENCE 或 Map 序列（元素含 `key`）；参数1：STRING 标量或序列；命名参数 `seq_kv` / `seq_key` | — | 透传参数0 |
-| `group_count_concat` | 1..2 | 参数0：非事件**序列** | 第 2 参可选 `{"delimiter":"#", "order":"FIRST_OCCURRENCE"}`，`order` ∈ `FIRST_OCCURRENCE`（默认）/ `COUNT_DESC` | STRING 序列（`值#次数`） |
-| `calc_delta_seq` | 2..3 | 参数0：数值**序列**（EVENT_SEQUENCE 拒绝）；参数1：数值标量 base | 第 3 参 `{"direction":"BASE_MINUS_ELEMENT","divisor":60,"need_ceil":0}`：`direction` ∈ `ELEMENT_MINUS_BASE` / `BASE_MINUS_ELEMENT`（默认）；`divisor` 数值 >0（默认 1）；`need_ceil` 0/1（默认 0）。**未知键引擎直接报错** | DOUBLE 序列（与输入等长） |
-| `to_int` | 1..1 | 数值或数字字符串；标量→标量，序列→序列 | — | INT（截断取整，溢出运行期报错） |
-| `to_bigint` | 1..1 | 同 `to_int` | — | BIGINT |
-| `min` / `max` | ≥2 | 全部数值**标量**；EVENT_SEQUENCE 拒绝 | — | 数值提升类型标量 |
-| `add` / `sub` / `mul` | 2..2 | 数值标量；命名参数 `value` / `addend`（add）、`margin`（sub）、`multiplier`（mul） | — | 数值提升类型标量 |
-| `div` | 2..2 | 数值标量；命名参数 `value` / `divisor` | — | 恒为 DOUBLE 标量（除 0 返回 0.0） |
+逐算子的参数个数、入参要求、配置对象与输出见 [../operators.json](../operators.json)，
+本文件不再维护重复表格。扩展算子的同步方法：
 
-对象字面量作为配置对象的位置是受限的：`zip_concat`/`concat` 只能出现在最后一个参数，
-`list_concat`/`calc_delta_seq` 只能是第 3 参，`group_count_concat` 只能是第 2 参；
-其余算子不接受对象字面量参数。
+1. 引擎侧按仓库 AGENTS.md 完成（独立 `.java`、`InitialBusinessOperators` 清单、
+   JUnit 4 注册测试与算子测试）。
+2. skill 侧只在 `operators.json` 增加一个条目：`min_args`/`max_args`（null 表示无上限）、
+   `named_params`（与引擎 `parameterNames` 一致）、`config`（对象字面量的位置 `position`
+   与合法键 `keys`，`strict: true` 表示引擎对未知键直接报错）、`input`/`output`
+   （中文说明，终检推导用）。`check_expression.py` 启动时自动加载，无需改脚本。
+3. 取值规则 `type`：`string`、`positive_number`、`enum` + `values`。
+   无法用规则表达的特校验（如 `discrete` 边界数组严格递增）在脚本内实现。
+4. 验证：用新算子写一条表达式跑 `check_expression.py`，确认 exit 0 且终检可推导。
+
+对象字面量作为配置对象的位置由各算子 `config.position` 表达（`"last"` 或下标数组）；
+没有 `config` 的算子不接受对象字面量参数。
 
 ## 第 4 步静态终检方法
 
@@ -71,5 +63,6 @@
 `zip_concat`/`list_concat` 序列等长与非空、`find_indices` 目标值类型与元素一致、
 `log_base`/`div`/`discrete` 的值域、`to_int` 溢出。
 
-**非标准算子**：表达式中出现 21 个标准算子之外的名称时，先按拼写错误处理（脚本会给最近建议）；
-确认不是拼写错误后询问业务该算子是否已通过扩展入口注册，未注册则无法执行。
+**非标准算子**：表达式中出现标准算子（清单见 [../operators.json](../operators.json)）之外的
+名称时，先按拼写错误处理（脚本会给最近建议）；确认不是拼写错误后询问业务该算子是否已
+通过扩展入口注册，未注册则无法执行。

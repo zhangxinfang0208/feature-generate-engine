@@ -4,6 +4,7 @@
 
 词法与语法镜像引擎 ExpressionParser（src/main/java/com/example/featuredag/expression/ExpressionParser.java），
 并附带算子名、参数个数、命名参数、配置对象键的静态检查，以及 base 特征（裸标识符引用）提取。
+算子清单唯一维护点为本 skill 根目录的 operators.json，扩展算子只改该文件。
 
 用法:
   python check_expression.py "zip_concat(a, b, {\"delimiter\":\"#\"})"
@@ -14,60 +15,39 @@
 
 import difflib
 import json
+import os
 import sys
 
 INF = float("inf")
 MAX_NESTING_DEPTH = 200
 EXCERPT_RADIUS = 40
 
-# name -> (min_args, max_args)
-OPERATORS = {
-    "discrete": (2, 2),
-    "log_base": (3, 3),
-    "slice_by_indices": (2, 2),
-    "find_indices": (2, 2),
-    "find_indices_any": (2, 2),
-    "get_seq_length": (1, 1),
-    "count_distinct": (1, 1),
-    "zip_concat": (2, INF),
-    "concat": (2, INF),
-    "list_concat": (2, 3),
-    "hit": (2, 2),
-    "group_count_concat": (1, 2),
-    "calc_delta_seq": (2, 3),
-    "to_int": (1, 1),
-    "to_bigint": (1, 1),
-    "min": (2, INF),
-    "max": (2, INF),
-    "add": (2, 2),
-    "sub": (2, 2),
-    "mul": (2, 2),
-    "div": (2, 2),
-}
+# 算子清单唯一维护点：本 skill 根目录的 operators.json（参数个数、命名参数、
+# 配置对象键与取值规则）。扩展算子只改该文件，脚本启动时加载；下划线开头的
+# 键（如 _readme）是说明文字，跳过。
+OPERATORS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "operators.json")
+with open(OPERATORS_PATH, "r", encoding="utf-8") as _handle:
+    _OPERATOR_DATA = json.load(_handle)
 
-# 支持命名参数的算子及其形参名（与源码 parameterNames 一致）
-NAMED_PARAMS = {
-    "add": ["value", "addend"],
-    "sub": ["value", "margin"],
-    "mul": ["value", "multiplier"],
-    "div": ["value", "divisor"],
-    "hit": ["seq_kv", "seq_key"],
-    "find_indices_any": ["sequence", "targets"],
-    "group_count_concat": ["sequence", "config"],
-}
-
-# 配置对象（对象字面量参数）的合法位置与合法键
-# "last"  表示只能作为最后一个参数（zip_concat/concat 宽松消费）
-# 集合值  表示只能出现在这些下标（从 0 计）
-CONFIG_RULES = {
-    "zip_concat": ("last", {"delimiter"}),
-    "concat": ("last", {"delimiter"}),
-    "list_concat": ({2}, {"delimiter"}),
-    "calc_delta_seq": ({2}, {"direction", "divisor", "need_ceil"}),
-    "group_count_concat": ({1}, {"delimiter", "order"}),
-}
-# 引擎对未知配置键严格报错的算子（其余算子仅忽略未知键）
-STRICT_OPTION_KEYS = {"calc_delta_seq"}
+OPERATORS = {}
+NAMED_PARAMS = {}
+CONFIG_RULES = {}
+STRICT_OPTION_KEYS = set()
+VALUE_RULES = {}
+for _name, _spec in _OPERATOR_DATA.items():
+    if _name.startswith("_"):
+        continue
+    _max = _spec["max_args"]
+    OPERATORS[_name] = (_spec["min_args"], INF if _max is None else _max)
+    if _spec.get("named_params"):
+        NAMED_PARAMS[_name] = list(_spec["named_params"])
+    _config = _spec.get("config")
+    if _config:
+        _position = _config["position"]
+        CONFIG_RULES[_name] = ("last" if _position == "last" else set(_position), set(_config["keys"]))
+        VALUE_RULES[_name] = _config["keys"]
+        if _config.get("strict"):
+            STRICT_OPTION_KEYS.add(_name)
 
 FULLWIDTH_HINTS = {
     "，": ",", "（": "(", "）": ")", "：": ":", "＝": "=",
@@ -371,6 +351,7 @@ def check_options(op, config_node, errors, warnings):
     if op not in CONFIG_RULES:
         return
     _, allowed_keys = CONFIG_RULES[op]
+    rules = VALUE_RULES.get(op, {})
     for key, value_node in fields.items():
         if key not in allowed_keys:
             message = "配置键 '%s' 不被算子 %s 使用（合法键: %s）" % (key, op, ", ".join(sorted(allowed_keys)))
@@ -379,33 +360,24 @@ def check_options(op, config_node, errors, warnings):
             else:
                 warnings.append({"message": message + "，引擎会忽略它", "offset": offset})
             continue
+        rule = rules.get(key)
+        if not rule:
+            continue
+        kind = rule.get("type")
         value = literal_value(value_node)
-        if op == "calc_delta_seq":
-            if key == "direction":
-                if value_node[0] != "lit":
-                    warnings.append({"message": "direction 的值不是字面量，无法静态验证", "offset": offset})
-                elif value not in ("ELEMENT_MINUS_BASE", "BASE_MINUS_ELEMENT"):
-                    errors.append({"message": "direction 只能是 ELEMENT_MINUS_BASE 或 BASE_MINUS_ELEMENT，实际为 %r" % value, "offset": offset})
-            elif key == "divisor":
-                if value_node[0] != "lit":
-                    warnings.append({"message": "divisor 的值不是字面量，无法静态验证", "offset": offset})
-                elif not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-                    errors.append({"message": "divisor 必须是大于 0 的数字，实际为 %r" % value, "offset": offset})
-            elif key == "need_ceil":
-                if value_node[0] != "lit":
-                    warnings.append({"message": "need_ceil 的值不是字面量，无法静态验证", "offset": offset})
-                elif value not in (0, 1):
-                    errors.append({"message": "need_ceil 只能是 0 或 1，实际为 %r" % value, "offset": offset})
-        elif key == "order" and op == "group_count_concat":
-            if value_node[0] != "lit":
-                warnings.append({"message": "order 的值不是字面量，无法静态验证", "offset": offset})
-            elif value not in ("FIRST_OCCURRENCE", "COUNT_DESC"):
-                errors.append({"message": "order 只能是 FIRST_OCCURRENCE 或 COUNT_DESC，实际为 %r" % value, "offset": offset})
-        elif key == "delimiter":
-            if value_node[0] == "lit" and not isinstance(value, str):
-                errors.append({"message": "delimiter 必须是字符串，实际为 %r" % value, "offset": offset})
-            elif value_node[0] != "lit":
-                warnings.append({"message": "delimiter 的值不是字面量，无法静态验证", "offset": offset})
+        if value_node[0] != "lit":
+            warnings.append({"message": "%s 的值不是字面量，无法静态验证" % key, "offset": offset})
+        elif kind == "string":
+            if not isinstance(value, str):
+                errors.append({"message": "%s 必须是字符串，实际为 %r" % (key, value), "offset": offset})
+        elif kind == "positive_number":
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+                errors.append({"message": "%s 必须是大于 0 的数字，实际为 %r" % (key, value), "offset": offset})
+        elif kind == "enum":
+            values = rule.get("values", [])
+            if value not in values:
+                errors.append({"message": "%s 只能是 %s，实际为 %r"
+                               % (key, " 或 ".join(str(v) for v in values), value), "offset": offset})
 
 
 def check_call(node, errors, warnings, calls, depth_info):
@@ -420,7 +392,7 @@ def check_call(node, errors, warnings, calls, depth_info):
     })
     if name not in OPERATORS:
         errors.append({
-            "message": "未知算子 '%s'%s（标准算子共 21 个，见 operator-signatures.md）" % (name, suggest(name)),
+            "message": "未知算子 '%s'%s（标准算子共 %d 个，见 operators.json）" % (name, suggest(name), len(OPERATORS)),
             "offset": offset,
         })
         return
@@ -487,7 +459,7 @@ def check_call(node, errors, warnings, calls, depth_info):
                 "message": "算子 %s 不接受对象字面量参数" % name,
                 "offset": argument[2],
             })
-    if name in ("zip_concat", "concat") and value_argc < min_args:
+    if name in CONFIG_RULES and CONFIG_RULES[name][0] == "last" and value_argc < min_args:
         errors.append({
             "message": "算子 %s 去掉末尾配置对象后只剩 %d 个值参数，不满足最少 %d 个" % (name, value_argc, min_args),
             "offset": offset,

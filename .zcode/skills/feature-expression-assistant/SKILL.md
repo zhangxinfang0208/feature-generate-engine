@@ -100,8 +100,9 @@ python .zcode/skills/feature-expression-assistant/scripts/check_expression.py --
 ## 第 4 步：完整模型特征静态终检
 
 请业务提供配置完成后的完整模型特征（features JSON），按
-[references/operator-signatures.md](references/operator-signatures.md) 的签名表做静态校验
-（不运行引擎）：
+[references/operator-signatures.md](references/operator-signatures.md) 的方法与
+[operators.json](operators.json) 的算子清单做静态校验（不运行引擎）。算子清单的唯一
+维护点是 operators.json，扩展算子只改该文件（同步方法见 operator-signatures.md）：
 
 1. 引用完整性：表达式中每个特征引用都有配置。
 2. 类型/形状合规：自底向上推导（前台 `type` + `seq_max_length` → 引擎类型/形状），
@@ -116,5 +117,5 @@ python .zcode/skills/feature-expression-assistant/scripts/check_expression.py --
 - 每轮回复末尾明确业务下一步要提供什么；需要补充信息时一次性列全，不逐条追问。
 - 补全块必须与固定格式逐字段一致，方便业务直接复制；`data_value` 永远是字符串。
 - 只做静态判断；不替业务拍板无法唯一推断的值（序列长度上限、元素类型要问）。
-- 表达式中出现 21 个标准算子之外的名称：先按拼写错误提示；确认非拼写错误后，
-  问业务该算子是否已通过扩展入口注册。
+- 表达式中出现标准算子（清单见 [operators.json](operators.json)）之外的名称：先按拼写
+  错误提示；确认非拼写错误后，问业务该算子是否已通过扩展入口注册。

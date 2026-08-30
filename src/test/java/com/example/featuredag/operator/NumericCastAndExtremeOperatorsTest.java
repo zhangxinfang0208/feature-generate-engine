@@ -27,7 +27,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -39,7 +38,7 @@ import static org.junit.Assert.assertTrue;
 public final class NumericCastAndExtremeOperatorsTest {
     @Test
     public void registryManifestAndMetadata() {
-        assertEquals(20, InitialBusinessOperators.definitions().size());
+        assertEquals(21, InitialBusinessOperators.definitions().size());
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String name : new String[] {"to_int", "to_bigint", "min", "max"}) {
             OperatorDefinition definition = registry.require(name);
@@ -50,11 +49,8 @@ public final class NumericCastAndExtremeOperatorsTest {
                     BatchKernelKind.SCALAR_ADAPTER,
                     registry.batchKernelKind(name));
         }
-        for (String name : new String[] {"to_int", "to_bigint"}) {
+        for (String name : new String[] {"to_int", "to_bigint", "min", "max"}) {
             assertTrue(name + " sequence view", registry.require(name).supportsSequenceView());
-        }
-        for (String name : new String[] {"min", "max"}) {
-            assertFalse(name + " sequence view", registry.require(name).supportsSequenceView());
         }
         assertEquals(1, registry.require("to_int").minArguments());
         assertEquals(1, registry.require("to_int").maxArguments());

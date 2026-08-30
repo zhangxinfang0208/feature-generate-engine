@@ -40,17 +40,6 @@ final class OperatorSupport {
         return new OperatorInference(input.outputType(), unionScopes(inputs), input.valueShape());
     }
 
-    static void rejectEventSequence(String operator, List<OperatorInputMetadata> inputs) {
-        // 事件序列不做隐式数值投影：构图期即拒绝（C6），运行时的数值检查为防御。
-        for (OperatorInputMetadata input : inputs) {
-            if (input.outputType() == DataType.EVENT_SEQUENCE) {
-                throw new IllegalArgumentException(
-                        operator + " requires numeric scalar input; event sequences are not"
-                                + " supported (no implicit value projection)");
-            }
-        }
-    }
-
     static OperatorInference numericCastInference(
             String operator,
             List<OperatorInputMetadata> inputs,
@@ -79,6 +68,35 @@ final class OperatorSupport {
                     operator + " does not support value shape: " + input.valueShape());
         }
         return fixedInference(inputs, outputType, outputShape);
+    }
+
+    static OperatorInference elementWiseNumericInference(
+            String operator,
+            List<OperatorInputMetadata> inputs,
+            DataType outputType) {
+        boolean hasSequence = false;
+        for (OperatorInputMetadata input : inputs) {
+            if (input.outputType() == DataType.EVENT_SEQUENCE) {
+                throw new IllegalArgumentException(
+                        operator + " requires numeric input; event sequences are not"
+                                + " supported (no implicit value projection)");
+            }
+            if (!input.outputType().isNumeric()) {
+                throw new IllegalArgumentException(
+                        operator + " requires numeric input, got: " + input.outputType());
+            }
+            if (input.valueShape() == ValueShape.SEQUENCE) {
+                hasSequence = true;
+            } else if (input.valueShape() != ValueShape.SCALAR
+                    && input.valueShape() != ValueShape.CANDIDATE_VECTOR) {
+                throw new IllegalArgumentException(
+                        operator + " does not support value shape: " + input.valueShape());
+            }
+        }
+        return fixedInference(
+                inputs,
+                outputType,
+                hasSequence ? ValueShape.SEQUENCE : ValueShape.SCALAR);
     }
 
     static DataType numericResultType(List<OperatorInputMetadata> inputs) {
@@ -178,6 +196,54 @@ final class OperatorSupport {
 
     static boolean isSequence(Object value) {
         return value instanceof OperatorSequence || value instanceof List<?>;
+    }
+
+    static Object evaluateElementWise(
+            List<Object> arguments,
+            String operator,
+            Function<List<Object>, Object> scalarEvaluator) {
+        int sequenceSize = -1;
+        for (int argumentIndex = 0; argumentIndex < arguments.size(); argumentIndex++) {
+            Object argument = arguments.get(argumentIndex);
+            if (!isSequence(argument)) continue;
+            int currentSize = sequenceSize(
+                    argument, operator, "argument " + argumentIndex);
+            if (sequenceSize < 0) {
+                sequenceSize = currentSize;
+            } else if (currentSize != sequenceSize) {
+                throw new IllegalArgumentException(
+                        operator + " requires sequences of equal length; argument "
+                                + argumentIndex + " has length " + currentSize
+                                + ", expected " + sequenceSize);
+            }
+        }
+        if (sequenceSize < 0) return scalarEvaluator.apply(arguments);
+
+        List<Object> result = new ArrayList<Object>(sequenceSize);
+        for (int sequenceIndex = 0; sequenceIndex < sequenceSize; sequenceIndex++) {
+            try {
+                List<Object> scalarArguments = new ArrayList<Object>(arguments.size());
+                for (int argumentIndex = 0;
+                        argumentIndex < arguments.size();
+                        argumentIndex++) {
+                    Object argument = arguments.get(argumentIndex);
+                    scalarArguments.add(isSequence(argument)
+                            ? sequenceElementAt(
+                                    argument,
+                                    sequenceIndex,
+                                    operator,
+                                    "argument " + argumentIndex)
+                            : argument);
+                }
+                result.add(scalarEvaluator.apply(scalarArguments));
+            } catch (RuntimeException error) {
+                throw new IllegalArgumentException(
+                        operator + " failed at sequence index " + sequenceIndex
+                                + ": " + error.getMessage(),
+                        error);
+            }
+        }
+        return immutableList(result);
     }
 
     static <T> List<T> mapSequence(

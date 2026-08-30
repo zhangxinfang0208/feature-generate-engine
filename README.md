@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 17 个算子：
+`OperatorRegistry.standard()` 注册以下 21 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -14,23 +14,30 @@
 | `log_base` | `log_base(value, base, maxValue)` | 对截断后的正数计算指定底数的对数 |
 | `slice_by_indices` | `slice_by_indices(sequence, indices)` | 按下标选取序列元素 |
 | `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
+| `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标 |
 | `get_seq_length` | `get_seq_length(sequence)` | 返回序列长度 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
+| `concat` | `concat(value1, value2, ...)` | 使用 `#` 拼接两个或更多标量值 |
+| `list_concat` | `list_concat(sequence, suffixSequence)` | 将第二个序列首元素广播到第一个序列并拼接 |
+| `hit` | `hit(eventSequence, keySequence)` | 按字符串 key 序列过滤事件序列 |
 | `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
 | `to_int` | `to_int(value)` | 数值或十进制数字字符串标量/序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
 | `to_bigint` | `to_bigint(value)` | 数值或十进制数字字符串标量/序列转 64 位 bigint 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
-| `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
-| `max` | `max(value1, value2, ...)` | 计算数值标量最大值，精确十进制比较，相等保留最左输入 |
-| `add` | `add(value1, value2)` | 数值标量加法，精确十进制求和后按输入载体定宽 |
-| `sub` | `sub(value1, value2)` | 数值标量减法（左操作数减右操作数） |
-| `mul` | `mul(value1, value2)` | 数值标量乘法，整型溢出直接失败不回绕 |
-| `div` | `div(value1, value2)` | 数值标量除法，固定 DOUBLE；分母为 0 返回 0.0（防除 0） |
+| `min` | `min(value1, value2, ...)` | 数值标量/等长序列逐元素最小值；标量广播，相等保留最左输入 |
+| `max` | `max(value1, value2, ...)` | 数值标量/等长序列逐元素最大值；标量广播，相等保留最左输入 |
+| `add` | `add(value1, value2)` | 数值标量/等长序列逐元素加法；标量广播 |
+| `sub` | `sub(value1, value2)` | 数值标量/等长序列逐元素减法；标量广播 |
+| `mul` | `mul(value1, value2)` | 数值标量/等长序列逐元素乘法；标量广播 |
+| `div` | `div(value1, value2)` | 数值标量/等长序列逐元素除法；标量广播，分母为 0 返回 0.0 |
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 13 个（包括 `group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 17 个（包括 `min`、`max`、`add`、`sub`、`mul`、`div`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+
+数值极值和四则运算的序列契约见
+[`docs/architecture/numeric-sequence-operators.md`](docs/architecture/numeric-sequence-operators.md)。
 
 ## 目录结构
 

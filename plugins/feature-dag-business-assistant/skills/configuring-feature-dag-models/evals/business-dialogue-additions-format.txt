@@ -1,0 +1,22 @@
+配置补充项已生成，请按特征复制到前台。
+
+BASE 特征 user_seq：
+
+```json
+[
+  {
+    "raw_name": "entity_scopes",
+    "data_value": "[\"USER\"]",
+    "data_type": "LIST",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "seq_max_length",
+    "data_value": 365,
+    "data_type": "NUMBER",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```

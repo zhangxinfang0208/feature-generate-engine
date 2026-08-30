@@ -2,10 +2,14 @@
 
 Use this grammar before any metadata work. Parse the complete input; a syntax error stops the workflow.
 
+## Business assignment shorthand
+
+The business may submit `derived_name=expression`. When the text before the first top-level `=` is one identifier and the right side is non-empty, treat the left side as the DERIVED feature name and apply the grammar below only to the right side. A top-level shorthand name and a separately supplied DERIVED name must be identical; otherwise report a naming conflict and ask the business to choose one. An `=` inside a call's named arguments is not this shorthand.
+
 ## Lexical rules
 
 - An identifier normally starts with `Character.isLetter(ch)` or `_`, and continues with `Character.isLetterOrDigit(ch)`, `_`, or `.`. It is case-sensitive; these Java `Character` methods accept Unicode letters and digits, not only ASCII. A digit run immediately followed by `(` is the parser's call-identifier exception: it is tokenized as an identifier for that call.
-- Before tokenizing, normalize each `\_` outside a quoted string to `_` and visibly state: `已将字符串外的 \_ 按 _ 规范化。` Do not normalize inside strings.
+- Before tokenizing, preserve the submitted right-hand expression verbatim as `original_input`. Normalize each `\_` outside a quoted string to `_` only in a separate `normalized_input`, report `已将字符串外的 \_ 规范化为 _。` when applicable, and use that copy for parsing. If no eligible `\_` occurs, `original_input` and `normalized_input` must be byte-for-byte identical. Never append a missing token or repair the expression. `<EOF>` is an audit boundary only and must never be included in either expression.
 - Strings use either `'` or `"`. Their only escapes are `\n`, `\r`, `\t`, `\\`, `\"`, and `\'`; an unrecognized escape is invalid.
 - A number is `-?[0-9]+` (integer, including leading-zero forms such as `01`) or `-?[0-9]+\.[0-9]*` (decimal, including a trailing decimal point). A signed 32-bit integer is `INT`; a remaining signed 64-bit integer is `BIGINT`; a decimal is `DOUBLE`. A non-decimal integer outside the signed 64-bit range is invalid.
 - `true`, `false`, and `null` are boolean and null literals. They are not feature references.
@@ -31,7 +35,7 @@ Nested calls, arrays, and objects are allowed to a maximum nesting depth of 200.
 
 ## AST reference extraction
 
-After a complete successful parse, walk the expression AST depth-first from left to right. Add a bare identifier expression once, at its first encounter. Do not add a call's operator identifier, a named-argument label, an object key, or a string/literal. Continue into every call argument, array element, and object value.
+After a complete successful parse, walk the expression AST depth-first from left to right. Add a bare identifier expression once, at its first encounter. Every bare identifier is a feature reference, including names such as `timestamp_s`; there are no implicit context variables or reserved feature constants. Do not add a call's operator identifier, a named-argument label, an object key, or a string/literal. Continue into every call argument, array element, and object value.
 
 For the approved long expression, the extracted BASE references are exactly:
 

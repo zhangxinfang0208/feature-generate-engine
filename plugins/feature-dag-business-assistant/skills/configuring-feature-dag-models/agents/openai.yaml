@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature DAG Model Configurator"
+  short_description: "Validate expressions and prepare model feature metadata"
+  default_prompt: "Use $configuring-feature-dag-models to validate this Feature DAG expression and guide me through the required model metadata. Return protocol 1.0 JSON only."

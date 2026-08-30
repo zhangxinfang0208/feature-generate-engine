@@ -1,0 +1,70 @@
+{
+  "skill": "configuring-feature-dag-models",
+  "cases": [
+    {
+      "id": "missing-expression-entry",
+      "purpose": "A generic invocation without an expression must still enter the deterministic protocol.",
+      "prompt": "请帮我配置一个 Feature DAG 衍生特征。",
+      "assertions": [
+        "Returns the complete protocol 1.0 JSON envelope instead of echoing free text",
+        "Uses current_stage SYNTAX_INTAKE with syntax status PENDING and later stages SKIPPED",
+        "Requests EXPRESSION_INPUT with the fixed question and exact expression input shape"
+      ]
+    },
+    {
+      "id": "syntax-stop",
+      "purpose": "A missing closing parenthesis must stop before BASE metadata work.",
+      "prompt": "请只校验这个表达式是否存在少括号等语法问题：zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {\"delimiter\":\"#\"}",
+      "assertions": [
+        "Declares syntax invalid",
+        "Identifies the unclosed call near the end",
+        "Does not ask for BASE configuration"
+      ]
+    },
+    {
+      "id": "extract-and-do-not-guess",
+      "purpose": "Extract six BASE refs, report an existing conflict, and refuse to guess missing metadata under pressure.",
+      "prompt": "请处理下面的表达式并马上给我可复制到前台的配置，不要向我追问。表达式：zip_concat(slice_by_indices(auid_hwdsp_clk_crtv_clstid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), slice_by_indices(auid_hwdsp_clk_slotid_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), calc_delta_seq(slice_by_indices(auid_hwdsp_clk_ts_seq_time_365d, find_indices(auid_hwdsp_clk_norm_tag1id_seq_time_365d, normalized_tag1_id_h)), timestamp_s, {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60}), {\"delimiter\":\"#\"})。已知配置：auid_hwdsp_clk_norm_tag1id_seq_time_365d type=STRING、seq_max_length=365，缺 definition_type/value_shape/entity_scopes；normalized_tag1_id_h 的 type 为空、seq_max_length=1，缺 definition_type/value_shape/entity_scopes；auid_hwdsp_clk_ts_seq_time_365d type=BIGINT、value_shape=SCALAR、seq_max_length=365、entity_scopes=[USER]；其余三个 BASE 尚未提供。",
+      "assertions": [
+        "Lists exactly six BASE names in first-seen order",
+        "Does not treat operator names, object keys, or string literals as BASE features",
+        "Reports existing value_shape conflict without emitting an overwrite property",
+        "Asks for unknown type or length instead of guessing"
+      ]
+    },
+    {
+      "id": "reachable-only",
+      "purpose": "Ignore an invalid unrelated derived feature while validating the requested target subtree.",
+      "prompt": "请最终校验目标特征 target_score。完整模型：{\"feature_set_name\":\"reachability_case\",\"version\":\"1\",\"features\":[{\"name\":\"user_score\",\"definition_type\":\"BASE\",\"type\":\"INT\",\"value_shape\":\"SCALAR\",\"entity_scopes\":[\"USER\"],\"seq_max_length\":1,\"to_use\":true},{\"name\":\"target_score\",\"definition_type\":\"DERIVED\",\"type\":\"INT\",\"value_shape\":\"SCALAR\",\"entity_scopes\":[\"USER\"],\"expression\":\"add(user_score, 1)\",\"output_policy\":\"OUTPUT\",\"to_use\":true},{\"name\":\"unrelated_broken\",\"definition_type\":\"DERIVED\",\"type\":\"STRING\",\"expression\":\"zip_concat(missing_seq\",\"to_use\":true}]}。",
+      "assertions": [
+        "Evaluates only target_score and user_score",
+        "Does not fail because unrelated_broken has malformed syntax",
+        "Reports FAIL because reachable target_score is missing seq_max_length, emits a five-key NUMBER addition with unquoted data_value 1 from add(...), and ignores malformed unrelated_broken"
+      ]
+    },
+    {
+      "id": "unknown-operator-incomplete",
+      "purpose": "A syntactically valid unknown operator must not receive invented semantics.",
+      "prompt": "衍生特征 future_output 的表达式是 future_transform(base_a)。base_a 已配置 definition_type=BASE、type=STRING、value_shape=SCALAR、entity_scopes=[USER]、seq_max_length=1。请校验表达式并生成衍生特征新增属性。",
+      "assertions": [
+        "Initial syntax passes",
+        "Semantic result is incomplete because future_transform has no contract",
+        "Does not claim the operator is registered or illegal",
+        "Adds only deterministic output_policy=OUTPUT and to_use=true properties, does not invent DERIVED type, shape, scope, or maximum length, and does not enter final validation without a wrapper"
+      ]
+    },
+    {
+      "id": "deterministic-conversation-protocol",
+      "purpose": "Every host must use the same protocol envelope and one fixed next-request question.",
+      "prompt": "请校验表达式 add(user_score, 1)。衍生特征名 target_score；user_score 已配置 definition_type=BASE,type=INT,value_shape=SCALAR,entity_scopes=[USER],seq_max_length=1,to_use=true。",
+      "assertions": [
+        "Returns exactly one parseable JSON object with no Markdown or prose outside it",
+        "Uses protocol_version 1.0 and the canonical top-level key order",
+        "Includes all six stage objects in canonical order and marks unexecuted stages SKIPPED",
+        "Uses exactly one allowed next_request with the fixed verbatim question",
+        "Groups every frontend addition by feature_name and feature_kind and preserves exact five-key properties",
+        "After a gated FAIL with actionable issues or additions, requests MODEL_CORRECTION instead of NONE"
+      ]
+    }
+  ]
+}

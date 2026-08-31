@@ -28,6 +28,7 @@ import com.example.featuredag.runtime.ExecutionDiagnostics;
 import com.example.featuredag.runtime.ExecutionPhase;
 import com.example.featuredag.runtime.ExecutionResult;
 import com.example.featuredag.runtime.ExecutionStatus;
+import com.example.featuredag.runtime.FeatureEvaluationException;
 import com.example.featuredag.runtime.ListSequenceValue;
 import com.example.featuredag.runtime.NodeExecutionSnapshot;
 import com.example.featuredag.runtime.ObservabilityOptions;
@@ -480,6 +481,15 @@ public final class FeatureDagEngine {
     private RuntimeException attachRuntimeNodeContext(
             ExecutionContext context,
             RuntimeException error) {
+        // PR#21 兜底未命中：失败经 FailedValueHandle 在特征边界转成 FeatureEvaluationException，
+        // 节点状态不再置 FAILED，改从异常携带的物理节点精确定位（PR#27）。
+        if (error instanceof FeatureEvaluationException featureFailure) {
+            PhysicalNode node = planNodeById(featureFailure.physicalNodeId());
+            if (node == null) return error;
+            List<String> affected = plan.affectedFeatureNames(node.physicalNodeId());
+            if (affected.isEmpty()) affected = List.of(featureFailure.featureName());
+            return new RuntimeNodeExecutionException(node, affected, error);
+        }
         for (PhysicalNode node : plan.nodes()) {
             RuntimeNodeState state = context.nodeStates().get(node.physicalNodeId());
             if (state == null || state.status() != ExecutionStatus.FAILED) continue;
@@ -494,6 +504,13 @@ public final class FeatureDagEngine {
         return error;
     }
 
+    private PhysicalNode planNodeById(String physicalNodeId) {
+        for (PhysicalNode node : plan.nodes()) {
+            if (node.physicalNodeId().equals(physicalNodeId)) return node;
+        }
+        return null;
+    }
+
     private FeatureGenerationException generationFailure(
             String executionId,
             RuntimeException error) {
@@ -505,8 +522,12 @@ public final class FeatureDagEngine {
                     nodeFailure.affectedFeatureNames(),
                     nodeFailure);
         }
+        // PR#21 兜底未命中路径：FeatureEvaluationException 自带单特征现场，保持归因不丢。
+        String featureName = error instanceof FeatureEvaluationException featureFailure
+                ? featureFailure.featureName()
+                : null;
         return new FeatureGenerationException(
-                error.getMessage(), planId, executionId, null, error);
+                error.getMessage(), planId, executionId, featureName, error);
     }
 
     private void publishRuntimeTrace(String executionId, ExecutionResult result) {
@@ -737,6 +758,8 @@ public final class FeatureDagEngine {
                             state.dedupInputCount(),
                             state.uniqueInputCount(),
                             state.fallbackUsed(),
+                            state.operatorFailureCount(),
+                            state.fallbackCount(),
                             state.error() == null ? null : state.error().getClass().getName()));
                 }
             }

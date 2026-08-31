@@ -11,7 +11,6 @@ import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThrows;
 
 /** 覆盖模型配置中 DERIVED dft 对 null/空结果的统一单条与批量语义。 */
 public class DerivedFeatureDefaultValueTest {
@@ -99,7 +98,7 @@ public class DerivedFeatureDefaultValueTest {
     }
 
     @Test
-    public void calculationExceptionIsNotMaskedByDerivedDefault() {
+    public void calculationExceptionUsesDerivedDefault() {
         String config = """
                 {
                   "feature_set_name": "derived-default-error",
@@ -128,10 +127,9 @@ public class DerivedFeatureDefaultValueTest {
         FeatureDagEngine engine = FeatureDagEngine.init(
                 config, InitOptions.offline("derived-default-error"));
 
-        assertThrows(
-                FeatureGenerationException.class,
-                () -> engine.generate(new OfflineGenerateRequest(
-                        "error-case", Map.of("score", List.of(0.0)))));
+        GenerateResult result = engine.generate(new OfflineGenerateRequest(
+                "error-case", Map.of("score", List.of(0.0))));
+        assertEquals(List.of(99.0), result.featureValues().get("score_log"));
     }
 
     private static void assertFallbackValues(Map<String, List<?>> values) {

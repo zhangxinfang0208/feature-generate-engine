@@ -39,10 +39,17 @@ public final class RuntimeNodeExecutionException extends RuntimeException {
         Objects.requireNonNull(node, "node");
         Objects.requireNonNull(affectedFeatureNames, "affectedFeatureNames");
         Objects.requireNonNull(cause, "cause");
-        return "Physical node " + node.physicalNodeId()
-                + " failed [executor=" + node.executorId()
-                + ", logicalNodes=" + node.logicalNodeIds()
-                + ", affectedFeatures=" + affectedFeatureNames
-                + "]: " + cause.getMessage();
+        StringBuilder detail = new StringBuilder()
+                .append("Physical node ").append(node.physicalNodeId())
+                .append(" failed [executor=").append(node.executorId())
+                .append(", logicalNodes=").append(node.logicalNodeIds())
+                .append(", affectedFeatures=").append(affectedFeatureNames)
+                .append("]: ").append(cause.getMessage());
+        // 兜底链路下原始算子错误可能沉在多层 cause 里，逐层带出保持消息完整。
+        for (Throwable deeper = cause.getCause(); deeper != null; deeper = deeper.getCause()) {
+            if (deeper.getMessage() == null) break;
+            detail.append("; caused by: ").append(deeper.getMessage());
+        }
+        return detail.toString();
     }
 }

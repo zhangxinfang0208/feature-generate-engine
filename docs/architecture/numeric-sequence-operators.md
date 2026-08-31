@@ -18,3 +18,10 @@
 推断阶段按 `DOUBLE > BIGINT > INT` 计算元素类型（`div` 固定为 `DOUBLE`），并按是否存在序列输入决定输出 shape。算子可直接消费 `OperatorSequence`，避免为了逐元素计算预先物化序列视图。
 
 六个算子不提供原生 `BatchOperatorKernel`。Batch 继续由 `SingleLoopBatchOperatorKernel` 逐行调用 Single Kernel；如果某一批行的输入本身是序列，则在该行内部执行上述逐元素逻辑。这样保持批行数量与顺序不变，也不把逻辑序列维度误当成 Batch 行维度。
+
+## `discrete` 与 `log_base`
+
+- `discrete(value, boundaries)` 只允许 `value` 在标量和序列之间变化；`boundaries` 始终是整条 value 序列共享的有序边界。例如 `discrete([5, 15, 25], [10, 20]) = [0, 1, 2]`。
+- `log_base(value, base, upbound)` 允许 `value` 和 `base` 为标量或序列；一个为标量时广播，两个都是序列时必须等长。`upbound` 始终是共享标量。例如 `log_base([1, 8, 128], 2, 64) = [0.0, 3.0, 6.0]`。
+- 两个算子都能直接消费 `OperatorSequence`；value/base 元素求值失败时，异常包含对应的逻辑序列下标。
+- 两个算子仍不提供原生 `BatchOperatorKernel`，继续通过 `SingleLoopBatchOperatorKernel` 保持逐行等价。

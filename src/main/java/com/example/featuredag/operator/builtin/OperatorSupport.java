@@ -81,7 +81,9 @@ final class OperatorSupport {
                         operator + " requires numeric input; event sequences are not"
                                 + " supported (no implicit value projection)");
             }
-            if (!input.outputType().isNumeric()) {
+            boolean unknownLiteralSequence = input.outputType() == DataType.OBJECT
+                    && input.valueShape() == ValueShape.SEQUENCE;
+            if (!input.outputType().isNumeric() && !unknownLiteralSequence) {
                 throw new IllegalArgumentException(
                         operator + " requires numeric input, got: " + input.outputType());
             }

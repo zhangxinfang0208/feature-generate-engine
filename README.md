@@ -10,8 +10,8 @@
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
-| `discrete` | `discrete(value, boundaries)` | 返回数值所在分桶的零基下标 |
-| `log_base` | `log_base(value, base, maxValue)` | 对截断后的正数计算指定底数的对数 |
+| `discrete` | `discrete(value, boundaries)` | 对数值标量/序列分桶；序列元素共享同一组边界 |
+| `log_base` | `log_base(value, base, maxValue)` | value/base 支持等长序列与标量广播，maxValue 保持共享标量 |
 | `slice_by_indices` | `slice_by_indices(sequence, indices)` | 按下标选取序列元素 |
 | `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
 | `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标 |

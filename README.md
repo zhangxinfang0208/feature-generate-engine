@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 21 个算子：
+`OperatorRegistry.standard()` 注册以下 23 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -19,6 +19,8 @@
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
 | `concat` | `concat(value1, value2, ...)` | 使用可配置分隔符拼接两个或更多标量 |
+| `append` | `append(valueOrSequence1, valueOrSequence2)` | 按参数顺序把两个标量或序列合并为一个序列 |
+| `join` | `join(sequence, delimiter?)` | 使用默认 `#` 或指定字符串分隔符把序列折叠为字符串 |
 | `list_concat` | `list_concat(sequence, suffixSequence, config?)` | 将后缀序列首元素广播并逐元素拼接 |
 | `hit` | `hit(eventSequence, keys)` | 按 key 集合过滤事件序列 |
 | `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
@@ -34,7 +36,7 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 17 个（包括 `find_indices_any`、`concat`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 19 个（包括 `find_indices_any`、`concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
 
 ## 算子异常与衍生默认值
 
@@ -123,6 +125,7 @@ Demo 源码本身只使用 JDK 1.8 语法/API，但运行完整项目仍需要 J
 详细设计见：
 
 - [`docs/architecture/calc-delta-seq.md`](docs/architecture/calc-delta-seq.md)
+- [`docs/architecture/append-and-join.md`](docs/architecture/append-and-join.md)
 - [`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)
 - [`docs/architecture/operator-single-batch-execution.md`](docs/architecture/operator-single-batch-execution.md)
 - [`docs/architecture/operator-failure-default-fallback.md`](docs/architecture/operator-failure-default-fallback.md)

@@ -9,6 +9,7 @@ import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.OperatorNode;
 import com.example.featuredag.logical.SourceNode;
+import com.example.featuredag.operator.BatchKernelKind;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.rewrite.PhysicalRewrite;
@@ -158,7 +159,10 @@ public final class PhysicalPlanner {
             config.put("operatorName", operator.operatorName());
             config.put("singleKernelId", operator.operatorName());
             config.put("batchKernelId", operator.operatorName());
-            config.put("batchKernelKind", operatorRegistry.batchKernelKind(operator.operatorName()).name());
+            BatchKernelKind batchKernelKind = metadata.failureRecoveryRequired()
+                    ? operatorRegistry.recoveringBatchKernelKind(operator.operatorName())
+                    : operatorRegistry.batchKernelKind(operator.operatorName());
+            config.put("batchKernelKind", batchKernelKind.name());
             config.put(
                     "invocationPolicy",
                     OperatorInvocationPolicy.SINGLE_OR_BATCH_BY_INPUT_DOMAIN);

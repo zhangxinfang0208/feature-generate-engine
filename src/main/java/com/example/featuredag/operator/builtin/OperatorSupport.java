@@ -3,7 +3,6 @@ package com.example.featuredag.operator.builtin;
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.ValueShape;
-import com.example.featuredag.operator.BatchOperatorEvaluationException;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorSequence;
@@ -341,13 +340,6 @@ final class OperatorSupport {
 
     static <T> List<T> immutableList(List<T> values) {
         return Collections.unmodifiableList(new ArrayList<T>(values));
-    }
-
-    static BatchOperatorEvaluationException batchFailure(
-            int rowIndex,
-            RuntimeException error) {
-        // Native Batch Kernel 统一携带紧凑批行号，由 DagRuntime 再映射回原请求/候选位置。
-        return new BatchOperatorEvaluationException(rowIndex, error);
     }
 
     static IdentityBatchKey identityBatchKey(int groupIndex, Object... identities) {

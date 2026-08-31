@@ -91,6 +91,19 @@ Batch 输入只依赖 operator 层的 `BatchColumn`、`BatchLayout` 等只读协
 物化为只读 `List`。算子层只能依赖 `OperatorSequence`，不得引用 runtime 的 `SequenceView`；运行时
 也不得按业务算子名决定输入策略。详细设计见 `docs/architecture/sequence-view-operator-support.md`。
 
+### 3.2 失败恢复兼容能力
+
+自定义 `OperatorDefinition.evaluate` 抛出的 `RuntimeException` 可在特征 DAG 内由衍生特征非空
+`dft` 恢复；扩展无需实现额外 Single 接口。直接 Registry 调用仍然 fail-fast。
+
+自定义原生 Batch 若要在恢复必需路径保留 Native 路由，须同时实现
+`RecoverableBatchOperatorKernel`，并通过 `BatchOperatorResult.rowFailures()` 报告每个失败行。未实现该
+标记的旧 Native 扩展会在恢复路径自动使用 `SingleLoopBatchOperatorKernel`，普通路径仍按原计划使用
+Native，兼容已有实现。
+
+捕获范围只包围 Kernel 求值，不包括注册、参数数量、推断、物理路由或结果行数校验。扩展 Kernel
+不得依赖引擎重试或事务回滚；失败前已产生的外部副作用无法撤销，因此推荐显式声明并实现无副作用。
+
 ## 4. 注册物理改写规则
 
 所有融合规则实现 `PhysicalRewriteRule`，并注册到 `PhysicalRewriteRegistry`。规则必须：
@@ -101,6 +114,10 @@ Batch 输入只依赖 operator 层的 `BatchColumn`、`BatchLayout` 等只读协
 4. 检查算子确定性和无副作用；
 5. 返回 root、consumed nodes、external inputs、executorId 和完整执行策略；
 6. 不修改任何 `LogicalNode`。
+
+规则产出的 `PhysicalRewrite` 必须显式声明 `failureRecoverySupported`。若 consumed 节点位于需要失败
+恢复的路径，注册表只接受声明支持的 Rewrite；对应专用执行器必须对 Single/row/group/candidate
+提供与通用执行路径相同的失败范围和顺序语义。未声明支持时只禁用该次融合，不改变逻辑结果。
 
 当前规则 `CountAfterKeyedSequenceFilterRule` 匹配：
 
@@ -239,6 +256,7 @@ keyDomain + concrete SequenceValue + normalizedKey
 - 缺失 executor 或 Provider 时 fail-fast；
 - 确定性算子去重，非确定性算子不缓存；
 - 逻辑输出与未优化普通执行路径一致。
+- 恢复路径下通用与融合执行的失败隔离范围一致，且失败结果不进入缓存。
 
 ## 10. 禁止事项
 

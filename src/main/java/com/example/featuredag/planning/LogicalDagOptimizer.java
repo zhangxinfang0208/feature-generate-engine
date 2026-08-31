@@ -1,5 +1,6 @@
 package com.example.featuredag.planning;
 
+import com.example.featuredag.logical.FeatureOutputNode;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalNode;
 import com.example.featuredag.logical.NodeInput;
@@ -42,6 +43,7 @@ public final class LogicalDagOptimizer {
         // 全图事实先独立计算，再按拓扑序汇总到每个节点，便于新增规划指标而不污染逻辑模型。
         Map<String, Integer> referenceCounts = computeReferenceCounts(dag);
         Map<String, Set<String>> reachableRoots = computeReachableRoots(dag);
+        Map<String, Boolean> failureRecoveryRequired = computeFailureRecoveryRequired(dag);
         Map<String, NodePlanningMetadata> result = new LinkedHashMap<>();
 
         for (String nodeId : dag.topologicalOrder()) {
@@ -69,7 +71,8 @@ public final class LogicalDagOptimizer {
                     referenceCounts.getOrDefault(nodeId, 0),
                     reachableRoots.getOrDefault(nodeId, Set.of()),
                     cacheEligible,
-                    estimatedSize));
+                    estimatedSize,
+                    failureRecoveryRequired.getOrDefault(nodeId, false)));
         }
         // C8：分析产物是按逻辑节点索引的只读元数据表，物理层据此做融合/缓存决策
         return new OptimizedLogicalPlan(dag, new PlannerMetadata(result));
@@ -115,5 +118,27 @@ public final class LogicalDagOptimizer {
             }
         }
         return result;
+    }
+
+    /**
+     * 从具有非 null 衍生默认值的特征边界反向传播恢复需求（C8）。
+     * 只生成规划元数据，不修改逻辑节点；共享生产者只要服务一个可恢复边界就必须保留失败数据。
+     */
+    private static Map<String, Boolean> computeFailureRecoveryRequired(LogicalDag dag) {
+        Map<String, Boolean> required = new LinkedHashMap<>();
+        for (String nodeId : dag.nodes().keySet()) required.put(nodeId, false);
+        List<String> order = dag.topologicalOrder();
+        for (int index = order.size() - 1; index >= 0; index--) {
+            String nodeId = order.get(index);
+            LogicalNode node = dag.node(nodeId);
+            boolean current = required.get(nodeId)
+                    || node instanceof FeatureOutputNode output
+                            && output.defaultValue() != null;
+            required.put(nodeId, current);
+            if (current) {
+                for (NodeInput input : node.inputs()) required.put(input.nodeId(), true);
+            }
+        }
+        return required;
     }
 }

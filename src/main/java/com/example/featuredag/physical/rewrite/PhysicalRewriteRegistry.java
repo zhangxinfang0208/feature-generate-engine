@@ -53,6 +53,10 @@ public final class PhysicalRewriteRegistry {
         Set<String> consumed = new LinkedHashSet<>();
         List<PhysicalRewrite> accepted = new ArrayList<>();
         for (PhysicalRewrite candidate : candidates) {
+            boolean recoveryRequired = candidate.consumedNodeIds().stream()
+                    .anyMatch(nodeId -> optimized.metadata().node(nodeId)
+                            .failureRecoveryRequired());
+            if (recoveryRequired && !candidate.failureRecoverySupported()) continue;
             // C9：一个逻辑节点最多属于一个融合结果，避免两个物理节点重复消费同一子图。
             if (candidate.consumedNodeIds().stream().anyMatch(consumed::contains)) continue;
             accepted.add(candidate);

@@ -62,18 +62,43 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         }
 
         Object sequenceRaw = sequenceHandle.raw();
+        EvaluationFailure sequenceFailure = inheritedFailure(sequenceRaw);
+        if (sequenceFailure != null) {
+            return new CandidateVectorValue(repeatedFailure(
+                    context.candidateCount(), sequenceFailure));
+        }
         if (!(sequenceRaw instanceof SequenceValue sequence)) {
             throw new IllegalArgumentException("First input must be SequenceValue");
         }
         List<Object> rawKeys = toCandidateValues(
                 keyHandle, context.candidateCount());
-        List<Object> normalizedKeys = rawKeys.stream()
-                .map(provider::normalizeQueryKey)
-                .toList();
+        List<Object> normalizedKeys = new ArrayList<>(
+                java.util.Collections.nCopies(rawKeys.size(), null));
+        boolean[] healthyKeys = new boolean[rawKeys.size()];
+        List<Object> result = new ArrayList<>(
+                java.util.Collections.nCopies(rawKeys.size(), null));
+        Set<Object> uniqueKeys = new LinkedHashSet<>();
+        for (int candidateIndex = 0; candidateIndex < rawKeys.size(); candidateIndex++) {
+            Object rawKey = rawKeys.get(candidateIndex);
+            EvaluationFailure inherited = inheritedFailure(rawKey);
+            if (inherited != null) {
+                result.set(candidateIndex, inherited);
+                continue;
+            }
+            try {
+                Object normalized = provider.normalizeQueryKey(rawKey);
+                normalizedKeys.set(candidateIndex, normalized);
+                healthyKeys[candidateIndex] = true;
+                uniqueKeys.add(normalized);
+            } catch (RuntimeException error) {
+                result.set(candidateIndex, newFailure(node, context, candidateIndex, error));
+                state.addOperatorFailures(1);
+            }
+        }
 
         // 候选 key 先规范化再去重，保证语义等价的输入只做一次索引查询。
-        Set<Object> uniqueKeys = new LinkedHashSet<>(normalizedKeys);
         state.setDedupCounts(normalizedKeys.size(), uniqueKeys.size());
+        if (uniqueKeys.isEmpty()) return new CandidateVectorValue(result);
 
         SequenceIndexCacheKey indexCacheKey = new SequenceIndexCacheKey(0, keyDomain, sequence);
         IndexValue index;
@@ -86,12 +111,24 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             }
             index = cached;
         } else {
-            index = provider.build(sequence);
+            try {
+                index = provider.build(sequence);
+            } catch (RuntimeException error) {
+                int failureCount = 0;
+                for (int candidateIndex = 0; candidateIndex < healthyKeys.length; candidateIndex++) {
+                    if (!healthyKeys[candidateIndex]) continue;
+                    result.set(candidateIndex, newFailure(node, context, candidateIndex, error));
+                    failureCount++;
+                }
+                state.addOperatorFailures(failureCount);
+                return new CandidateVectorValue(result);
+            }
             context.runtimeCache().put(
                     CacheKind.SEQUENCE_INDEX, indexCacheKey, index, state);
         }
 
         Map<Object, Integer> countsByKey = new LinkedHashMap<>();
+        Map<Object, RuntimeException> failuresByKey = new LinkedHashMap<>();
         // 二级缓存保存具体 key 的聚合结果；即使索引实现昂贵查询，也只为唯一 key 计算一次。
         for (Object key : uniqueKeys) {
             SequenceKeyCountCacheKey countCacheKey =
@@ -101,16 +138,31 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             if (cachedCount.hit()) {
                 countsByKey.put(key, (Integer) cachedCount.value());
             } else {
-                int count = index.count(key);
-                context.runtimeCache().put(
-                        CacheKind.SEQUENCE_COUNT, countCacheKey, count, state);
-                countsByKey.put(key, count);
+                try {
+                    int count = index.count(key);
+                    context.runtimeCache().put(
+                            CacheKind.SEQUENCE_COUNT, countCacheKey, count, state);
+                    countsByKey.put(key, count);
+                } catch (RuntimeException error) {
+                    failuresByKey.put(key, error);
+                }
             }
         }
 
-        List<Object> result = new ArrayList<>(normalizedKeys.size());
         // 按原候选 key 顺序 scatter，恢复与输入候选一一对应的输出向量。
-        for (Object key : normalizedKeys) result.add(countsByKey.get(key));
+        int queryFailureCount = 0;
+        for (int candidateIndex = 0; candidateIndex < normalizedKeys.size(); candidateIndex++) {
+            if (!healthyKeys[candidateIndex]) continue;
+            Object key = normalizedKeys.get(candidateIndex);
+            RuntimeException error = failuresByKey.get(key);
+            if (error == null) {
+                result.set(candidateIndex, countsByKey.get(key));
+            } else {
+                result.set(candidateIndex, newFailure(node, context, candidateIndex, error));
+                queryFailureCount++;
+            }
+        }
+        state.addOperatorFailures(queryFailureCount);
         return new CandidateVectorValue(result);
     }
 
@@ -122,38 +174,53 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             SequenceIndexProvider provider,
             ValueHandle sequenceHandle,
             ValueHandle keyHandle) {
-        List<Object> result = new ArrayList<>(context.candidateCount());
+        List<Object> result = new ArrayList<>(
+                java.util.Collections.nCopies(context.candidateCount(), null));
         int totalUniqueKeys = 0;
         // 每个组拥有独立共享序列和候选区间，缓存 key 也带 groupIndex，组间不会错误复用。
         for (int groupIndex = 0; groupIndex < context.onlineGroupCount(); groupIndex++) {
             Object sequenceRaw = requestValue(sequenceHandle, groupIndex);
+            int start = context.candidateGroupStart(groupIndex);
+            int end = context.candidateGroupEnd(groupIndex);
+            // 零候选组不产生输出元素，但仍保持 offsets 对后续组的正确定位。
+            if (start == end) continue;
+            EvaluationFailure sequenceFailure = inheritedFailure(sequenceRaw);
+            if (sequenceFailure != null) {
+                for (int candidateIndex = start; candidateIndex < end; candidateIndex++) {
+                    result.set(candidateIndex, sequenceFailure);
+                }
+                continue;
+            }
             if (!(sequenceRaw instanceof SequenceValue sequence)) {
                 throw new IllegalArgumentException(
                         "First input must be SequenceValue for online batch group "
                                 + groupIndex + " ("
                                 + context.onlineGroupExecutionId(groupIndex) + ")");
             }
-            int start = context.candidateGroupStart(groupIndex);
-            int end = context.candidateGroupEnd(groupIndex);
-            // 零候选组不产生输出元素，但仍保持 offsets 对后续组的正确定位。
-            if (start == end) continue;
-            List<Object> normalizedKeys = new ArrayList<>(end - start);
+            List<Object> normalizedKeys = new ArrayList<>(
+                    java.util.Collections.nCopies(end - start, null));
+            boolean[] healthyKeys = new boolean[end - start];
+            Set<Object> uniqueKeys = new LinkedHashSet<>();
             for (int candidateIndex = start; candidateIndex < end; candidateIndex++) {
+                Object rawKey = candidateValue(keyHandle, candidateIndex, groupIndex);
+                EvaluationFailure inherited = inheritedFailure(rawKey);
+                if (inherited != null) {
+                    result.set(candidateIndex, inherited);
+                    continue;
+                }
                 try {
-                    normalizedKeys.add(provider.normalizeQueryKey(
-                            candidateValue(keyHandle, candidateIndex, groupIndex)));
+                    Object normalized = provider.normalizeQueryKey(rawKey);
+                    int localIndex = candidateIndex - start;
+                    normalizedKeys.set(localIndex, normalized);
+                    healthyKeys[localIndex] = true;
+                    uniqueKeys.add(normalized);
                 } catch (RuntimeException error) {
-                    throw new IllegalArgumentException(
-                            "Invalid key for online batch group " + groupIndex + " ("
-                                    + context.onlineGroupExecutionId(groupIndex)
-                                    + "), candidate "
-                                    + context.candidateIndexInGroup(candidateIndex)
-                                    + ": " + error.getMessage(),
-                            error);
+                    result.set(candidateIndex, newFailure(node, context, candidateIndex, error));
+                    state.addOperatorFailures(1);
                 }
             }
-            Set<Object> uniqueKeys = new LinkedHashSet<>(normalizedKeys);
             totalUniqueKeys += uniqueKeys.size();
+            if (uniqueKeys.isEmpty()) continue;
 
             // 同一组只构建一次序列索引；sequence 对象包含具体选择视图，缓存不会跨视图误命中。
             SequenceIndexCacheKey indexCacheKey =
@@ -168,12 +235,26 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
                 }
                 index = cached;
             } else {
-                index = provider.build(sequence);
+                try {
+                    index = provider.build(sequence);
+                } catch (RuntimeException error) {
+                    int failureCount = 0;
+                    for (int localIndex = 0; localIndex < healthyKeys.length; localIndex++) {
+                        if (!healthyKeys[localIndex]) continue;
+                        int candidateIndex = start + localIndex;
+                        result.set(candidateIndex, newFailure(
+                                node, context, candidateIndex, error));
+                        failureCount++;
+                    }
+                    state.addOperatorFailures(failureCount);
+                    continue;
+                }
                 context.runtimeCache().put(
                         CacheKind.SEQUENCE_INDEX, indexCacheKey, index, state);
             }
 
             Map<Object, Integer> countsByKey = new LinkedHashMap<>();
+            Map<Object, RuntimeException> failuresByKey = new LinkedHashMap<>();
             // 查询结果先按唯一 key 收集，随后按 normalizedKeys 顺序追加，保持组内候选顺序不变。
             for (Object key : uniqueKeys) {
                 SequenceKeyCountCacheKey countCacheKey = new SequenceKeyCountCacheKey(
@@ -183,13 +264,31 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
                 if (cachedCount.hit()) {
                     countsByKey.put(key, (Integer) cachedCount.value());
                 } else {
-                    int count = index.count(key);
-                    context.runtimeCache().put(
-                            CacheKind.SEQUENCE_COUNT, countCacheKey, count, state);
-                    countsByKey.put(key, count);
+                    try {
+                        int count = index.count(key);
+                        context.runtimeCache().put(
+                                CacheKind.SEQUENCE_COUNT, countCacheKey, count, state);
+                        countsByKey.put(key, count);
+                    } catch (RuntimeException error) {
+                        failuresByKey.put(key, error);
+                    }
                 }
             }
-            for (Object key : normalizedKeys) result.add(countsByKey.get(key));
+            int queryFailureCount = 0;
+            for (int localIndex = 0; localIndex < normalizedKeys.size(); localIndex++) {
+                if (!healthyKeys[localIndex]) continue;
+                int candidateIndex = start + localIndex;
+                Object key = normalizedKeys.get(localIndex);
+                RuntimeException error = failuresByKey.get(key);
+                if (error == null) {
+                    result.set(candidateIndex, countsByKey.get(key));
+                } else {
+                    result.set(candidateIndex, newFailure(
+                            node, context, candidateIndex, error));
+                    queryFailureCount++;
+                }
+            }
+            state.addOperatorFailures(queryFailureCount);
         }
         state.setDedupCounts(context.candidateCount(), totalUniqueKeys);
         return CandidateBatchValue.owned(result, node.logicalValueShape());
@@ -240,5 +339,34 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         List<Object> result = new ArrayList<>(candidateCount);
         for (int index = 0; index < candidateCount; index++) result.add(handle.raw());
         return result;
+    }
+
+    private static EvaluationFailure inheritedFailure(Object value) {
+        return value instanceof EvaluationFailure failure ? failure : null;
+    }
+
+    private static List<Object> repeatedFailure(int count, EvaluationFailure failure) {
+        return new ArrayList<Object>(java.util.Collections.nCopies(count, failure));
+    }
+
+    private static EvaluationFailure newFailure(
+            PhysicalNode node,
+            ExecutionContext context,
+            int candidateIndex,
+            RuntimeException error) {
+        return EvaluationFailure.batch(
+                node.physicalNodeId(),
+                candidateLocation(context, candidateIndex),
+                error);
+    }
+
+    private static String candidateLocation(
+            ExecutionContext context,
+            int candidateIndex) {
+        if (!context.isOnlineBatch()) return "candidate " + candidateIndex;
+        int groupIndex = context.candidateGroupIndex(candidateIndex);
+        return "online batch group " + groupIndex + " ("
+                + context.onlineGroupExecutionId(groupIndex) + "), candidate "
+                + context.candidateIndexInGroup(candidateIndex);
     }
 }

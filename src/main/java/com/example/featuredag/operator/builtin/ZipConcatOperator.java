@@ -2,12 +2,12 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
-import com.example.featuredag.operator.BatchOperatorKernel;
 import com.example.featuredag.operator.BatchOperatorResult;
-import com.example.featuredag.operator.ListBatchColumn;
+import com.example.featuredag.operator.BatchOperatorResultBuilder;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
+import com.example.featuredag.operator.RecoverableBatchOperatorKernel;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,7 +17,7 @@ import java.util.Map;
 
 /** 逐位置拼接两个或更多等长序列，可用末尾对象字面量覆盖分隔符。 */
 public final class ZipConcatOperator extends AbstractBuiltinOperator
-        implements BatchOperatorKernel {
+        implements RecoverableBatchOperatorKernel {
     public ZipConcatOperator() {
         super("zip_concat", 2, Integer.MAX_VALUE, true, true);
     }
@@ -54,13 +54,18 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
 
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> result = new ArrayList<Object>(call.rowCount());
+        BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
         // 同组、同序列身份、同分隔符的组合只拼接一次，随后按 Batch 原行序复用结果。
         Map<ZipBatchKey, Object> values = new LinkedHashMap<ZipBatchKey, Object>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+            Object[] rowArguments = new Object[call.arguments().size()];
+            for (int index = 0; index < rowArguments.length; index++) {
+                rowArguments[index] = call.arguments().get(index).valueAt(rowIndex);
+            }
+            int groupIndex = call.layout().groupIndexAt(rowIndex);
             try {
-                int sequenceCount = call.arguments().size();
-                Object last = call.arguments().get(sequenceCount - 1).valueAt(rowIndex);
+                int sequenceCount = rowArguments.length;
+                Object last = rowArguments[sequenceCount - 1];
                 String delimiter = "#";
                 if (last instanceof Map<?, ?>) {
                     sequenceCount--;
@@ -75,21 +80,21 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
                 // 比先建 List 再 toArray 少一次分配；命中缓存时完全不必再碰 zipSequences。
                 Object[] sequenceValues = new Object[sequenceCount];
                 for (int index = 0; index < sequenceCount; index++) {
-                    sequenceValues[index] = call.arguments().get(index).valueAt(rowIndex);
+                    sequenceValues[index] = rowArguments[index];
                 }
                 ZipBatchKey key = new ZipBatchKey(
-                        call.layout().groupIndexAt(rowIndex), sequenceValues, delimiter);
+                        groupIndex, sequenceValues, delimiter);
                 Object value = values.get(key);
                 if (value == null) {
                     value = zipSequences(Arrays.asList(sequenceValues), sequenceCount, delimiter);
                     values.put(key, value);
                 }
-                result.add(value);
+                result.addValue(value);
             } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
+                result.addFailure(error);
             }
         }
-        return new BatchOperatorResult(ListBatchColumn.owned(result));
+        return result.build();
     }
 
     private List<String> zipSequences(

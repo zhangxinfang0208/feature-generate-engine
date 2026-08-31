@@ -28,6 +28,7 @@ import com.example.featuredag.runtime.ExecutionDiagnostics;
 import com.example.featuredag.runtime.ExecutionPhase;
 import com.example.featuredag.runtime.ExecutionResult;
 import com.example.featuredag.runtime.ExecutionStatus;
+import com.example.featuredag.runtime.FeatureEvaluationException;
 import com.example.featuredag.runtime.ListSequenceValue;
 import com.example.featuredag.runtime.NodeExecutionSnapshot;
 import com.example.featuredag.runtime.ObservabilityOptions;
@@ -147,8 +148,7 @@ public final class FeatureDagEngine {
             throw error;
         } catch (RuntimeException error) {
             markFailure(observation, error);
-            throw new FeatureGenerationException(
-                    error.getMessage(), planId, request.executionId(), null, error);
+            throw generationFailure(error, request.executionId());
         } finally {
             publishObservation(observation);
         }
@@ -173,8 +173,7 @@ public final class FeatureDagEngine {
             throw error;
         } catch (RuntimeException error) {
             markFailure(observation, error);
-            throw new FeatureGenerationException(
-                    error.getMessage(), planId, request.executionId(), null, error);
+            throw generationFailure(error, request.executionId());
         } finally {
             publishObservation(observation);
         }
@@ -202,8 +201,7 @@ public final class FeatureDagEngine {
             throw error;
         } catch (RuntimeException error) {
             markFailure(observation, error);
-            throw new FeatureGenerationException(
-                    error.getMessage(), planId, request.executionId(), null, error);
+            throw generationFailure(error, request.executionId());
         } finally {
             publishObservation(observation);
         }
@@ -611,6 +609,16 @@ public final class FeatureDagEngine {
                 error.getMessage(), featureSetName, version, planId, null, error);
     }
 
+    private FeatureGenerationException generationFailure(
+            RuntimeException error,
+            String executionId) {
+        String featureName = error instanceof FeatureEvaluationException featureFailure
+                ? featureFailure.featureName()
+                : null;
+        return new FeatureGenerationException(
+                error.getMessage(), planId, executionId, featureName, error);
+    }
+
     private static final class ExecutionObservation {
         private final String executionId;
         private final int groupCount;
@@ -707,6 +715,8 @@ public final class FeatureDagEngine {
                             state.dedupInputCount(),
                             state.uniqueInputCount(),
                             state.fallbackUsed(),
+                            state.operatorFailureCount(),
+                            state.fallbackCount(),
                             state.error() == null ? null : state.error().getClass().getName()));
                 }
             }

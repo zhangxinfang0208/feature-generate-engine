@@ -1,0 +1,23 @@
+表达式语法校验通过。
+
+发现以下 BASE 特征：
+- auid_hwdsp_clk_crtv_clstid_seq_time_365d
+- auid_hwdsp_clk_slotid_seq_time_365d
+- timestamp_s
+
+请从前台复制以上 BASE 特征的当前配置。
+请保留前台已有字段，不要先手工补充或改写。
+
+回复样例：
+
+```json
+{
+  "features": [
+    {
+      "name": "auid_hwdsp_clk_crtv_clstid_seq_time_365d",
+      "raw_name": "auid_hwdsp_clk_crtv_clstid_seq_time_365d",
+      "catalog": "/business/current/path"
+    }
+  ]
+}
+```

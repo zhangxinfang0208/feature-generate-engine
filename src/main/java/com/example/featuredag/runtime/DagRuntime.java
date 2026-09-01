@@ -402,10 +402,11 @@ public final class DagRuntime {
                     originalRow,
                     error == null
                             ? result.values().valueAt(localRow)
+                            // 行失败与抛出路径保持同一消息格式，recovering 不得丢失算子与位置上下文。
                             : EvaluationFailure.batch(
                                     node.physicalNodeId(),
                                     evaluationLocation(domain, originalRow, context),
-                                    error));
+                                    batchRowFailure(operatorName, domain, originalRow, context, error)));
         }
         return merged;
     }
@@ -731,7 +732,8 @@ public final class DagRuntime {
             EvaluationFailure failure = failed.failure();
             if (defaultValue == null) {
                 throw new FeatureEvaluationException(
-                        featureName, failure.location(), failure.cause());
+                        featureName, failure.physicalNodeId(),
+                        failure.location(), failure.cause());
             }
             state.setFallbackUsed(true);
             state.addFallbacks(1);
@@ -740,7 +742,8 @@ public final class DagRuntime {
         EvaluationFailure batchFailure = firstBatchFailure(handle);
         if (batchFailure != null && defaultValue == null) {
             throw new FeatureEvaluationException(
-                    featureName, batchFailure.location(), batchFailure.cause());
+                    featureName, batchFailure.physicalNodeId(),
+                    batchFailure.location(), batchFailure.cause());
         }
         if (defaultValue == null) return handle;
 

@@ -36,6 +36,7 @@ import com.example.featuredag.runtime.ObservationDetailLevel;
 import com.example.featuredag.runtime.OfflineBatchValue;
 import com.example.featuredag.runtime.PhysicalExecutorRegistry;
 import com.example.featuredag.runtime.RequestBatchValue;
+import com.example.featuredag.runtime.RuntimeNodeExecutionException;
 import com.example.featuredag.runtime.RuntimeNodeState;
 import com.example.featuredag.runtime.RuntimeObservabilityController;
 import com.example.featuredag.runtime.RuntimeObserver;
@@ -148,7 +149,7 @@ public final class FeatureDagEngine {
             throw error;
         } catch (RuntimeException error) {
             markFailure(observation, error);
-            throw generationFailure(error, request.executionId());
+            throw generationFailure(request.executionId(), error);
         } finally {
             publishObservation(observation);
         }
@@ -173,7 +174,7 @@ public final class FeatureDagEngine {
             throw error;
         } catch (RuntimeException error) {
             markFailure(observation, error);
-            throw generationFailure(error, request.executionId());
+            throw generationFailure(request.executionId(), error);
         } finally {
             publishObservation(observation);
         }
@@ -201,7 +202,7 @@ public final class FeatureDagEngine {
             throw error;
         } catch (RuntimeException error) {
             markFailure(observation, error);
-            throw generationFailure(error, request.executionId());
+            throw generationFailure(request.executionId(), error);
         } finally {
             publishObservation(observation);
         }
@@ -473,8 +474,60 @@ public final class FeatureDagEngine {
                             Map.of(),
                             context.nodeStates(),
                             context.runtimeCache().snapshot()));
-            throw error;
+            throw attachRuntimeNodeContext(context, error);
         }
+    }
+
+    private RuntimeException attachRuntimeNodeContext(
+            ExecutionContext context,
+            RuntimeException error) {
+        // PR#21 兜底未命中：失败经 FailedValueHandle 在特征边界转成 FeatureEvaluationException，
+        // 节点状态不再置 FAILED，改从异常携带的物理节点精确定位（PR#27）。
+        if (error instanceof FeatureEvaluationException featureFailure) {
+            PhysicalNode node = planNodeById(featureFailure.physicalNodeId());
+            if (node == null) return error;
+            List<String> affected = plan.affectedFeatureNames(node.physicalNodeId());
+            if (affected.isEmpty()) affected = List.of(featureFailure.featureName());
+            return new RuntimeNodeExecutionException(node, affected, error);
+        }
+        for (PhysicalNode node : plan.nodes()) {
+            RuntimeNodeState state = context.nodeStates().get(node.physicalNodeId());
+            if (state == null || state.status() != ExecutionStatus.FAILED) continue;
+            if (node.executorType() != ExecutorType.GENERIC_OPERATOR
+                    && node.executorType() != ExecutorType.SPECIALIZED) {
+                return error;
+            }
+            // L2→API：公共边界用规划期目标集合补齐错误上下文，Runtime 仍保留原始异常协议（C1/C8-C10）。
+            return new RuntimeNodeExecutionException(
+                    node, plan.affectedFeatureNames(node.physicalNodeId()), error);
+        }
+        return error;
+    }
+
+    private PhysicalNode planNodeById(String physicalNodeId) {
+        for (PhysicalNode node : plan.nodes()) {
+            if (node.physicalNodeId().equals(physicalNodeId)) return node;
+        }
+        return null;
+    }
+
+    private FeatureGenerationException generationFailure(
+            String executionId,
+            RuntimeException error) {
+        if (error instanceof RuntimeNodeExecutionException nodeFailure) {
+            return FeatureGenerationException.forFeatureNames(
+                    nodeFailure.getMessage(),
+                    planId,
+                    executionId,
+                    nodeFailure.affectedFeatureNames(),
+                    nodeFailure);
+        }
+        // PR#21 兜底未命中路径：FeatureEvaluationException 自带单特征现场，保持归因不丢。
+        String featureName = error instanceof FeatureEvaluationException featureFailure
+                ? featureFailure.featureName()
+                : null;
+        return new FeatureGenerationException(
+                error.getMessage(), planId, executionId, featureName, error);
     }
 
     private void publishRuntimeTrace(String executionId, ExecutionResult result) {
@@ -607,16 +660,6 @@ public final class FeatureDagEngine {
             String planId) {
         return new FeatureDagInitializationException(
                 error.getMessage(), featureSetName, version, planId, null, error);
-    }
-
-    private FeatureGenerationException generationFailure(
-            RuntimeException error,
-            String executionId) {
-        String featureName = error instanceof FeatureEvaluationException featureFailure
-                ? featureFailure.featureName()
-                : null;
-        return new FeatureGenerationException(
-                error.getMessage(), planId, executionId, featureName, error);
     }
 
     private static final class ExecutionObservation {

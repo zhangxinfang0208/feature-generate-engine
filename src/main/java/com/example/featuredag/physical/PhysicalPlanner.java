@@ -17,7 +17,9 @@ import com.example.featuredag.physical.rewrite.PhysicalRewriteRegistry;
 import com.example.featuredag.planning.NodePlanningMetadata;
 import com.example.featuredag.planning.OptimizedLogicalPlan;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -68,6 +70,9 @@ public final class PhysicalPlanner {
         Map<String, String> logicalSlots = new HashMap<>();
         List<PhysicalNode> physicalNodes = new ArrayList<>();
         Map<String, String> outputFeatureSlots = new LinkedHashMap<>();
+        Map<String, List<String>> affectedFeaturesByLogicalNode =
+                affectedTargetFeaturesByLogicalNode(dag);
+        Map<String, List<String>> affectedFeaturesByPhysicalNode = new LinkedHashMap<>();
         int sequence = 0;
 
         for (String logicalNodeId : dag.topologicalOrder()) {
@@ -111,6 +116,10 @@ public final class PhysicalPlanner {
             }
             logicalSlots.put(logicalNodeId, outputSlot);
             physicalNodes.add(physicalNode);
+            affectedFeaturesByPhysicalNode.put(
+                    physicalNode.physicalNodeId(),
+                    affectedTargetFeatures(
+                            physicalNode.logicalNodeIds(), affectedFeaturesByLogicalNode));
 
             if (logicalNode instanceof FeatureOutputNode output
                     && dag.rootNodeIds().contains(output.nodeId())) {
@@ -125,7 +134,51 @@ public final class PhysicalPlanner {
             throw new IllegalStateException("Not every logical feature root has a physical output slot");
         }
         // C9/C10：物理计划固化执行器、阶段、模式、缓存和物化策略，运行时不得临时改写。
-        return new PhysicalPlan(planId, environment, physicalNodes, outputFeatureSlots);
+        return new PhysicalPlan(
+                planId,
+                environment,
+                physicalNodes,
+                outputFeatureSlots,
+                affectedFeaturesByPhysicalNode);
+    }
+
+    /**
+     * C8：从每个目标根反向遍历可达祖先，在规划期固化节点影响的目标特征集合。
+     * canonical 公共节点会自然聚合多个目标；运行时只读取结果，不重新遍历逻辑 DAG。
+     */
+    private static Map<String, List<String>> affectedTargetFeaturesByLogicalNode(LogicalDag dag) {
+        Map<String, LinkedHashSet<String>> mutable = new LinkedHashMap<>();
+        for (Map.Entry<String, String> output : dag.featureOutputNodeIds().entrySet()) {
+            if (!dag.rootNodeIds().contains(output.getValue())) continue;
+            Set<String> visited = new LinkedHashSet<>();
+            Deque<String> pending = new ArrayDeque<>();
+            pending.push(output.getValue());
+            while (!pending.isEmpty()) {
+                String nodeId = pending.pop();
+                if (!visited.add(nodeId)) continue;
+                mutable.computeIfAbsent(nodeId, ignored -> new LinkedHashSet<>())
+                        .add(output.getKey());
+                for (var input : dag.node(nodeId).inputs()) {
+                    pending.push(input.nodeId());
+                }
+            }
+        }
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        for (Map.Entry<String, LinkedHashSet<String>> entry : mutable.entrySet()) {
+            result.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return result;
+    }
+
+    /** 融合物理节点合并全部 consumed logical node 的目标集合，保持配置中的目标顺序。 */
+    private static List<String> affectedTargetFeatures(
+            List<String> logicalNodeIds,
+            Map<String, List<String>> affectedFeaturesByLogicalNode) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String logicalNodeId : logicalNodeIds) {
+            result.addAll(affectedFeaturesByLogicalNode.getOrDefault(logicalNodeId, List.of()));
+        }
+        return List.copyOf(result);
     }
 
     private PhysicalNode createGenericPhysicalNode(

@@ -18,6 +18,8 @@ public final class PhysicalPlanPrinter {
                     .append(" cache=").append(node.cachePolicy())
                     .append(" materialization=").append(node.materializationPolicy())
                     .append(" logical=").append(node.logicalNodeIds())
+                    .append(" affectedFeatures=")
+                    .append(plan.affectedFeatureNames(node.physicalNodeId()))
                     .append(" config=").append(node.executorConfig())
                     .append('\n');
         }

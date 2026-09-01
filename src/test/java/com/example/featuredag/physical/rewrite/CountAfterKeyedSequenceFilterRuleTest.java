@@ -92,6 +92,16 @@ public class CountAfterKeyedSequenceFilterRuleTest {
         assertFalse("融合不得跳过带 dft 的衍生特征边界", match.isPresent());
     }
 
+    @Test
+    public void registryKeepsRewriteAfterExecutorGainsFailureRecovery() {
+        Map<String, PhysicalRewrite> failFastRewrites = selectRewrites(false);
+        assertTrue("无 dft 路径仍可使用既有融合", !failFastRewrites.isEmpty());
+        assertTrue(failFastRewrites.values().iterator().next().failureRecoverySupported());
+
+        Map<String, PhysicalRewrite> recoveredRewrites = selectRewrites(true);
+        assertTrue("带 dft 的路径可使用已支持失败恢复的融合", !recoveredRewrites.isEmpty());
+    }
+
     private static Optional<PhysicalRewrite> matchRewrite(EntityScope sequenceScope) {
         OperatorRegistry registry = new OperatorRegistry()
                 .register(new FakeKeyedFilterOperator())
@@ -117,6 +127,37 @@ public class CountAfterKeyedSequenceFilterRuleTest {
 
         return new CountAfterKeyedSequenceFilterRule()
                 .match(optimized, aggregateNodeId, ExecutionEnvironment.ONLINE, registry);
+    }
+
+    private static Map<String, PhysicalRewrite> selectRewrites(boolean withDefault) {
+        OperatorRegistry registry = new OperatorRegistry()
+                .register(new FakeKeyedFilterOperator())
+                .register(new FakeCardinalityOperator());
+        FeatureDefinition.Builder result = FeatureDefinition.builder()
+                .name("result")
+                .role(FeatureRole.DERIVED)
+                .dataType(DataType.INT)
+                .expressionContent("myagg(myfilter(seq, cand_key))")
+                .outputPolicy(OutputPolicy.OUTPUT);
+        if (withDefault) result.defaultValue(-1);
+        List<FeatureDefinition> definitions = List.of(
+                FeatureDefinition.builder()
+                        .name("seq")
+                        .role(FeatureRole.RAW)
+                        .dataType(DataType.STRING)
+                        .addEntityScope(EntityScope.USER)
+                        .sourceBinding("seq")
+                        .declaredValueShape(ValueShape.SEQUENCE)
+                        .build(),
+                FeatureDefinition.raw("cand_key", DataType.STRING, EntityScope.ITEM, null),
+                result.build());
+        LogicalDag dag = new LogicalDagBuilder(new ExpressionParser(), registry)
+                .build(definitions, Set.of("result"));
+        OptimizedLogicalPlan optimized = new LogicalDagOptimizer(registry).analyze(dag);
+
+        return new PhysicalRewriteRegistry()
+                .register(new CountAfterKeyedSequenceFilterRule())
+                .select(optimized, ExecutionEnvironment.ONLINE, registry);
     }
 
     private static final class FakeKeyedFilterOperator implements OperatorDefinition {

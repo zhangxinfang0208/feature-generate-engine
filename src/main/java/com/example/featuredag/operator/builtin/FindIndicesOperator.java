@@ -2,12 +2,12 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
-import com.example.featuredag.operator.BatchOperatorKernel;
 import com.example.featuredag.operator.BatchOperatorResult;
-import com.example.featuredag.operator.ListBatchColumn;
+import com.example.featuredag.operator.BatchOperatorResultBuilder;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
+import com.example.featuredag.operator.RecoverableBatchOperatorKernel;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,7 +18,7 @@ import java.util.Objects;
 
 /** 返回目标值在序列中的全部逻辑下标，未命中时返回不可变空列表。 */
 public final class FindIndicesOperator extends AbstractBuiltinOperator
-        implements BatchOperatorKernel {
+        implements RecoverableBatchOperatorKernel {
     public FindIndicesOperator() {
         super("find_indices", 2, 2, true, true);
     }
@@ -35,30 +35,31 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
 
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
-        List<Object> result = new ArrayList<Object>(call.rowCount());
+        BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
         // 候选批可能用多个 target 查询同一序列，先按序列身份构建 value→positions 索引再复用。
         Map<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>> indexes =
                 new LinkedHashMap<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+            Object sequence = call.arguments().get(0).valueAt(rowIndex);
+            Object target = call.arguments().get(1).valueAt(rowIndex);
+            int groupIndex = call.layout().groupIndexAt(rowIndex);
             try {
-                Object sequence = call.arguments().get(0).valueAt(rowIndex);
                 OperatorSupport.IdentityBatchKey key = OperatorSupport.identityBatchKey(
-                        call.layout().groupIndexAt(rowIndex), sequence);
+                        groupIndex, sequence);
                 Map<Object, List<Integer>> index = indexes.get(key);
                 if (index == null) {
                     index = buildIndex(sequence);
                     indexes.put(key, index);
                 }
-                Object target = call.arguments().get(1).valueAt(rowIndex);
                 List<Integer> positions = index.get(target);
-                result.add(positions == null
+                result.addValue(positions == null
                         ? Collections.<Integer>emptyList()
                         : positions);
             } catch (RuntimeException error) {
-                throw OperatorSupport.batchFailure(rowIndex, error);
+                result.addFailure(error);
             }
         }
-        return new BatchOperatorResult(ListBatchColumn.owned(result));
+        return result.build();
     }
 
     private List<Integer> find(Object rawSequence, Object target) {

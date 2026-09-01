@@ -24,6 +24,8 @@ public record NodeExecutionSnapshot(
         int inputCount,
         int uniqueInputCount,
         boolean fallbackUsed,
+        int operatorFailureCount,
+        int fallbackCount,
         String errorType) {
 
     public NodeExecutionSnapshot {
@@ -49,6 +51,9 @@ public record NodeExecutionSnapshot(
         if (durationNanos < 0) throw new IllegalArgumentException("durationNanos must not be negative");
         if (inputCount < 0 || uniqueInputCount < 0 || uniqueInputCount > inputCount) {
             throw new IllegalArgumentException("Invalid dedup counters");
+        }
+        if (operatorFailureCount < 0 || fallbackCount < 0) {
+            throw new IllegalArgumentException("Recovery counters must not be negative");
         }
         Objects.requireNonNull(cacheStats, "cacheStats");
         if (cacheStats.isEmpty()) {
@@ -87,6 +92,8 @@ public record NodeExecutionSnapshot(
                 inputCount,
                 uniqueInputCount,
                 fallbackUsed,
+                0,
+                0,
                 errorType);
     }
 }

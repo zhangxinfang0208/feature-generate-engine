@@ -22,6 +22,8 @@ public final class RuntimeNodeState {
     private int uniqueInputCount;
     private Throwable error;
     private boolean fallbackUsed;
+    private int operatorFailureCount;
+    private int fallbackCount;
     private OperatorInvocationKind operatorInvocationKind;
     private BatchDomain batchDomain;
     private int batchRowCount;
@@ -43,6 +45,8 @@ public final class RuntimeNodeState {
     public int uniqueInputCount() { return uniqueInputCount; }
     public Throwable error() { return error; }
     public boolean fallbackUsed() { return fallbackUsed; }
+    public int operatorFailureCount() { return operatorFailureCount; }
+    public int fallbackCount() { return fallbackCount; }
     public OperatorInvocationKind operatorInvocationKind() { return operatorInvocationKind; }
     public BatchDomain batchDomain() { return batchDomain; }
     public int batchRowCount() { return batchRowCount; }
@@ -85,6 +89,14 @@ public final class RuntimeNodeState {
         this.uniqueInputCount = uniqueCount;
     }
     void setFallbackUsed(boolean value) { this.fallbackUsed = value; }
+    void addOperatorFailures(int count) {
+        if (count < 0) throw new IllegalArgumentException("Operator failure count must not be negative");
+        this.operatorFailureCount += count;
+    }
+    void addFallbacks(int count) {
+        if (count < 0) throw new IllegalArgumentException("Fallback count must not be negative");
+        this.fallbackCount += count;
+    }
     void recordOperatorInvocation(
             OperatorInvocationKind invocationKind,
             BatchDomain domain,
@@ -120,6 +132,8 @@ public final class RuntimeNodeState {
         copy.uniqueInputCount = uniqueInputCount;
         copy.error = error;
         copy.fallbackUsed = fallbackUsed;
+        copy.operatorFailureCount = operatorFailureCount;
+        copy.fallbackCount = fallbackCount;
         copy.operatorInvocationKind = operatorInvocationKind;
         copy.batchDomain = batchDomain;
         copy.batchRowCount = batchRowCount;

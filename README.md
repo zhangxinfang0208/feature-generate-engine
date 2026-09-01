@@ -14,13 +14,13 @@
 | `log_base` | `log_base(value, base, maxValue)` | value/base 支持等长序列与标量广播，maxValue 保持共享标量 |
 | `slice_by_indices` | `slice_by_indices(sequence, indices)` | 按下标选取序列元素 |
 | `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
-| `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标 |
+| `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标并保持源顺序 |
 | `get_seq_length` | `get_seq_length(sequence)` | 返回序列长度 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
-| `concat` | `concat(value1, value2, ...)` | 使用 `#` 拼接两个或更多标量值 |
-| `list_concat` | `list_concat(sequence, suffixSequence)` | 将第二个序列首元素广播到第一个序列并拼接 |
-| `hit` | `hit(eventSequence, keySequence)` | 按字符串 key 序列过滤事件序列 |
+| `concat` | `concat(value1, value2, ...)` | 使用可配置分隔符拼接两个或更多标量 |
+| `list_concat` | `list_concat(sequence, suffixSequence, config?)` | 将后缀序列首元素广播并逐元素拼接 |
+| `hit` | `hit(eventSequence, keys)` | 按 key 集合过滤事件序列 |
 | `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
 | `to_int` | `to_int(value)` | 数值或十进制数字字符串标量/序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
@@ -34,7 +34,23 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 17 个（包括 `min`、`max`、`add`、`sub`、`mul`、`div`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 17 个（包括 `find_indices_any`、`concat`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+
+## 算子异常与衍生默认值
+
+在特征 DAG 内执行时，所有已注册算子（包括公共扩展入口注册的算子）的 Kernel 若抛出
+`RuntimeException`，运行时会把失败传递到所属衍生特征的 `FEATURE_OUTPUT` 边界：
+
+- 特征配置了非空 `dft`：Single 使用一次默认值；Batch 只替换失败的 row、request group 或
+  candidate，健康单元保持原顺序和值并继续执行；
+- 特征未配置非空 `dft`：本次生成仍失败，公共 `FeatureGenerationException` 保留特征名和原始 cause；
+- 嵌套表达式中的失败单元会短路后续算子。短路只跳过该失败单元，不会终止进程，也不会阻止
+  其他健康 Batch 单元或无关 DAG 分支执行；
+- 引擎不会重试失败算子。直接调用 `OperatorRegistry.evaluate/evaluateBatch` 仍保持 fail-fast。
+
+该能力只覆盖算子 Kernel 内的运行期异常。配置、表达式解析/推断、RAW 解码与绑定、DAG/物理计划、
+Batch 协议、缓存类型、输出编码错误以及 `Error` 不会被衍生 `dft` 掩盖。完整边界和扩展兼容规则见
+[`docs/architecture/operator-failure-default-fallback.md`](docs/architecture/operator-failure-default-fallback.md)。
 
 数值极值和四则运算的序列契约见
 [`docs/architecture/numeric-sequence-operators.md`](docs/architecture/numeric-sequence-operators.md)。
@@ -112,6 +128,7 @@ Demo 源码本身只使用 JDK 1.8 语法/API，但运行完整项目仍需要 J
 - [`docs/architecture/calc-delta-seq.md`](docs/architecture/calc-delta-seq.md)
 - [`docs/architecture/operator-optimization-extension.md`](docs/architecture/operator-optimization-extension.md)
 - [`docs/architecture/operator-single-batch-execution.md`](docs/architecture/operator-single-batch-execution.md)
+- [`docs/architecture/operator-failure-default-fallback.md`](docs/architecture/operator-failure-default-fallback.md)
 - [`docs/architecture/online-grouped-batch-execution.md`](docs/architecture/online-grouped-batch-execution.md)
 - [`docs/architecture/runtime-observability.md`](docs/architecture/runtime-observability.md)
 - [`docs/architecture/physical-node-fusion.md`](docs/architecture/physical-node-fusion.md)

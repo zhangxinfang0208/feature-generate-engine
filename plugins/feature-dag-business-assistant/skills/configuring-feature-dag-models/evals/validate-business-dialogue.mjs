@@ -47,6 +47,12 @@ function validateAdditionArrays() {
   return blocks;
 }
 
+function requireAddition(properties, rawName, dataType, dataValue) {
+  assert(properties.some((property) => property.raw_name === rawName
+    && property.data_type === dataType && property.data_value === dataValue),
+  `Expected ${rawName}=${JSON.stringify(dataValue)} as ${dataType}.`);
+}
+
 assert(output.length > 0, "Output is empty.");
 assert(!output.startsWith("{"), "Business output must be concise text, not a protocol JSON envelope.");
 assert(!output.startsWith("```"), "The whole business response must not be wrapped in a code fence.");
@@ -107,6 +113,42 @@ if (scenario === "MISSING_EXPRESSION") {
   assert(properties.some((property) => property.raw_name === "seq_max_length"
     && property.data_type === "NUMBER" && property.data_value === 1),
     "Reachable add result must include numeric seq_max_length=1.");
+} else if (scenario === "SEQUENCE_ADD") {
+  includes("最终校验：FAIL");
+  includes("目标特征：target_seq");
+  const properties = validateAdditionArrays().flat();
+  requireAddition(properties, "type", "STRING", "INT");
+  requireAddition(properties, "value_shape", "STRING", "SEQUENCE");
+  requireAddition(properties, "entity_scopes", "LIST", '["USER"]');
+  requireAddition(properties, "seq_max_length", "NUMBER", 3);
+  assert(!properties.some((property) => property.raw_name === "seq_max_length"
+    && property.data_value === 1), "Sequence add must not reuse scalar length 1.");
+} else if (scenario === "APPEND_CONTRACT") {
+  includes("最终校验：FAIL");
+  includes("目标特征：appended");
+  assert(!output.includes("缺少可用语义契约"), "append must have an available contract.");
+  const properties = validateAdditionArrays().flat();
+  requireAddition(properties, "type", "STRING", "STRING");
+  requireAddition(properties, "value_shape", "STRING", "SEQUENCE");
+  requireAddition(properties, "entity_scopes", "LIST", '["USER","SCENE"]');
+  requireAddition(properties, "seq_max_length", "NUMBER", 3);
+} else if (scenario === "JOIN_CONTRACT") {
+  includes("最终校验：FAIL");
+  includes("目标特征：joined");
+  assert(!output.includes("缺少可用语义契约"), "join must have an available contract.");
+  const properties = validateAdditionArrays().flat();
+  requireAddition(properties, "type", "STRING", "STRING");
+  requireAddition(properties, "value_shape", "STRING", "SCALAR");
+  requireAddition(properties, "entity_scopes", "LIST", '["USER"]');
+  requireAddition(properties, "seq_max_length", "NUMBER", 1);
+} else if (scenario === "SEQUENCE_DISCRETE_LOG") {
+  includes("最终校验：FAIL");
+  includes("目标特征：transformed");
+  const properties = validateAdditionArrays().flat();
+  requireAddition(properties, "type", "STRING", "DOUBLE");
+  requireAddition(properties, "value_shape", "STRING", "SEQUENCE");
+  requireAddition(properties, "entity_scopes", "LIST", '["USER","SCENE"]');
+  requireAddition(properties, "seq_max_length", "NUMBER", 5);
 } else if (scenario === "UNKNOWN_OPERATOR") {
   includes("配置补充项已生成，请按特征复制到前台。");
   includes("DERIVED 特征 future_output：");

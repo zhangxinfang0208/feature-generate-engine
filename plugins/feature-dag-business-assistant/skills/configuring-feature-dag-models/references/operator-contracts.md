@@ -18,21 +18,21 @@
 ## `discrete`
 
 - **Signature and arity:** `discrete(value, boundaries)`，恰好 2 个参数。
-- **Static input type/shape constraints:** 构造期不检查输入类型或形状。可靠业务配置使用数值 `SCALAR` 的 `value`，以及有限数值组成的 `SEQUENCE` 边界。
-- **Output type and shape:** 固定推断为 `INT` / `SCALAR`；桶号从 `0` 开始，值等于边界时进入右侧桶。
+- **Static input type/shape constraints:** `value` 必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示，但运行时每个元素仍必须是数值。`boundaries` 必须是数值 `SEQUENCE`；数组字面量同样可暂以 `OBJECT` 元素类型进入推断。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 元素类型固定为 `INT`；`value` 为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`。桶号从 `0` 开始，值等于边界时进入右侧桶。
 - **Entity-scope propagation:** 所有输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** `value` 必须是有限 `Number`；`boundaries` 必须是 `List`，每项为有限数值且严格递增。空边界列表合法并返回 `0`。
+- **`seq_max_length` propagation:** 标量输出为 `1`；序列输出逐项保持 `value` 的长度，安全上界为 `M0`，未知时询问业务。
+- **Runtime-only checks:** 标量 `value` 或其每个序列元素必须是有限 `Number`；`boundaries` 必须是 `OperatorSequence` 或 `List`，每项为有限数值且严格递增。空边界序列合法，所有值都落入桶 `0`。
 - **Configuration-object keys, when present:** 无；第二参数是边界序列，不是配置对象。
 
 ## `log_base`
 
 - **Signature and arity:** `log_base(value, base, upbound)`，恰好 3 个参数。
-- **Static input type/shape constraints:** 构造期不检查输入类型或形状。可靠业务配置让三个参数都为数值 `SCALAR`。
-- **Output type and shape:** 固定推断为 `DOUBLE` / `SCALAR`，计算 `log(min(value, upbound)) / log(base)`。
+- **Static input type/shape constraints:** `value` 与 `base` 必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`upbound` 必须是数值 `SCALAR`。不支持事件序列、对象标量或其他形状。
+- **Output type and shape:** 元素类型固定为 `DOUBLE`；`value` 或 `base` 任一为 `SEQUENCE` 时输出 `SEQUENCE`，两者都为标量时输出 `SCALAR`。逐元素计算 `log(min(value, upbound)) / log(base)`。
 - **Entity-scope propagation:** 所有输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 三个值都必须是有限 `Number`；`value > 0`、`upbound > 0`、`base > 0` 且 `base != 1`。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出长度等于参与计算的序列长度；一条序列时使用其上界，多条序列时运行时要求等长，所有所需上界已知时安全上界为 `min(M0, M1, ...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列逐位置广播；`value` 与 `base` 都是序列时必须等长。每个参与值及共享 `upbound` 都必须是有限 `Number`；`value > 0`、`upbound > 0`、`base > 0` 且 `base != 1`。元素失败会标明逻辑序列下标。
 - **Configuration-object keys, when present:** 无。
 
 ## `slice_by_indices`
@@ -105,6 +105,26 @@
 - **Runtime-only checks:** 末尾运行时值为 `Map` 时才作为配置；值参数若为 `List`、`OperatorSequence` 或 `Map` 则失败。其他值（含 `null`）使用 `String.valueOf`。
 - **Configuration-object keys, when present:** `delimiter`，缺失或值为 `null` 时默认 `"#"`，其他值用 `String.valueOf`；未知键当前被忽略。
 
+## `append`
+
+- **Signature and arity:** `append(left, right)`，恰好 2 个参数。
+- **Static input type/shape constraints:** 两个输入都必须是 `SCALAR` 或 `SEQUENCE`，且不得为 `OBJECT` 或 `EVENT_SEQUENCE`。元素类型必须相同；数值类型允许沿 `INT -> BIGINT -> DOUBLE` 取安全公共类型，`UNKNOWN` 采用另一侧已知类型，其他异型组合失败。
+- **Output type and shape:** 固定输出 `SEQUENCE`；元素类型为两输入的公共类型。参数按左后右的顺序展开，标量各贡献一个元素，序列贡献其全部元素。
+- **Entity-scope propagation:** 两个输入实体域的并集。
+- **`seq_max_length` propagation:** 每个标量参数贡献 `1`，每个序列参数贡献其已知上界；安全上界为两侧贡献之和。例如序列加标量为 `M0 + 1`，两条序列为 `M0 + M1`。任一所需序列上界未知时询问业务。
+- **Runtime-only checks:** 序列可为 `OperatorSequence` 或 `List`；普通对象值或对象元素失败。数值元素按公共宽度归一化，非数值元素必须保持兼容类别；结果列表不可变，`null` 可作为普通元素。
+- **Configuration-object keys, when present:** 无。
+
+## `join`
+
+- **Signature and arity:** `join(sequence, [delimiter])`，1 或 2 个参数。
+- **Static input type/shape constraints:** 第一输入必须是非 `OBJECT`、非 `EVENT_SEQUENCE` 的 `SEQUENCE`；可选第二输入必须是 `STRING` / `SCALAR`。
+- **Output type and shape:** 固定推断为 `STRING` / `SCALAR`；按序列顺序把元素转换为字符串并使用分隔符连接。
+- **Entity-scope propagation:** 所有输入实体域的并集。
+- **`seq_max_length` propagation:** `1`。
+- **Runtime-only checks:** 第一输入必须是 `OperatorSequence` 或 `List`，对象元素失败；可选分隔符必须实际为 `String`，缺省时使用 `"#"`。空序列返回空字符串，单元素不添加分隔符，普通 `null` 元素输出字符串 `"null"`。
+- **Configuration-object keys, when present:** 无；分隔符是第二个字符串标量参数，不是配置对象。
+
 ## `list_concat`
 
 - **Signature and arity:** `list_concat(sequence, suffix_sequence, [config])`，2 或 3 个参数。
@@ -168,59 +188,59 @@
 ## `min`
 
 - **Signature and arity:** `min(value0, value1, ...)`，至少 2 个参数。
-- **Static input type/shape constraints:** 构造期只拒绝类型为 `EVENT_SEQUENCE` 的输入，不检查其他类型是否数值，也不检查 `SCALAR` 形状。可靠业务配置让所有输入均为数值 `SCALAR`。
-- **Output type and shape:** 形状固定为 `SCALAR`；推断类型按 `DOUBLE > BIGINT > INT` 取输入宽度上界（没有 `DOUBLE` / `BIGINT` 时当前实现落为 `INT`）。精确比较，相等时保留最左值。
+- **Static input type/shape constraints:** 每个输入必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 任一输入为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`；元素类型按 `DOUBLE > BIGINT > INT` 取输入宽度上界（没有 `DOUBLE` / `BIGINT` 时为 `INT`）。每个位置精确比较，相等时保留最左值。
 - **Entity-scope propagation:** 所有输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 每个值必须是有限 `Number`；返回胜出参数的原运行时数值载体。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出等于参与序列的共同运行时长度；所有序列上界已知时安全上界为 `min(Mi...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列广播，多条序列必须等长；每个位置的值必须是有限 `Number`，返回该位置胜出参数的原运行时数值载体。`min(sequence)` 仍非法，不能当作序列聚合。
 - **Configuration-object keys, when present:** 无。
 
 ## `max`
 
 - **Signature and arity:** `max(value0, value1, ...)`，至少 2 个参数。
-- **Static input type/shape constraints:** 构造期只拒绝类型为 `EVENT_SEQUENCE` 的输入，不检查其他类型是否数值，也不检查 `SCALAR` 形状。可靠业务配置让所有输入均为数值 `SCALAR`。
-- **Output type and shape:** 形状固定为 `SCALAR`；推断类型按 `DOUBLE > BIGINT > INT` 取输入宽度上界（没有 `DOUBLE` / `BIGINT` 时当前实现落为 `INT`）。精确比较，相等时保留最左值。
+- **Static input type/shape constraints:** 每个输入必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 任一输入为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`；元素类型按 `DOUBLE > BIGINT > INT` 取输入宽度上界（没有 `DOUBLE` / `BIGINT` 时为 `INT`）。每个位置精确比较，相等时保留最左值。
 - **Entity-scope propagation:** 所有输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 每个值必须是有限 `Number`；返回胜出参数的原运行时数值载体。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出等于参与序列的共同运行时长度；所有序列上界已知时安全上界为 `min(Mi...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列广播，多条序列必须等长；每个位置的值必须是有限 `Number`，返回该位置胜出参数的原运行时数值载体。`max(sequence)` 仍非法，不能当作序列聚合。
 - **Configuration-object keys, when present:** 无。
 
 ## `add`
 
 - **Signature and arity:** `add(value, addend)`，恰好 2 个参数；这两个名字也是可用的命名参数。
-- **Static input type/shape constraints:** 构造期只拒绝类型为 `EVENT_SEQUENCE` 的输入，不检查其他类型是否数值，也不检查 `SCALAR` 形状。可靠业务配置让两输入均为数值 `SCALAR`。
-- **Output type and shape:** 固定为 `SCALAR`；推断类型按 `DOUBLE > BIGINT > INT` 取宽度上界（没有 `DOUBLE` / `BIGINT` 时当前实现落为 `INT`）。
+- **Static input type/shape constraints:** 两个输入必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 任一输入为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`；元素类型按 `DOUBLE > BIGINT > INT` 取宽度上界（没有 `DOUBLE` / `BIGINT` 时为 `INT`）。
 - **Entity-scope propagation:** 两个输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 两个值都必须是有限 `Number`；精确十进制相加。双方均为整型载体时返回 `Long` 并要求结果在 64 位范围内；任一为非整型数值载体时返回有限 `Double`。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出等于参与序列的共同运行时长度；所有序列上界已知时安全上界为 `min(Mi...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列广播，两条序列必须等长；每个位置的两个值都必须是有限 `Number`。精确十进制相加；双方均为整型载体时返回 `Long` 并要求结果在 64 位范围内，任一为非整型数值载体时返回有限 `Double`。
 - **Configuration-object keys, when present:** 无。
 
 ## `sub`
 
 - **Signature and arity:** `sub(value, margin)`，恰好 2 个参数；这两个名字也是可用的命名参数，计算 `value - margin`。
-- **Static input type/shape constraints:** 构造期只拒绝类型为 `EVENT_SEQUENCE` 的输入，不检查其他类型是否数值，也不检查 `SCALAR` 形状。可靠业务配置让两输入均为数值 `SCALAR`。
-- **Output type and shape:** 固定为 `SCALAR`；推断类型按 `DOUBLE > BIGINT > INT` 取宽度上界（没有 `DOUBLE` / `BIGINT` 时当前实现落为 `INT`）。
+- **Static input type/shape constraints:** 两个输入必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 任一输入为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`；元素类型按 `DOUBLE > BIGINT > INT` 取宽度上界（没有 `DOUBLE` / `BIGINT` 时为 `INT`）。
 - **Entity-scope propagation:** 两个输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 两个值都必须是有限 `Number`；精确十进制相减。双方均为整型载体时返回 `Long` 并要求结果在 64 位范围内；任一为非整型数值载体时返回有限 `Double`。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出等于参与序列的共同运行时长度；所有序列上界已知时安全上界为 `min(Mi...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列广播，两条序列必须等长；每个位置的两个值都必须是有限 `Number`。精确十进制相减；双方均为整型载体时返回 `Long` 并要求结果在 64 位范围内，任一为非整型数值载体时返回有限 `Double`。
 - **Configuration-object keys, when present:** 无。
 
 ## `mul`
 
 - **Signature and arity:** `mul(value, multiplier)`，恰好 2 个参数；这两个名字也是可用的命名参数。
-- **Static input type/shape constraints:** 构造期只拒绝类型为 `EVENT_SEQUENCE` 的输入，不检查其他类型是否数值，也不检查 `SCALAR` 形状。可靠业务配置让两输入均为数值 `SCALAR`。
-- **Output type and shape:** 固定为 `SCALAR`；推断类型按 `DOUBLE > BIGINT > INT` 取宽度上界（没有 `DOUBLE` / `BIGINT` 时当前实现落为 `INT`）。
+- **Static input type/shape constraints:** 两个输入必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 任一输入为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`；元素类型按 `DOUBLE > BIGINT > INT` 取宽度上界（没有 `DOUBLE` / `BIGINT` 时为 `INT`）。
 - **Entity-scope propagation:** 两个输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 两个值都必须是有限 `Number`；精确十进制相乘。双方均为整型载体时返回 `Long` 并要求结果在 64 位范围内；任一为非整型数值载体时返回有限 `Double`。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出等于参与序列的共同运行时长度；所有序列上界已知时安全上界为 `min(Mi...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列广播，两条序列必须等长；每个位置的两个值都必须是有限 `Number`。精确十进制相乘；双方均为整型载体时返回 `Long` 并要求结果在 64 位范围内，任一为非整型数值载体时返回有限 `Double`。
 - **Configuration-object keys, when present:** 无。
 
 ## `div`
 
 - **Signature and arity:** `div(value, divisor)`，恰好 2 个参数；这两个名字也是可用的命名参数。
-- **Static input type/shape constraints:** 构造期只拒绝类型为 `EVENT_SEQUENCE` 的输入，不检查其他类型是否数值，也不检查 `SCALAR` 形状。可靠业务配置让两输入均为数值 `SCALAR`。
-- **Output type and shape:** 固定推断为 `DOUBLE` / `SCALAR`。
+- **Static input type/shape constraints:** 两个输入必须是数值 `SCALAR` 或 `SEQUENCE`；数组字面量在静态阶段可暂以 `OBJECT` / `SEQUENCE` 表示。`EVENT_SEQUENCE`、对象标量及其他形状失败。
+- **Output type and shape:** 元素类型固定为 `DOUBLE`；任一输入为 `SEQUENCE` 时输出 `SEQUENCE`，否则输出 `SCALAR`。
 - **Entity-scope propagation:** 两个输入实体域的并集。
-- **`seq_max_length` propagation:** `1`。
-- **Runtime-only checks:** 两个值都必须是有限 `Number`；分母为零（含 `-0.0`）时返回 `0.0`；否则以 `DECIMAL64` 精度求商，超出有限 `double` 范围时失败。
+- **`seq_max_length` propagation:** 标量输出为 `1`。序列输出等于参与序列的共同运行时长度；所有序列上界已知时安全上界为 `min(Mi...)`，否则询问业务。
+- **Runtime-only checks:** 标量向序列广播，两条序列必须等长；每个位置的两个值都必须是有限 `Number`。分母为零（含 `-0.0`）时返回 `0.0`；否则以 `DECIMAL64` 精度求商，超出有限 `double` 范围时失败。
 - **Configuration-object keys, when present:** 无。

@@ -1,0 +1,49 @@
+最终校验：FAIL
+
+目标特征：target_seq
+校验范围：target_seq 及其可达依赖
+校验边界：规则校验结果（未调用远程校验器）
+
+问题：
+特征 target_seq：
+- 缺少字段 type
+- 缺少字段 value_shape
+- 缺少字段 entity_scopes
+- 缺少字段 seq_max_length
+
+DERIVED 特征 target_seq：
+
+```json
+[
+  {
+    "raw_name": "type",
+    "data_value": "INT",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "value_shape",
+    "data_value": "SEQUENCE",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "entity_scopes",
+    "data_value": "[\"USER\"]",
+    "data_type": "LIST",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "seq_max_length",
+    "data_value": 3,
+    "data_type": "NUMBER",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
+
+请将以上补充项复制到前台后，使用相同目标特征和完整模型重新提交最终校验。

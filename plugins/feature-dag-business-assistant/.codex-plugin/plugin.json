@@ -1,6 +1,6 @@
 {
   "name": "feature-dag-business-assistant",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Help business users prepare and validate Feature DAG expressions and model feature metadata.",
   "author": {
     "name": "Feature DAG Engine"

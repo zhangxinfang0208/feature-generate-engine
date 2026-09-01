@@ -79,6 +79,46 @@
       ]
     },
     {
+      "id": "sequence-add-contract",
+      "purpose": "A numeric sequence input makes add return a sequence and preserve its safe length bound.",
+      "prompt": "请最终校验目标特征 target_seq。完整模型：{\"feature_set_name\":\"sequence_add_case\",\"version\":\"1\",\"features\":[{\"name\":\"user_seq\",\"definition_type\":\"BASE\",\"type\":\"INT\",\"value_shape\":\"SEQUENCE\",\"entity_scopes\":[\"USER\"],\"seq_max_length\":3,\"to_use\":true},{\"name\":\"target_seq\",\"definition_type\":\"DERIVED\",\"expression\":\"add(user_seq, 1)\",\"output_policy\":\"OUTPUT\",\"to_use\":true}]}。",
+      "assertions": [
+        "Reports FAIL only for the missing target_seq declarations",
+        "Emits type=INT, value_shape=SEQUENCE, entity_scopes=[USER], and numeric seq_max_length=3 additions",
+        "Does not reuse the scalar add length 1"
+      ]
+    },
+    {
+      "id": "append-contract",
+      "purpose": "append always returns a sequence and adds scalar and sequence length contributions.",
+      "prompt": "请最终校验目标特征 appended。完整模型：{\"feature_set_name\":\"append_case\",\"version\":\"1\",\"features\":[{\"name\":\"left_seq\",\"definition_type\":\"BASE\",\"type\":\"STRING\",\"value_shape\":\"SEQUENCE\",\"entity_scopes\":[\"USER\"],\"seq_max_length\":2,\"to_use\":true},{\"name\":\"right_value\",\"definition_type\":\"BASE\",\"type\":\"STRING\",\"value_shape\":\"SCALAR\",\"entity_scopes\":[\"SCENE\"],\"seq_max_length\":1,\"to_use\":true},{\"name\":\"appended\",\"definition_type\":\"DERIVED\",\"expression\":\"append(left_seq, right_value)\",\"output_policy\":\"OUTPUT\",\"to_use\":true}]}。",
+      "assertions": [
+        "Recognizes append as an available operator contract",
+        "Emits type=STRING, value_shape=SEQUENCE, entity_scopes=[USER,SCENE], and numeric seq_max_length=3 additions",
+        "Does not report OPERATOR_CONTRACT_UNAVAILABLE"
+      ]
+    },
+    {
+      "id": "join-contract",
+      "purpose": "join folds a sequence into a STRING scalar with fixed maximum length 1.",
+      "prompt": "请最终校验目标特征 joined。完整模型：{\"feature_set_name\":\"join_case\",\"version\":\"1\",\"features\":[{\"name\":\"tokens\",\"definition_type\":\"BASE\",\"type\":\"STRING\",\"value_shape\":\"SEQUENCE\",\"entity_scopes\":[\"USER\"],\"seq_max_length\":4,\"to_use\":true},{\"name\":\"joined\",\"definition_type\":\"DERIVED\",\"expression\":\"join(tokens, \\\"|\\\")\",\"output_policy\":\"OUTPUT\",\"to_use\":true}]}。",
+      "assertions": [
+        "Recognizes join as an available operator contract",
+        "Emits type=STRING, value_shape=SCALAR, entity_scopes=[USER], and numeric seq_max_length=1 additions",
+        "Does not report OPERATOR_CONTRACT_UNAVAILABLE"
+      ]
+    },
+    {
+      "id": "sequence-discrete-log-contract",
+      "purpose": "Nested discrete and log_base calls preserve sequence shape while changing element types.",
+      "prompt": "请最终校验目标特征 transformed。完整模型：{\"feature_set_name\":\"discrete_log_case\",\"version\":\"1\",\"features\":[{\"name\":\"values\",\"definition_type\":\"BASE\",\"type\":\"DOUBLE\",\"value_shape\":\"SEQUENCE\",\"entity_scopes\":[\"USER\"],\"seq_max_length\":5,\"to_use\":true},{\"name\":\"boundaries\",\"definition_type\":\"BASE\",\"type\":\"DOUBLE\",\"value_shape\":\"SEQUENCE\",\"entity_scopes\":[\"SCENE\"],\"seq_max_length\":3,\"to_use\":true},{\"name\":\"transformed\",\"definition_type\":\"DERIVED\",\"expression\":\"log_base(discrete(values, boundaries), 2, 16)\",\"output_policy\":\"OUTPUT\",\"to_use\":true}]}。",
+      "assertions": [
+        "Emits type=DOUBLE and value_shape=SEQUENCE for transformed",
+        "Emits entity_scopes=[USER,SCENE] and numeric seq_max_length=5",
+        "Does not collapse discrete or log_base to scalar output"
+      ]
+    },
+    {
       "id": "unknown-operator-incomplete",
       "purpose": "A syntactically valid unknown operator must not receive invented semantics.",
       "prompt": "衍生特征 future_output 的表达式是 future_transform(base_a)。base_a 已配置 definition_type=BASE、type=STRING、value_shape=SCALAR、entity_scopes=[USER]、seq_max_length=1、to_use=true。请生成衍生特征新增属性。",

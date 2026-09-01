@@ -21,5 +21,8 @@ Raw representative outputs are stored in the adjacent `business-dialogue-green-*
 - `derived_name=expression` shorthand preserved the DERIVED name and extracted BASE references from the right-hand expression.
 - A missing outer parenthesis stopped before BASE work.
 - Reachable-only final validation ignored an unrelated malformed feature and emitted numeric `seq_max_length=1` in the five-key frontend format.
+- Sequence `add` emitted `SEQUENCE` with the input length instead of the scalar length `1`.
+- `append` emitted a summed sequence bound, while `join` emitted `STRING` / `SCALAR` with length `1`.
+- Nested sequence `discrete` and `log_base` preserved sequence shape and the value-sequence length bound.
 - A missing operator contract requested unresolved DERIVED facts without inventing semantics or an early verdict.
 - The approved long expression retained `timestamp_s` as a BASE reference and requested exactly the three absent BASE entries in AST order.

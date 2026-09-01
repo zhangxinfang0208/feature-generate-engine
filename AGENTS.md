@@ -4,7 +4,7 @@
 
 本项目是一个基于 Java 21 的三层特征表达式 DAG 引擎参考实现。生产代码位于 `src/main/java/com/example/featuredag/`：`definition`、`expression` 和 `config` 定义输入；`logical` 构建逻辑 DAG；`planning` 和 `physical` 生成物理计划；`runtime` 执行计划；`operator` 提供算子协议与实现。
 
-标准注册表当前显式提供以下 21 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`find_indices_any`、`get_seq_length`、`count_distinct`、`zip_concat`、`concat`、`list_concat`、`hit`、`group_count_concat`、`calc_delta_seq`、`to_int`、`to_bigint`、`min`、`max`、`add`、`sub`、`mul`、`div`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护唯一的显式清单，`OperatorRegistry.standard()` 直接注册该清单，不再增加纯转发聚合层。增删标准算子时必须同步清单、独立 JUnit 4 注册测试、使用文档和对应算子测试。
+标准注册表当前显式提供以下 23 个算子：`discrete`、`log_base`、`slice_by_indices`、`find_indices`、`find_indices_any`、`get_seq_length`、`count_distinct`、`zip_concat`、`concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`、`calc_delta_seq`、`to_int`、`to_bigint`、`min`、`max`、`add`、`sub`、`mul`、`div`。每个算子必须有独立 `.java` 文件，`InitialBusinessOperators` 维护唯一的显式清单，`OperatorRegistry.standard()` 直接注册该清单，不再增加纯转发聚合层。增删标准算子时必须同步清单、独立 JUnit 4 注册测试、使用文档和对应算子测试。
 
 仓库可以按业务主题提供标准算子的公共 API Demo、共享配置和调测脚本；单个 Demo 无需覆盖全部标准算子，但其使用的每个算子都必须来自标准注册表或通过公共扩展入口显式注册。`src/test/java/com/example/featuredag/DagEngineSelfTest.java` 为冻结的存量自测，后续增量需求不得修改；新增 UT 必须写成 `src/test/java` 下独立的 JUnit 4 `*Test.java` 文件（见「测试与提交」）。辅助脚本位于 `scripts/`，编译产物写入 `target/`。
 
@@ -26,7 +26,7 @@
 - `operator` 层通过 `OperatorSemantic` 声明逻辑语义，不得引用物理或运行时类型。
 - 每个业务算子单独实现元数据、推断和求值；注册类只装配实例，不承载业务逻辑。
 - `OperatorDefinition` 的 Single Kernel 是语义基准。Native `BatchOperatorKernel` 可选；未提供时使用 `SingleLoopBatchOperatorKernel`。
-- 当前 21 个标准算子中仅 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余算子（包括 `find_indices_any`、`concat`、`list_concat`、`hit`）由 `SingleLoopBatchOperatorKernel` 逐行适配。新增算子默认不提供原生 Batch，须按「每行可省计算量 × 批内重复度」成本模型评估后再实现；不得在没有基准数据时增加原生 Batch。
+- 当前 23 个标准算子中仅 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余算子（包括 `find_indices_any`、`concat`、`append`、`join`、`list_concat`、`hit`）由 `SingleLoopBatchOperatorKernel` 逐行适配。新增算子默认不提供原生 Batch，须按「每行可省计算量 × 批内重复度」成本模型评估后再实现；不得在没有基准数据时增加原生 Batch。
 - Batch 必须逐行等价于 Single，保持行数和顺序；Kernel 实例必须无请求状态且可并发复用。
 - `planning`、`physical`、`runtime` 禁止按业务算子名增加分支；DAG 模式通过 `PhysicalRewriteRule` 注册，专用算法通过 `PhysicalExecutorRegistry` 注册。
 - 缓存只允许 deterministic 且 sideEffectFree 的算子（`sideEffectFree()` 默认 false，内置算子经 `AbstractBuiltinOperator` 显式声明 true；新算子必须显式声明纯度）；缓存 key 必须覆盖域、具体序列视图和所有变化输入。

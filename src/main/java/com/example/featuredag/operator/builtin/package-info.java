@@ -1,8 +1,8 @@
 /**
  * Independent implementations for the standard operators: the eight operators in the
- * initial release plus find_indices_any, concat, list_concat, hit, group_count_concat, the
- * to_int / to_bigint / min / max numeric operators and the add / sub / mul / div arithmetic
- * operators.
+ * initial release plus find_indices_any, concat, append, join, list_concat, hit,
+ * group_count_concat, the to_int / to_bigint / min / max numeric operators and the
+ * add / sub / mul / div arithmetic operators.
  *
  * <p>Each operator owns its metadata, inference and evaluation behavior. The source in this
  * package intentionally uses Java 8-compatible language features and JDK APIs. Registration is

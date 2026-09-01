@@ -21,6 +21,8 @@ public final class InitialBusinessOperators {
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
                 new ConcatOperator(),
+                new AppendOperator(),
+                new JoinOperator(),
                 new ListConcatOperator(),
                 new HitOperator(),
                 new GroupCountConcatOperator(),

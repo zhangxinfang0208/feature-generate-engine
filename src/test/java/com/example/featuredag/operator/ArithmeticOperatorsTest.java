@@ -27,7 +27,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -45,7 +44,7 @@ public final class ArithmeticOperatorsTest {
             OperatorDefinition definition = registry.require(name);
             assertTrue(name + " deterministic", definition.deterministic());
             assertTrue(name + " sideEffectFree", definition.sideEffectFree());
-            assertFalse(name + " sequence view", definition.supportsSequenceView());
+            assertTrue(name + " sequence view", definition.supportsSequenceView());
             assertEquals(2, definition.minArguments());
             assertEquals(2, definition.maxArguments());
             assertEquals(

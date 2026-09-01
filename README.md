@@ -10,8 +10,8 @@
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
-| `discrete` | `discrete(value, boundaries)` | 返回数值所在分桶的零基下标 |
-| `log_base` | `log_base(value, base, maxValue)` | 对截断后的正数计算指定底数的对数 |
+| `discrete` | `discrete(value, boundaries)` | 对数值标量/序列分桶；序列元素共享同一组边界 |
+| `log_base` | `log_base(value, base, maxValue)` | value/base 支持等长序列与标量广播，maxValue 保持共享标量 |
 | `slice_by_indices` | `slice_by_indices(sequence, indices)` | 按下标选取序列元素 |
 | `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
 | `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标并保持源顺序 |
@@ -25,12 +25,12 @@
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
 | `to_int` | `to_int(value)` | 数值或十进制数字字符串标量/序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
 | `to_bigint` | `to_bigint(value)` | 数值或十进制数字字符串标量/序列转 64 位 bigint 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
-| `min` | `min(value1, value2, ...)` | 计算数值标量最小值，精确十进制比较，相等保留最左输入 |
-| `max` | `max(value1, value2, ...)` | 计算数值标量最大值，精确十进制比较，相等保留最左输入 |
-| `add` | `add(value1, value2)` | 数值标量加法，精确十进制求和后按输入载体定宽 |
-| `sub` | `sub(value1, value2)` | 数值标量减法（左操作数减右操作数） |
-| `mul` | `mul(value1, value2)` | 数值标量乘法，整型溢出直接失败不回绕 |
-| `div` | `div(value1, value2)` | 数值标量除法，固定 DOUBLE；分母为 0 返回 0.0（防除 0） |
+| `min` | `min(value1, value2, ...)` | 数值标量/等长序列逐元素最小值；标量广播，相等保留最左输入 |
+| `max` | `max(value1, value2, ...)` | 数值标量/等长序列逐元素最大值；标量广播，相等保留最左输入 |
+| `add` | `add(value1, value2)` | 数值标量/等长序列逐元素加法；标量广播 |
+| `sub` | `sub(value1, value2)` | 数值标量/等长序列逐元素减法；标量广播 |
+| `mul` | `mul(value1, value2)` | 数值标量/等长序列逐元素乘法；标量广播 |
+| `div` | `div(value1, value2)` | 数值标量/等长序列逐元素除法；标量广播，分母为 0 返回 0.0 |
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
@@ -51,6 +51,9 @@
 该能力只覆盖算子 Kernel 内的运行期异常。配置、表达式解析/推断、RAW 解码与绑定、DAG/物理计划、
 Batch 协议、缓存类型、输出编码错误以及 `Error` 不会被衍生 `dft` 掩盖。完整边界和扩展兼容规则见
 [`docs/architecture/operator-failure-default-fallback.md`](docs/architecture/operator-failure-default-fallback.md)。
+
+数值极值和四则运算的序列契约见
+[`docs/architecture/numeric-sequence-operators.md`](docs/architecture/numeric-sequence-operators.md)。
 
 ## 目录结构
 

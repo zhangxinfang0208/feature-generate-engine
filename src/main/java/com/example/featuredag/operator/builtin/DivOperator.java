@@ -1,7 +1,6 @@
 package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
-import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
@@ -11,7 +10,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * div：数值标量除法，固定推断并产出 DOUBLE。
+ * div：数值标量或等长序列除法，标量向序列广播，固定推断并产出 DOUBLE。
  *
  * <p>整型相除不做截断商（1/2 截断为 0 会吞掉比率信息），与 Hive/Spark 的
  * 整除提升 double 语义一致，因此宽度上界规则（numericResultType）不适用于除法。
@@ -29,13 +28,12 @@ public final class DivOperator extends AbstractBuiltinOperator {
             Arrays.asList("value", "divisor"));
 
     public DivOperator() {
-        super("div", 2, 2, true, false);
+        super("div", 2, 2, true, true);
     }
 
     @Override
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
-        OperatorSupport.rejectEventSequence(name(), inputs);
-        return OperatorSupport.fixedInference(inputs, DataType.DOUBLE, ValueShape.SCALAR);
+        return OperatorSupport.elementWiseNumericInference(name(), inputs, DataType.DOUBLE);
     }
 
     @Override
@@ -45,6 +43,10 @@ public final class DivOperator extends AbstractBuiltinOperator {
 
     @Override
     public Object evaluate(List<Object> arguments) {
+        return OperatorSupport.evaluateElementWise(arguments, name(), this::evaluateScalars);
+    }
+
+    private Object evaluateScalars(List<Object> arguments) {
         BigDecimal dividend = OperatorSupport.arithmeticOperand(arguments.get(0), name());
         BigDecimal divisor = OperatorSupport.arithmeticOperand(arguments.get(1), name());
         if (divisor.signum() == 0) {

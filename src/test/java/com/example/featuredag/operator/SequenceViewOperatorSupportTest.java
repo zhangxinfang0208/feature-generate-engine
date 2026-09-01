@@ -21,8 +21,8 @@ public final class SequenceViewOperatorSupportTest {
     public void sequenceViewCapabilitiesAndDirectEvaluation() {
         OperatorRegistry registry = OperatorRegistry.standard();
         Map<String, Boolean> expected = Map.ofEntries(
-                Map.entry("discrete", false),
-                Map.entry("log_base", false),
+                Map.entry("discrete", true),
+                Map.entry("log_base", true),
                 Map.entry("slice_by_indices", true),
                 Map.entry("find_indices", true),
                 Map.entry("get_seq_length", true),

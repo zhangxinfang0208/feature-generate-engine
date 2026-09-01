@@ -1,13 +1,12 @@
 package com.example.featuredag.operator.builtin;
 
-import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
 import java.util.List;
 
 /**
- * min：计算两个及以上数值标量中的最小值。
+ * min：计算两个及以上数值标量或等长序列中的最小值，标量向序列广播。
  *
  * <p>比较采用精确十进制（BigDecimal），消除 Long 与 Double 混比时的精度歧义；
  * 相等时保留最左输入，并返回胜出参数的原数值载体。输出类型推断：
@@ -19,18 +18,20 @@ import java.util.List;
  */
 public final class MinOperator extends AbstractBuiltinOperator {
     public MinOperator() {
-        super("min", 2, Integer.MAX_VALUE, true, false);
+        super("min", 2, Integer.MAX_VALUE, true, true);
     }
 
     @Override
     public OperatorInference infer(List<OperatorInputMetadata> inputs) {
-        OperatorSupport.rejectEventSequence(name(), inputs);
-        return OperatorSupport.fixedInference(
-                inputs, OperatorSupport.numericResultType(inputs), ValueShape.SCALAR);
+        return OperatorSupport.elementWiseNumericInference(
+                name(), inputs, OperatorSupport.numericResultType(inputs));
     }
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        return OperatorSupport.selectExtreme(arguments, true, name());
+        return OperatorSupport.evaluateElementWise(
+                arguments,
+                name(),
+                values -> OperatorSupport.selectExtreme(values, true, name()));
     }
 }

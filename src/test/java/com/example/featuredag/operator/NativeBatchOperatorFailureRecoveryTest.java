@@ -18,7 +18,8 @@ public final class NativeBatchOperatorFailureRecoveryTest {
     public void recoveryRoutingUsesOnlyCapableNativeKernels() {
         OperatorRegistry registry = OperatorRegistry.standard();
         for (String operatorName : Arrays.asList(
-                "find_indices", "count_distinct", "zip_concat", "calc_delta_seq")) {
+                "find_indices", "find_indices_any", "count_distinct",
+                "zip_concat", "calc_delta_seq")) {
             assertEquals(BatchKernelKind.NATIVE, registry.recoveringBatchKernelKind(operatorName));
         }
 

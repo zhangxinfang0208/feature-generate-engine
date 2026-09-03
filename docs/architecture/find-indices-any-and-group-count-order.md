@@ -14,7 +14,13 @@ find_indices_any(
 
 结果严格保持源序列顺序。`targets` 使用集合语义，重复目标不会重复产生下标；源序列中的重复命中会保留各自下标。空目标序列返回空结果，`null` 按普通值参与相等匹配。两个输入都必须推断为 `SEQUENCE`，输出固定为 `INT / SEQUENCE`，实体域取两个输入的并集。
 
-该算子支持 `OperatorSequence`，但没有原生 `BatchOperatorKernel`。在没有基准数据证明批内复用收益前，由 `SingleLoopBatchOperatorKernel` 逐行适配。
+该算子支持 `OperatorSequence`，并提供可恢复的原生 `BatchOperatorKernel`。在线候选批中，同一
+group 常用不同 `targets` 查询同一个请求级 `sequence`；Native Kernel 按
+`(group, sequence identity)` 只构建一次 `value -> positions` 索引，每行合并目标值对应的位置并
+重新按下标排序，因此保持源序列顺序、重复目标集合语义和逐行异常隔离。独立序列场景不具备索引复用，
+会直接使用标量适配器；少于 4 个连续共享行或短于 512 个元素的源序列使用线性扫描，命中位置或目标
+离散值达到四分之一时也从索引合并切回线性扫描，避免索引、合并和排序成本反噬。性能边界与验证数据见
+`docs/testing/find-indices-any-native-batch-performance-report.md`。
 
 ## `group_count_concat` 排序配置
 

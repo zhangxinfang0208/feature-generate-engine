@@ -26,7 +26,7 @@
 - `operator` 层通过 `OperatorSemantic` 声明逻辑语义，不得引用物理或运行时类型。
 - 每个业务算子单独实现元数据、推断和求值；注册类只装配实例，不承载业务逻辑。
 - `OperatorDefinition` 的 Single Kernel 是语义基准。Native `BatchOperatorKernel` 可选；未提供时使用 `SingleLoopBatchOperatorKernel`。
-- 当前 23 个标准算子中仅 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余算子（包括 `find_indices_any`、`concat`、`append`、`join`、`list_concat`、`hit`）由 `SingleLoopBatchOperatorKernel` 逐行适配。新增算子默认不提供原生 Batch，须按「每行可省计算量 × 批内重复度」成本模型评估后再实现；不得在没有基准数据时增加原生 Batch。
+- 当前 23 个标准算子中 `find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余算子（包括 `concat`、`append`、`join`、`list_concat`、`hit`）由 `SingleLoopBatchOperatorKernel` 逐行适配。新增算子默认不提供原生 Batch，须按「每行可省计算量 × 批内重复度」成本模型评估后再实现；不得在没有基准数据时增加原生 Batch。
 - Batch 必须逐行等价于 Single，保持行数和顺序；Kernel 实例必须无请求状态且可并发复用。
 - `planning`、`physical`、`runtime` 禁止按业务算子名增加分支；DAG 模式通过 `PhysicalRewriteRule` 注册，专用算法通过 `PhysicalExecutorRegistry` 注册。
 - 缓存只允许 deterministic 且 sideEffectFree 的算子（`sideEffectFree()` 默认 false，内置算子经 `AbstractBuiltinOperator` 显式声明 true；新算子必须显式声明纯度）；缓存 key 必须覆盖域、具体序列视图和所有变化输入。

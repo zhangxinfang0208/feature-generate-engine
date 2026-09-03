@@ -119,7 +119,7 @@ Native，兼容已有实现。
 恢复的路径，注册表只接受声明支持的 Rewrite；对应专用执行器必须对 Single/row/group/candidate
 提供与通用执行路径相同的失败范围和顺序语义。未声明支持时只禁用该次融合，不改变逻辑结果。
 
-当前规则 `CountAfterKeyedSequenceFilterRule` 匹配：
+可选规则 `CountAfterKeyedSequenceFilterRule`（默认不注册，需显式 `register` 启用）匹配：
 
 ```text
 SequenceCardinality(
@@ -199,8 +199,8 @@ slot 自然复用，不产生真实缓存 lookup，因此不计入 `RuntimeCache
 
 通用候选批去重路径（`CANDIDATE_KEY`）已移除：批内重复计算由原生 Batch 的 identity 键复用消除，
 未提供原生 Batch 的算子逐行计算。`CachePolicy.CANDIDATE_KEY`/`ExecutionMode.CANDIDATE_KEY`
-仅保留供融合改写（`CountAfterKeyedSequenceFilterRule`）标注融合执行器节点，不再由 Planner 授予
-普通算子。非确定性或有副作用算子仍必须使用 `CachePolicy.NONE`。
+仅保留供融合改写（`CountAfterKeyedSequenceFilterRule`，默认不注册）标注融合执行器节点，不再由
+Planner 授予普通算子。非确定性或有副作用算子仍必须使用 `CachePolicy.NONE`。
 
 ### 7.3 索引缓存
 

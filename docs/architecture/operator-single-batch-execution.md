@@ -63,7 +63,7 @@ Single 与 Native Batch Kernel 可以直接消费 operator 层的 `OperatorSeque
 ## 4. 缓存与批内复用
 
 通用候选批去重路径（CANDIDATE_KEY）已移除：批内重复计算由原生 Batch 的 identity 键复用消除
-（`find_indices`/`count_distinct`/`zip_concat`/`calc_delta_seq` 在 Kernel 内部按
+（`find_indices`/`find_indices_any`/`count_distinct`/`zip_concat`/`calc_delta_seq` 在 Kernel 内部按
 `(group, sequence, 参数)` 身份键缓存；其中 `calc_delta_seq` 的参数键覆盖 `base`、`direction`、
 `divisor` 和 `need_ceil`）；未提供原生 Batch 的算子由 `SCALAR_ADAPTER` 逐行计算。
 缓存资格仍以 deterministic 且 sideEffectFree 为准（C8 元数据）。
@@ -115,6 +115,7 @@ Single、SPECIALIZED 和非算子节点不携带 Batch 域，行数为零。
 ## 7. 测试要求
 
 - 首期 8 个算子中 `find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 Batch（批内按 identity 键复用）；`discrete`、`log_base`、`slice_by_indices`、`get_seq_length` 不提供原生 Batch（复用收益不足以覆盖批开销，实测劣化约 0.1x~0.3x），由 `SCALAR_ADAPTER` 逐行适配；
+- 增量算子中 `find_indices_any` 提供原生 Batch，按 `(group, sequence identity)` 复用源序列索引；
 - 每个标准 Native Batch 使用相同输入逐行对比 Single 结果；
 - `SCALAR_ADAPTER` 保持调用次数、顺序和异常语义；
 - `DIRECT` 保留具体 `OperatorSequence`，`MATERIALIZE` 只包含视图 selection 内的元素；

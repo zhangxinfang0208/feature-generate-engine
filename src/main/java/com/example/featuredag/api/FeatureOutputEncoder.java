@@ -7,6 +7,7 @@ import com.example.featuredag.runtime.ExternalValueMaterializer;
 import com.example.featuredag.runtime.ValueHandle;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,7 +65,7 @@ final class FeatureOutputEncoder {
     }
 
     List<?> encode(String featureName, ValueHandle handle) {
-        return encodeMaterialized(featureName, materializer.materialize(handle));
+        return encodeValue(featureName, Objects.requireNonNull(handle, "handle"));
     }
 
     List<?> encodeCandidateElement(String featureName, Object value) {
@@ -72,12 +73,16 @@ final class FeatureOutputEncoder {
     }
 
     List<?> encodeBatchElement(String featureName, Object value) {
-        return encodeMaterialized(featureName, materializer.materializeRaw(value));
+        return encodeValue(featureName, value);
     }
 
-    private List<?> encodeMaterialized(String featureName, Object value) {
+    private List<?> encodeValue(String featureName, Object rawValue) {
         OutputSpec spec = Objects.requireNonNull(
                 outputSpecs.get(featureName), "Unknown output feature: " + featureName);
+        // C6：长度规范化只发生于最终输出；物化器不遍历将被丢弃的序列后缀。
+        Object value = spec.shape() == ValueShape.SEQUENCE && spec.sequenceMaxLength() != null
+                ? materializer.materializeRaw(rawValue, spec.sequenceMaxLength())
+                : materializer.materializeRaw(rawValue);
         // 公共 API 始终返回 List：序列展开为元素列表，标量/对象包装为单元素列表。
         if (spec.shape() == ValueShape.SEQUENCE) {
             if (!(value instanceof List<?> list)) {
@@ -92,9 +97,8 @@ final class FeatureOutputEncoder {
     /** seq_max_length 是最终模型输入形状：超长截断，不足按 dft（含 null）补齐。 */
     private static List<?> normalizeSequence(List<?> values, OutputSpec spec) {
         Integer sequenceMaxLength = spec.sequenceMaxLength();
-        if (sequenceMaxLength == null) {
-            return FeatureValueCollections.immutableList(values);
-        }
+        // values 已由物化器构造并冻结，不需要再次进行防御复制。
+        if (sequenceMaxLength == null || values.size() == sequenceMaxLength) return values;
         int targetLength = sequenceMaxLength;
         List<Object> normalized = new ArrayList<>(targetLength);
         int copied = Math.min(values.size(), targetLength);
@@ -104,6 +108,6 @@ final class FeatureOutputEncoder {
         while (normalized.size() < targetLength) {
             normalized.add(spec.defaultValue());
         }
-        return FeatureValueCollections.immutableList(normalized);
+        return Collections.unmodifiableList(normalized);
     }
 }

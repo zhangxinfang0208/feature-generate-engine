@@ -6,10 +6,12 @@ import com.example.featuredag.config.FeatureOutputDescriptor;
 import com.example.featuredag.config.FeatureSetConfig;
 import com.example.featuredag.config.MappedFeatureSet;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.expression.ExpressionParser;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.LogicalDagBuilder;
 import com.example.featuredag.logical.LogicalDagPrinter;
+import com.example.featuredag.logical.SourceNode;
 import com.example.featuredag.operator.OperatorDefinition;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.physical.ExecutionEnvironment;
@@ -47,11 +49,14 @@ import com.example.featuredag.runtime.ValueHandle;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 
 public final class FeatureDagEngine {
@@ -61,6 +66,9 @@ public final class FeatureDagEngine {
     private final String planId;
     private final List<FeatureOutputDescriptor> outputs;
     private final LogicalDag logicalDag;
+    private final Set<String> requiredInputNames;
+    private final Set<String> requiredSharedInputNames;
+    private final Set<String> requiredCandidateInputNames;
     private final PhysicalPlan plan;
     private final DagRuntime runtime;
     private final FeatureInputDecoder inputDecoder;
@@ -87,6 +95,20 @@ public final class FeatureDagEngine {
         this.planId = planId;
         this.outputs = mapped.outputs();
         this.logicalDag = Objects.requireNonNull(logicalDag, "logicalDag");
+        Set<String> allInputs = new LinkedHashSet<>();
+        Set<String> sharedInputs = new LinkedHashSet<>();
+        Set<String> candidateInputs = new LinkedHashSet<>();
+        // C3/C7：只读已构建的可达源节点；与解码器一致，按 ITEM 域划分在线输入。
+        for (var node : logicalDag.orderedNodes()) {
+            if (node instanceof SourceNode source) {
+                allInputs.add(source.sourceBinding());
+                (source.entityScopes().contains(EntityScope.ITEM) ? candidateInputs : sharedInputs)
+                        .add(source.sourceBinding());
+            }
+        }
+        this.requiredInputNames = Collections.unmodifiableSet(allInputs);
+        this.requiredSharedInputNames = Collections.unmodifiableSet(sharedInputs);
+        this.requiredCandidateInputNames = Collections.unmodifiableSet(candidateInputs);
         this.plan = plan;
         this.runtime = runtime;
         this.inputDecoder = inputDecoder;
@@ -212,6 +234,19 @@ public final class FeatureDagEngine {
     public String version() { return version; }
     public String planId() { return planId; }
     public ExecutionEnvironment environment() { return environment; }
+
+    /**
+     * 当前目标图依赖的全部源输入键，可用于在封装请求前过滤业务字段。
+     * 返回初始化时计算的不可变集合，包含有默认值的源，不包含衍生节点或不可达源。
+     * 键与请求 Map 一致（当前配置使用 name，而非历史 raw_name）；离线行使用此集合。
+     */
+    public Set<String> requiredInputNames() { return requiredInputNames; }
+
+    /** 在线 sharedValues 使用的源输入键（不含 ITEM 域）；返回不可变集合。 */
+    public Set<String> requiredSharedInputNames() { return requiredSharedInputNames; }
+
+    /** 在线每个 candidate 使用的源输入键（包含 ITEM 域）；返回不可变集合。 */
+    public Set<String> requiredCandidateInputNames() { return requiredCandidateInputNames; }
 
     /** 返回初始化后不可变的逻辑 DAG 文本，适合本地调测打印。 */
     public String describeLogicalDag() { return LogicalDagPrinter.print(logicalDag); }

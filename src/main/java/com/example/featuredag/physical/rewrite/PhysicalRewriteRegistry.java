@@ -70,7 +70,12 @@ public final class PhysicalRewriteRegistry {
         return Map.copyOf(result);
     }
 
+    /**
+     * 标准注册表默认不注册任何改写规则；融合优化按需显式开启。
+     * 保留的启用口子：{@code new PhysicalRewriteRegistry().register(new CountAfterKeyedSequenceFilterRule())}
+     * 后经 PhysicalPlanner 的 (operators, rewriteRegistry) 构造器传入。
+     */
     public static PhysicalRewriteRegistry standard() {
-        return new PhysicalRewriteRegistry().register(new CountAfterKeyedSequenceFilterRule());
+        return new PhysicalRewriteRegistry();
     }
 }

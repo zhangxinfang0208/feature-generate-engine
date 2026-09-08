@@ -10,6 +10,7 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.physical.ExecutionEnvironment;
 import org.junit.Test;
 
+import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -18,19 +19,23 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public final class FindIndicesAnyOperatorTest {
     @Test
-    public void isRegisteredAsIndependentScalarAdapterOperator() {
+    public void isRegisteredAsRecoverableNativeBatchOperator() {
         OperatorRegistry registry = OperatorRegistry.standard();
 
         assertTrue(registry.find("find_indices_any").isPresent());
         assertEquals(2, registry.require("find_indices_any").minArguments());
         assertEquals(2, registry.require("find_indices_any").maxArguments());
-        assertEquals(BatchKernelKind.SCALAR_ADAPTER,
+        assertTrue(registry.require("find_indices_any") instanceof RecoverableBatchOperatorKernel);
+        assertEquals(BatchKernelKind.NATIVE,
                 registry.batchKernelKind("find_indices_any"));
+        assertEquals(BatchKernelKind.NATIVE,
+                registry.recoveringBatchKernelKind("find_indices_any"));
     }
 
     @Test
@@ -102,22 +107,85 @@ public final class FindIndicesAnyOperatorTest {
     }
 
     @Test
-    public void scalarBatchAdapterPreservesRowsAndOrder() {
+    public void nativeBatchPreservesRowsSourceOrderAndTargetSetSemantics() {
         OperatorRegistry registry = OperatorRegistry.standard();
+        List<String> source = Arrays.asList("a", "b", "a", "c", "b");
         BatchOperatorCall call = new BatchOperatorCall(
-                new OfflineLayout(2),
+                new OfflineLayout(3),
                 Arrays.<BatchColumn>asList(
-                        new ListBatchColumn(Arrays.<Object>asList(
-                                Arrays.asList("a", "b", "a"),
-                                Arrays.asList("x", "y", "z"))),
+                        new ListBatchColumn(Arrays.<Object>asList(source, source, source)),
                         new ListBatchColumn(Arrays.<Object>asList(
                                 Collections.singletonList("a"),
-                                Arrays.asList("z", "x")))));
+                                Arrays.asList("c", "a", "c"),
+                                Collections.emptyList()))));
 
         assertEquals(
-                Arrays.asList(Arrays.asList(0, 2), Arrays.asList(0, 2)),
+                Arrays.asList(
+                        Arrays.asList(0, 2),
+                        Arrays.asList(0, 2, 3),
+                        Collections.emptyList()),
                 ((ListBatchColumn) registry.evaluateBatch(
                         "find_indices_any", call).values()).values());
+    }
+
+    @Test
+    public void nativeBatchIndexesSharedSourceOncePerGroup() {
+        List<Object> sourceValues = new java.util.ArrayList<Object>();
+        for (int index = 0; index < 600; index++) {
+            sourceValues.add("v" + index);
+        }
+        CountingList source = new CountingList(sourceValues);
+        BatchOperatorCall call = new BatchOperatorCall(
+                new CandidateLayout(8, 4),
+                Arrays.<BatchColumn>asList(
+                        new ListBatchColumn(Arrays.<Object>asList(
+                                source, source, source, source,
+                                source, source, source, source)),
+                        new ListBatchColumn(Arrays.<Object>asList(
+                                Collections.singletonList("v1"),
+                                Collections.singletonList("v299"),
+                                Collections.singletonList("v599"),
+                                Collections.singletonList("missing"),
+                                Collections.singletonList("v2"),
+                                Collections.singletonList("v300"),
+                                Collections.singletonList("v598"),
+                                Collections.singletonList("missing")))));
+
+        BatchOperatorResult result = OperatorRegistry.standard().evaluateBatch(
+                "find_indices_any", call, BatchKernelKind.NATIVE);
+
+        for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
+            assertEquals(
+                    OperatorRegistry.standard().evaluate(
+                            "find_indices_any",
+                            Arrays.<Object>asList(
+                                    sourceValues,
+                                    call.arguments().get(1).valueAt(rowIndex))),
+                    result.values().valueAt(rowIndex));
+        }
+        assertEquals("the same source is scanned once in each group", 1200, source.readCount());
+    }
+
+    @Test
+    public void nativeBatchReportsInvalidTargetRowAndContinues() {
+        List<String> source = Arrays.asList("a", "b", "a");
+        BatchOperatorCall call = new BatchOperatorCall(
+                new OfflineLayout(3),
+                Arrays.<BatchColumn>asList(
+                        new ListBatchColumn(Arrays.<Object>asList(source, source, source)),
+                        new ListBatchColumn(Arrays.<Object>asList(
+                                Collections.singletonList("a"),
+                                "invalid",
+                                Collections.singletonList("b")))));
+
+        BatchOperatorResult result = OperatorRegistry.standard().evaluateBatchRecovering(
+                "find_indices_any", call, BatchKernelKind.NATIVE);
+
+        assertEquals(Arrays.asList(0, 2), result.values().valueAt(0));
+        assertNull(result.values().valueAt(1));
+        assertEquals(Collections.singletonList(1), result.values().valueAt(2));
+        assertEquals(Collections.singleton(1), result.rowFailures().keySet());
+        assertTrue(result.rowFailures().get(1) instanceof IllegalArgumentException);
     }
 
     @Test
@@ -195,5 +263,48 @@ public final class FindIndicesAnyOperatorTest {
         @Override public int rowCount() { return rowCount; }
         @Override public int groupIndexAt(int rowIndex) { return -1; }
         @Override public int indexInGroupAt(int rowIndex) { return rowIndex; }
+    }
+
+    private static final class CandidateLayout implements BatchLayout {
+        private final int rowCount;
+        private final int candidatesPerGroup;
+
+        private CandidateLayout(int rowCount, int candidatesPerGroup) {
+            this.rowCount = rowCount;
+            this.candidatesPerGroup = candidatesPerGroup;
+        }
+
+        @Override public BatchDomain domain() { return BatchDomain.ONLINE_CANDIDATE; }
+        @Override public int rowCount() { return rowCount; }
+        @Override public int groupIndexAt(int rowIndex) {
+            return rowIndex / candidatesPerGroup;
+        }
+        @Override public int indexInGroupAt(int rowIndex) {
+            return rowIndex % candidatesPerGroup;
+        }
+    }
+
+    private static final class CountingList extends AbstractList<Object> {
+        private final List<Object> values;
+        private int readCount;
+
+        private CountingList(List<Object> values) {
+            this.values = values;
+        }
+
+        @Override
+        public Object get(int index) {
+            readCount++;
+            return values.get(index);
+        }
+
+        @Override
+        public int size() {
+            return values.size();
+        }
+
+        private int readCount() {
+            return readCount;
+        }
     }
 }

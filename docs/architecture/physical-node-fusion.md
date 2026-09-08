@@ -103,12 +103,14 @@ sequenceCardinality(上述结果)               // 统计过滤后的元素个�
 
   构造器强制校验 `consumedNodeIds` 必须包含 `rootNodeId`（`PhysicalRewrite.java:40`）；
 - `PhysicalRewriteRegistry`（`physical/rewrite/PhysicalRewriteRegistry.java:17`）：规则注册表，
-  标准注册表当前只含一条规则 `CountAfterKeyedSequenceFilterRule`
-  （`PhysicalRewriteRegistry.java:64`）。
+  `standard()` 默认不注册任何规则；`CountAfterKeyedSequenceFilterRule` 保留为可选规则，
+  按需 `register` 后经 `PhysicalPlanner` 的 (operators, rewriteRegistry) 构造器启用。
 
-### 4.2 一个具体规则：CountAfterKeyedSequenceFilterRule
+### 4.2 一个具体规则：CountAfterKeyedSequenceFilterRule（默认不注册）
 
-它匹配的模式（`physical/rewrite/CountAfterKeyedSequenceFilterRule.java:26`）：
+它是当前仓库唯一的融合规则，默认不进入 `standard()` 注册表；需要开启时显式
+`new PhysicalRewriteRegistry().register(new CountAfterKeyedSequenceFilterRule())`
+并传给 `PhysicalPlanner`。它匹配的模式（`physical/rewrite/CountAfterKeyedSequenceFilterRule.java:26`）：
 
 ```text
 SequenceCardinality(              ← 根节点
@@ -282,7 +284,7 @@ feature:matching_count → slot:5
 | 规则接口 | `physical/rewrite/PhysicalRewriteRule.java` | :10 |
 | 改写描述 | `physical/rewrite/PhysicalRewrite.java` | :15 |
 | 规则注册与仲裁 | `physical/rewrite/PhysicalRewriteRegistry.java` | `select()` :29 |
-| 现有融合规则 | `physical/rewrite/CountAfterKeyedSequenceFilterRule.java` | `match()` :33 |
+| 可选融合规则（默认不注册） | `physical/rewrite/CountAfterKeyedSequenceFilterRule.java` | `match()` :33 |
 | 物理转换 | `physical/PhysicalPlanner.java` | `plan()` :51 |
 | 物理节点 | `physical/PhysicalNode.java` | :16 |
 | 执行器路由 | `runtime/DagRuntime.java` | :82 |

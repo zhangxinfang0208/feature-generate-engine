@@ -36,7 +36,7 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 19 个（包括 `find_indices_any`、`concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices` 的 Native Batch 还会按本批真实复用度在「建索引查表」与「逐行线性扫描」之间自适应选择。
+`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 18 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
 
 ## 算子异常与衍生默认值
 

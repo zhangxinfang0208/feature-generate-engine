@@ -20,6 +20,7 @@
 
 | 算子 | 注册/独立类 | 求值 | 非法输入 | DAG 类型与 shape | Batch 路由 |
 | --- | --- | --- | --- | --- | --- |
+| `find_indices_any` | 已覆盖 | 多目标集合匹配、源顺序 | 错误 shape、逐行异常隔离 | INT / SEQUENCE | NATIVE |
 | `list_concat` | 已覆盖 | 广播 `seq2[0]`、分隔符配置 | 空 `seq2`、事件元素、错误 shape | STRING / SEQUENCE | SCALAR_ADAPTER |
 | `hit` | 已覆盖 | key 集合过滤、顺序与重复事件 | 非事件输入、缺失/非字符串 key | EVENT_SEQUENCE / SEQUENCE | SCALAR_ADAPTER |
 

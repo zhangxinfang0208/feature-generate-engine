@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -50,8 +51,10 @@ public final class FeatureConfigLoader {
             }
             rejectLikelyTypos(
                     config.additionalProperties(), TOP_LEVEL_PROPERTIES, "top-level");
-            for (int index = 0; index < config.features().size(); index++) {
-                FeatureConfig feature = config.features().get(index);
+            // getter 返回防御性快照；每层循环只取一次，避免重复复制整个列表。
+            List<FeatureConfig> features = config.features();
+            for (int index = 0; index < features.size(); index++) {
+                FeatureConfig feature = features.get(index);
                 if (feature == null) {
                     throw new IllegalArgumentException(
                             "features[" + index + "] must not be null");
@@ -59,8 +62,9 @@ public final class FeatureConfigLoader {
                 // to_use=false 的条目不进入 DAG 定义映射；加载层也不对其
                 // 扩展字段或实体域施加进一步约束，仅保留 DTO 供映射层记录禁用名。
                 if (Boolean.FALSE.equals(feature.toUse())) continue;
-                for (int scopeIndex = 0; scopeIndex < feature.entityScopes().size(); scopeIndex++) {
-                    if (feature.entityScopes().get(scopeIndex) == null) {
+                List<String> entityScopes = feature.entityScopes();
+                for (int scopeIndex = 0; scopeIndex < entityScopes.size(); scopeIndex++) {
+                    if (entityScopes.get(scopeIndex) == null) {
                         throw new IllegalArgumentException(
                                 "features[" + index + "].entity_scopes[" + scopeIndex
                                         + "] must not be null");

@@ -375,45 +375,73 @@ public final class FeatureConfigMapper {
     private static Object convertDefault(Object value, DataType type, String featureName) {
         // 默认值在配置边界完成类型收窄，运行时命中默认分支时无需再次猜测或转换类型。
         if (value == null || type == DataType.UNKNOWN) return value;
-        return switch (type) {
-            case STRING -> {
-                if (!(value instanceof String)) throw invalidDefault(featureName, type, value);
-                yield value;
+        if (value instanceof String
+                && (type == DataType.INT || type == DataType.BIGINT || type == DataType.DOUBLE)) {
+            // C1/C6：前台字符串 dft 仅在配置边界适配；空白按数值零处理，整数须精确转换。
+            try {
+                String text = ((String) value).trim();
+                BigDecimal number = text.isEmpty() ? BigDecimal.ZERO : new BigDecimal(text);
+                switch (type) {
+                    case INT:
+                        return number.intValueExact();
+                    case BIGINT:
+                        return number.longValueExact();
+                    case DOUBLE:
+                        double result = number.doubleValue();
+                        if (!Double.isFinite(result)) throw invalidDefault(featureName, type, value);
+                        return result;
+                    default:
+                        throw new IllegalStateException("Unexpected numeric type: " + type);
+                }
+            } catch (ArithmeticException | NumberFormatException error) {
+                throw invalidDefault(featureName, type, value);
             }
-            case INT -> {
-                if (!(value instanceof Number number)) throw invalidDefault(featureName, type, value);
+        }
+        switch (type) {
+            case STRING: {
+                if (!(value instanceof String)) throw invalidDefault(featureName, type, value);
+                return value;
+            }
+            case INT: {
+                if (!(value instanceof Number)) throw invalidDefault(featureName, type, value);
+                Number number = (Number) value;
                 double doubleValue = number.doubleValue();
                 long longValue = number.longValue();
                 // 同时拒绝小数和超出 int 范围的整数，避免静默截断改变特征语义。
                 if (doubleValue != longValue || longValue < Integer.MIN_VALUE || longValue > Integer.MAX_VALUE) {
                     throw invalidDefault(featureName, type, value);
                 }
-                yield (int) longValue;
+                return (int) longValue;
             }
-            case BIGINT -> {
-                if (!(value instanceof Number number)) throw invalidDefault(featureName, type, value);
+            case BIGINT: {
+                if (!(value instanceof Number)) throw invalidDefault(featureName, type, value);
+                Number number = (Number) value;
                 try {
                     // 配置默认值必须是 long 范围内的精确整数，禁止小数截断或溢出回绕。
-                    yield Long.valueOf(new BigDecimal(number.toString()).longValueExact());
+                    return Long.valueOf(new BigDecimal(number.toString()).longValueExact());
                 } catch (ArithmeticException | NumberFormatException error) {
                     throw invalidDefault(featureName, type, value);
                 }
             }
-            case DOUBLE -> {
-                if (!(value instanceof Number number)) throw invalidDefault(featureName, type, value);
-                yield number.doubleValue();
+            case DOUBLE: {
+                if (!(value instanceof Number)) throw invalidDefault(featureName, type, value);
+                return ((Number) value).doubleValue();
             }
-            case BOOLEAN -> {
+            case BOOLEAN: {
                 if (!(value instanceof Boolean)) throw invalidDefault(featureName, type, value);
-                yield value;
+                return value;
             }
-            case OBJECT -> {
+            case OBJECT: {
                 if (!(value instanceof Map<?, ?>)) throw invalidDefault(featureName, type, value);
-                yield value;
+                return value;
             }
-            case EVENT_SEQUENCE -> throw invalidDefault(featureName, type, value);
-            case UNKNOWN -> value;
-        };
+            case EVENT_SEQUENCE:
+                throw invalidDefault(featureName, type, value);
+            case UNKNOWN:
+                return value;
+            default:
+                throw new IllegalStateException("Unexpected data type: " + type);
+        }
     }
 
     private static IllegalArgumentException invalidDefault(

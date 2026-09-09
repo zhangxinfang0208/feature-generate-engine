@@ -1,0 +1,29 @@
+表达式语法校验通过。
+
+衍生特征：ecpm_ctr_ratio_with_floor
+
+发现以下 BASE 特征：
+- slot_avg_click_bid_ecpm_3d
+- auid_slot_ctr_90d
+
+请从前台复制以上 BASE 特征的当前配置。
+请保留前台已有字段，不要先手工补充或改写。
+
+回复样例：
+
+```json
+{
+  "features": [
+    {
+      "name": "slot_avg_click_bid_ecpm_3d",
+      "raw_name": "slot_avg_click_bid_ecpm_3d",
+      "catalog": "/business/current/path"
+    },
+    {
+      "name": "auid_slot_ctr_90d",
+      "raw_name": "auid_slot_ctr_90d",
+      "catalog": "/business/current/path"
+    }
+  ]
+}
+```

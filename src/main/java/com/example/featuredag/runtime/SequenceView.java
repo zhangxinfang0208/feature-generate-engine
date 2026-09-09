@@ -9,7 +9,7 @@ import java.util.Objects;
  * chains are normalized when a new view is created.
  *
  * 零拷贝序列视图：不复制数据，只记录 baseIndex 选择（Selection）；
- * 过滤/切片产生的下标按密度选择最优表示——连续→Range、稀疏→Index、密集→Bitmap。
+ * 过滤/切片产生的下标连续时使用 Range，其余使用 Index，避免经位图往返转换。
  */
 public final class SequenceView implements SequenceValue {
     private final SequenceBlock baseBlock;
@@ -33,7 +33,7 @@ public final class SequenceView implements SequenceValue {
             }
         }
         int[] indices = selected.stream().mapToInt(Integer::intValue).toArray();
-        return new SequenceView(source.baseBlock(), chooseSelection(indices, source.baseBlock().size()));
+        return new SequenceView(source.baseBlock(), chooseSelection(indices));
     }
 
     public static SequenceView slice(SequenceValue source, int startInclusive, int endExclusive) {
@@ -42,10 +42,10 @@ public final class SequenceView implements SequenceValue {
         if (start > end) start = end;
         int[] indices = new int[end - start];
         for (int i = start; i < end; i++) indices[i - start] = source.baseIndexAt(i);
-        return new SequenceView(source.baseBlock(), chooseSelection(indices, source.baseBlock().size()));
+        return new SequenceView(source.baseBlock(), chooseSelection(indices));
     }
 
-    private static SequenceSelection chooseSelection(int[] indices, int baseSize) {
+    private static SequenceSelection chooseSelection(int[] indices) {
         if (indices.length == 0) return new IndexSelection(indices);
         boolean contiguous = true;
         for (int i = 1; i < indices.length; i++) {
@@ -55,10 +55,8 @@ public final class SequenceView implements SequenceValue {
             }
         }
         if (contiguous) return new RangeSelection(indices[0], indices[indices.length - 1] + 1);
-        if (indices.length * 2 < baseSize) return new IndexSelection(indices);
-        java.util.BitSet bitmap = new java.util.BitSet(baseSize);
-        for (int index : indices) bitmap.set(index);
-        return new BitmapSelection(bitmap);
+        // 直接保留逻辑顺序和重复位置；BitSet 会排序、去重，且最终仍转换回 int[]。
+        return new IndexSelection(indices);
     }
 
     @Override public int size() { return selection.size(); }

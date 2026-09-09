@@ -377,9 +377,14 @@ keyDomain + concrete SequenceValue [+ normalizedKey]
 
 - 连续 `RangeSelection`；
 - 稀疏 `IndexSelection`；
-- 密集非连续 `BitmapSelection`；
+- 密集非连续 `IndexSelection`（自动筛选/切片不再经位图往返转换）；
+- 显式构造的 `BitmapSelection`（保留公共类型兼容性）；
 - 过滤后再切片的链式视图；
 - 空视图。
+
+自动选择策略为连续下标使用 `RangeSelection`，其余使用 `IndexSelection`，
+保留原视图的逻辑顺序和重复位置。调用方应依赖 `SequenceSelection` 接口，
+不能再假定密集非连续结果的具体类型为 `BitmapSelection`。
 
 对 `DIRECT` 探针算子断言收到的对象与原 `OperatorSequence` 为同一实例；对 `MATERIALIZE` 探针算子
 断言收到只读 `List`，长度、顺序、元素等于视图逻辑范围且不包含未选中的底层事件。

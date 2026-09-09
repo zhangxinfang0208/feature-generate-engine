@@ -9,6 +9,7 @@ import com.example.featuredag.runtime.SequenceBlock;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -131,12 +132,18 @@ final class FeatureInputDecoder {
         for (int index = 0; index < values.size(); index++) {
             decoded.add(decodeBigintValue(sourceBinding, values.get(index), index));
         }
-        return FeatureValueCollections.immutableList(decoded);
+        // 此列表为解码器独占，冻结后直接交给运行时，避免再复制一份引用数组。
+        return Collections.unmodifiableList(decoded);
     }
 
     private static Long decodeBigintValue(String sourceBinding, Object value, int index) {
         if (!(value instanceof Number number)) {
             throw invalidBigint(sourceBinding, index, value);
+        }
+        // C6：这些整数载体均可精确落入 BIGINT；Long 直接复用，其余数值仍执行精确校验。
+        if (value instanceof Long) return (Long) value;
+        if (value instanceof Integer || value instanceof Short || value instanceof Byte) {
+            return Long.valueOf(number.longValue());
         }
         try {
             // API 输入边界把所有合法整数载体统一为 Long，保证 BIGINT 运行时契约稳定。

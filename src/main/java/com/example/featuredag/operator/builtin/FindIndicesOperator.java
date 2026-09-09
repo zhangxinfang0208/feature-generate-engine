@@ -19,6 +19,8 @@ import java.util.Objects;
 /** 返回目标值在序列中的全部逻辑下标，未命中时返回不可变空列表。 */
 public final class FindIndicesOperator extends AbstractBuiltinOperator
         implements RecoverableBatchOperatorKernel {
+    private static final Map<Object, List<Integer>> UNINDEXED = Collections.emptyMap();
+
     public FindIndicesOperator() {
         super("find_indices", 2, 2, true, true);
     }
@@ -36,7 +38,8 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
     @Override
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
-        // 候选批可能用多个 target 查询同一序列，先按序列身份构建 value→positions 索引再复用。
+        // C10：算法选择留在 Kernel 内；首次查询直接扫描，同组同一序列再次出现才建索引。
+        // 独立序列不支付全量索引成本；所有请求状态仅保存在本次调用的局部 Map 中。
         Map<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>> indexes =
                 new LinkedHashMap<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
@@ -48,6 +51,12 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
                         groupIndex, sequence);
                 Map<Object, List<Integer>> index = indexes.get(key);
                 if (index == null) {
+                    List<Integer> positions = find(sequence, target);
+                    indexes.put(key, UNINDEXED);
+                    result.addValue(positions);
+                    continue;
+                }
+                if (index == UNINDEXED) {
                     index = buildIndex(sequence);
                     indexes.put(key, index);
                 }

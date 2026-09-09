@@ -46,12 +46,59 @@ public final class ExternalValueMaterializer {
         return value;
     }
 
+    /**
+     * 公共输出边界只物化顶层序列前缀（C1/C6）；保留元素内部的 Map/List 仍完整递归物化。
+     * 长度限制不进入 DAG，也不截断上游中间值或批内单个元素的嵌套序列。
+     */
+    public Object materializeRaw(Object value, int maxSequenceLength) {
+        if (maxSequenceLength < 0) {
+            throw new IllegalArgumentException("maxSequenceLength must not be negative");
+        }
+        if (value instanceof SequenceValue sequence) {
+            return materializeSequence(sequence, Math.min(sequence.size(), maxSequenceLength));
+        }
+        if (value instanceof ScalarValue scalar) {
+            return materializeRaw(scalar.value(), maxSequenceLength);
+        }
+        if (value instanceof ListSequenceValue sequence) {
+            return materializeList(sequence.values(), maxSequenceLength);
+        }
+        if (value instanceof CandidateVectorValue vector) {
+            return materializeList(vector.values(), maxSequenceLength);
+        }
+        if (value instanceof OfflineBatchValue batch) {
+            return materializeList(batch.values(), maxSequenceLength);
+        }
+        if (value instanceof RequestBatchValue batch) {
+            return materializeList(batch.values(), maxSequenceLength);
+        }
+        if (value instanceof CandidateBatchValue batch) {
+            return materializeList(batch.values(), maxSequenceLength);
+        }
+        if (value instanceof List<?> list) return materializeList(list, maxSequenceLength);
+        return materializeRaw(value);
+    }
+
+    private List<Object> materializeList(List<?> values, int maxLength) {
+        int size = Math.min(values.size(), maxLength);
+        List<Object> result = new ArrayList<>(size);
+        var iterator = values.iterator();
+        for (int index = 0; index < size; index++) {
+            result.add(materializeRaw(iterator.next()));
+        }
+        return Collections.unmodifiableList(result);
+    }
+
     private List<Map<String, Object>> materializeSequence(SequenceValue sequence) {
-        List<Map<String, Object>> events = new ArrayList<>(sequence.size());
-        for (int index = 0; index < sequence.size(); index++) {
+        return materializeSequence(sequence, sequence.size());
+    }
+
+    private List<Map<String, Object>> materializeSequence(SequenceValue sequence, int size) {
+        List<Map<String, Object>> events = new ArrayList<>(size);
+        for (int index = 0; index < size; index++) {
             // 事件行在 SequenceBlock 构造时已防御拷贝并不可变化，直接透传属性全集（兼容超集契约）。
             events.add(sequence.baseBlock().rowAtBaseIndex(sequence.baseIndexAt(index)));
         }
-        return List.copyOf(events);
+        return Collections.unmodifiableList(events);
     }
 }

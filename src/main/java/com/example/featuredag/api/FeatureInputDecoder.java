@@ -28,9 +28,14 @@ final class FeatureInputDecoder {
             boolean itemScoped) {}
 
     private final List<SourceSpec> sources;
+    private final List<SourceSpec> sharedSources;
+    private final List<SourceSpec> itemSources;
 
     private FeatureInputDecoder(List<SourceSpec> sources) {
         this.sources = List.copyOf(sources);
+        // C1/C10：实体域来自已验证的逻辑源节点，初始化时固化在线解码分组。
+        this.sharedSources = this.sources.stream().filter(source -> !source.itemScoped()).toList();
+        this.itemSources = this.sources.stream().filter(SourceSpec::itemScoped).toList();
     }
 
     static FeatureInputDecoder from(LogicalDag dag) {
@@ -57,7 +62,7 @@ final class FeatureInputDecoder {
     }
 
     Map<String, Object> decodeOnlineShared(Map<String, List<?>> external) {
-        return decode(external, sources.stream().filter(source -> !source.itemScoped()).toList());
+        return decode(external, sharedSources);
     }
 
     List<Map<String, Object>> decodeOnlineSharedBatch(
@@ -69,7 +74,6 @@ final class FeatureInputDecoder {
 
     List<Map<String, Object>> decodeOnlineCandidates(
             List<Map<String, List<?>>> externalCandidates) {
-        List<SourceSpec> itemSources = sources.stream().filter(SourceSpec::itemScoped).toList();
         return externalCandidates.stream().map(values -> decode(values, itemSources)).toList();
     }
 

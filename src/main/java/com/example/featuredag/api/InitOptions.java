@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 public final class InitOptions {
     private final ExecutionEnvironment environment;
@@ -26,6 +27,7 @@ public final class InitOptions {
     private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
     private final RuntimeTraceObserver runtimeTraceObserver;
+    private final BooleanSupplier requestObservationEnabled;
     private final List<OperatorDefinition> operatorExtensions;
 
     private InitOptions(Builder builder) {
@@ -47,6 +49,7 @@ public final class InitOptions {
         this.runtimeObserver = Objects.requireNonNull(builder.runtimeObserver, "runtimeObserver");
         this.runtimeTraceObserver = Objects.requireNonNull(
                 builder.runtimeTraceObserver, "runtimeTraceObserver");
+        this.requestObservationEnabled = builder.requestObservationEnabled;
         this.operatorExtensions = Collections.unmodifiableList(
                 new ArrayList<OperatorDefinition>(builder.operatorExtensions));
     }
@@ -71,6 +74,7 @@ public final class InitOptions {
     }
     public RuntimeObserver runtimeObserver() { return runtimeObserver; }
     public RuntimeTraceObserver runtimeTraceObserver() { return runtimeTraceObserver; }
+    public BooleanSupplier requestObservationEnabled() { return requestObservationEnabled; }
     public List<OperatorDefinition> operatorExtensions() { return operatorExtensions; }
 
     private static String blankToNull(String value) {
@@ -107,6 +111,7 @@ public final class InitOptions {
                 new RuntimeObservabilityController(ObservabilityOptions.builder().build());
         private RuntimeObserver runtimeObserver = RuntimeObserver.noop();
         private RuntimeTraceObserver runtimeTraceObserver = RuntimeTraceObserver.noop();
+        private BooleanSupplier requestObservationEnabled = () -> true;
         private final List<OperatorDefinition> operatorExtensions = new ArrayList<>();
 
         public Builder environment(ExecutionEnvironment value) {
@@ -147,6 +152,17 @@ public final class InitOptions {
          */
         public Builder runtimeTraceObserver(RuntimeTraceObserver value) {
             this.runtimeTraceObserver = Objects.requireNonNull(value, "runtimeTraceObserver");
+            return this;
+        }
+
+        /**
+         * 请求级诊断/Trace 总开关。配置了观察者时，每次 generate/generateBatch 在调用线程
+         * 至多求值一次，结果仅用于该次调用；分组 Batch 共用调用者的上下文。
+         * 默认 true 保持旧行为；false 跳过额外诊断和 Trace，不修改共享 Controller。
+         * Supplier 应只读取上下文、不阻塞；RuntimeException 按关闭处理，不影响计算。
+         */
+        public Builder requestObservationEnabled(BooleanSupplier value) {
+            this.requestObservationEnabled = Objects.requireNonNull(value, "requestObservationEnabled");
             return this;
         }
 

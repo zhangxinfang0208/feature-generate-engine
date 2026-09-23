@@ -77,8 +77,10 @@ final class FeatureOutputEncoder {
     }
 
     private List<?> encodeValue(String featureName, Object rawValue) {
-        OutputSpec spec = Objects.requireNonNull(
-                outputSpecs.get(featureName), "Unknown output feature: " + featureName);
+        OutputSpec spec = outputSpecs.get(featureName);
+        if (spec == null) {
+            throw new NullPointerException("Unknown output feature: " + featureName);
+        }
         // C6：长度规范化只发生于最终输出；物化器不遍历将被丢弃的序列后缀。
         Object value = spec.shape() == ValueShape.SEQUENCE && spec.sequenceMaxLength() != null
                 ? materializer.materializeRaw(rawValue, spec.sequenceMaxLength())

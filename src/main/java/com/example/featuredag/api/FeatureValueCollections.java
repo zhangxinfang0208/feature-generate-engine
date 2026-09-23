@@ -16,14 +16,18 @@ final class FeatureValueCollections {
     }
 
     static List<?> singleton(Object value) {
-        List<Object> result = new ArrayList<>(1);
-        result.add(value);
-        return Collections.unmodifiableList(result);
+        return Collections.singletonList(value);
+    }
+
+    /** 以默认负载因子容纳已知元素数量，避免输出组装时反复扩容。 */
+    static int mapCapacity(int mappings) {
+        if (mappings < 0) throw new IllegalArgumentException("mappings must be non-negative");
+        return (int) Math.min(Integer.MAX_VALUE, (long) mappings * 4 / 3 + 1);
     }
 
     static Map<String, List<?>> immutableFeatureMap(Map<String, ? extends List<?>> values) {
         Objects.requireNonNull(values, "feature values");
-        Map<String, List<?>> result = new LinkedHashMap<>();
+        Map<String, List<?>> result = new LinkedHashMap<>(mapCapacity(values.size()));
         values.forEach((name, featureValues) -> result.put(
                 Objects.requireNonNull(name, "feature name"), immutableList(featureValues)));
         return Collections.unmodifiableMap(result);

@@ -65,6 +65,8 @@ public final class FeatureDagEngine {
     private final String version;
     private final String planId;
     private final List<FeatureOutputDescriptor> outputs;
+    private final int sharedOutputCapacity;
+    private final int candidateOutputCapacity;
     private final LogicalDag logicalDag;
     private final Set<String> requiredInputNames;
     private final Set<String> requiredSharedInputNames;
@@ -95,6 +97,17 @@ public final class FeatureDagEngine {
         this.planId = planId;
         this.outputs = mapped.outputs();
         this.logicalDag = Objects.requireNonNull(logicalDag, "logicalDag");
+        // C3/C10：只读目标输出的实体域估算容器容量；实际路由仍由运行时句柄决定。
+        int candidateOutputs = 0;
+        if (environment == ExecutionEnvironment.ONLINE) {
+            for (FeatureOutputDescriptor output : outputs) {
+                if (logicalDag.featureOutput(output.featureName()).entityScopes().contains(EntityScope.ITEM)) {
+                    candidateOutputs++;
+                }
+            }
+        }
+        this.sharedOutputCapacity = FeatureValueCollections.mapCapacity(outputs.size() - candidateOutputs);
+        this.candidateOutputCapacity = FeatureValueCollections.mapCapacity(candidateOutputs);
         Set<String> allInputs = new LinkedHashSet<>();
         Set<String> sharedInputs = new LinkedHashSet<>();
         Set<String> candidateInputs = new LinkedHashSet<>();
@@ -269,7 +282,7 @@ public final class FeatureDagEngine {
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
-            Map<String, List<?>> result = new LinkedHashMap<>();
+            Map<String, List<?>> result = new LinkedHashMap<>(sharedOutputCapacity);
             for (FeatureOutputDescriptor output : outputs) {
                 try {
                     ValueHandle value = execution.feature(output.featureName());
@@ -280,7 +293,7 @@ public final class FeatureDagEngine {
                             error.getMessage(), planId, request.executionId(), output.featureName(), error);
                 }
             }
-            return new GenerateResult(request.executionId(), result, List.of());
+            return GenerateResult.fromOwnedEncodedValues(request.executionId(), result, List.of());
         });
     }
 
@@ -298,7 +311,7 @@ public final class FeatureDagEngine {
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
             for (int index = 0; index < request.rows().size(); index++) {
-                rows.add(new LinkedHashMap<>());
+                rows.add(new LinkedHashMap<>(sharedOutputCapacity));
             }
             for (FeatureOutputDescriptor output : outputs) {
                 try {
@@ -349,11 +362,11 @@ public final class FeatureDagEngine {
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
-            Map<String, List<?>> sharedResults = new LinkedHashMap<>();
+            Map<String, List<?>> sharedResults = new LinkedHashMap<>(sharedOutputCapacity);
             List<Map<String, List<?>>> candidateResults =
                     new ArrayList<>(request.candidates().size());
             for (int index = 0; index < request.candidates().size(); index++) {
-                candidateResults.add(new LinkedHashMap<>());
+                candidateResults.add(new LinkedHashMap<>(candidateOutputCapacity));
             }
             for (FeatureOutputDescriptor output : outputs) {
                 try {
@@ -379,7 +392,7 @@ public final class FeatureDagEngine {
                             error.getMessage(), planId, request.executionId(), output.featureName(), error);
                 }
             }
-            return new GenerateResult(request.executionId(), sharedResults, candidateResults);
+            return GenerateResult.fromOwnedEncodedValues(request.executionId(), sharedResults, candidateResults);
         });
     }
 
@@ -403,11 +416,11 @@ public final class FeatureDagEngine {
             List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
             List<List<Map<String, List<?>>>> candidateResults = new ArrayList<>(groups.size());
             for (OnlineRequestGroup group : groups) {
-                sharedResults.add(new LinkedHashMap<>());
+                sharedResults.add(new LinkedHashMap<>(sharedOutputCapacity));
                 List<Map<String, List<?>>> groupCandidates =
                         new ArrayList<>(group.candidates().size());
                 for (int index = 0; index < group.candidates().size(); index++) {
-                    groupCandidates.add(new LinkedHashMap<>());
+                    groupCandidates.add(new LinkedHashMap<>(candidateOutputCapacity));
                 }
                 candidateResults.add(groupCandidates);
             }
@@ -464,7 +477,7 @@ public final class FeatureDagEngine {
 
             List<GenerateResult> groupResults = new ArrayList<>(groups.size());
             for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
-                groupResults.add(new GenerateResult(
+                groupResults.add(GenerateResult.fromOwnedEncodedValues(
                         groups.get(groupIndex).executionId(),
                         sharedResults.get(groupIndex),
                         candidateResults.get(groupIndex)));

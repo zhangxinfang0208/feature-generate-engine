@@ -1,0 +1,13 @@
+BASE 特征信息校验完成，以下信息需要业务补充：
+
+特征 user_seq：
+- type
+- value_shape
+- entity_scopes
+
+请按下面的样例一次性回复：
+
+特征 user_seq：
+type: STRING
+value_shape: SEQUENCE
+entity: USER

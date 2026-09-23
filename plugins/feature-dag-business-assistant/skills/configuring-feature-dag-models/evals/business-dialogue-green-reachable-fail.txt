@@ -1,0 +1,25 @@
+最终校验：FAIL
+
+目标特征：target_score
+校验范围：target_score 及其可达依赖
+校验边界：规则校验结果（未调用远程校验器）
+
+问题：
+特征 target_score：
+- 缺少字段 seq_max_length
+
+DERIVED 特征 target_score：
+
+```json
+[
+  {
+    "raw_name": "seq_max_length",
+    "data_value": 1,
+    "data_type": "NUMBER",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
+
+请将以上补充项复制到前台后，使用相同目标特征和完整模型重新提交最终校验。

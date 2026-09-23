@@ -1,0 +1,10 @@
+表达式语法校验失败。
+
+问题：zip_concat 调用缺少右括号 ")"，输入在对象参数 {"delimiter":"#"} 之后即结束
+位置：输入末尾（偏移 91）
+
+请修正后重新提交完整表达式。
+
+回复样例：
+
+表达式：zip_concat(slice_by_indices(seq_a, find_indices(key_seq, target)), seq_b, {"delimiter":"#"})

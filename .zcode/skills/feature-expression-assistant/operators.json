@@ -1,0 +1,223 @@
+{
+  "_readme": [
+    "标准算子清单——唯一维护点。新增/修改算子只改本文件：",
+    "1. 按注册表顺序添加一个以算子名命名的对象；脚本 check_expression.py 启动时自动加载，",
+    "   文档与 SKILL.md 均引用本文件，不再各自硬编码清单。",
+    "2. 字段：min_args/max_args=参数个数区间（max_args 为 null 表示无上限）；",
+    "   named_params=支持的命名参数名（与引擎 parameterNames 一致，无则空数组）；",
+    "   config=对象字面量配置规则（无则 null）：position=\"last\" 或下标数组（从 0 计）、",
+    "   strict=true 表示引擎对未知键直接报错（否则仅忽略并告警）、keys=每个键的取值规则、",
+    "   note=含默认值的说明文字；input/output=入参与输出的中文说明（终检推导用）。",
+    "3. 取值规则 type 取值：string（字符串）、positive_number（>0 的数字）、",
+    "   enum + values（枚举候选）。",
+    "4. 引擎侧仍须遵守仓库 AGENTS.md：独立 .java、InitialBusinessOperators 清单、",
+    "   JUnit 4 注册测试与算子测试。本文件与引擎清单保持同步。",
+    "5. 特殊校验（discrete 边界数组严格递增）无法用上述规则表达，在脚本内实现。"
+  ],
+  "discrete": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": [],
+    "config": null,
+    "input": "参数0：数值标量；参数1：数组字面量，数值严格递增",
+    "output": "INT 标量"
+  },
+  "log_base": {
+    "min_args": 3,
+    "max_args": 3,
+    "named_params": [],
+    "config": null,
+    "input": "value、base、upbound 均数值标量；base>0 且 ≠1，value>0，upbound>0（运行期校验）",
+    "output": "DOUBLE 标量"
+  },
+  "slice_by_indices": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": [],
+    "config": null,
+    "input": "参数0：任意类型序列；参数1：非负整数索引序列（越界/负数运行期报错）",
+    "output": "透传参数0：同类型同形状序列"
+  },
+  "find_indices": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": [],
+    "config": null,
+    "input": "参数0：序列；参数1：标量目标值（equals 匹配，类型需与元素一致）",
+    "output": "INT 序列"
+  },
+  "find_indices_any": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": ["sequence", "targets"],
+    "config": null,
+    "input": "两个参数都必须是序列（参数1为目标值集合，集合语义）",
+    "output": "INT 序列"
+  },
+  "get_seq_length": {
+    "min_args": 1,
+    "max_args": 1,
+    "named_params": [],
+    "config": null,
+    "input": "序列",
+    "output": "INT 标量"
+  },
+  "count_distinct": {
+    "min_args": 1,
+    "max_args": 1,
+    "named_params": [],
+    "config": null,
+    "input": "序列",
+    "output": "INT 标量"
+  },
+  "zip_concat": {
+    "min_args": 2,
+    "max_args": null,
+    "named_params": [],
+    "config": {
+      "position": "last",
+      "strict": false,
+      "keys": {
+        "delimiter": {"type": "string"}
+      },
+      "note": "末尾可选 {\"delimiter\": \"#\"}"
+    },
+    "input": "≥2 个等长序列（长度不等运行期报错）；EVENT_SEQUENCE 拒绝",
+    "output": "STRING 序列（逐位拼接）"
+  },
+  "concat": {
+    "min_args": 2,
+    "max_args": null,
+    "named_params": [],
+    "config": {
+      "position": "last",
+      "strict": false,
+      "keys": {
+        "delimiter": {"type": "string"}
+      },
+      "note": "末尾可选 {\"delimiter\": \"#\"}"
+    },
+    "input": "≥2 个标量（序列、对象拒绝）",
+    "output": "STRING 标量"
+  },
+  "list_concat": {
+    "min_args": 2,
+    "max_args": 3,
+    "named_params": [],
+    "config": {
+      "position": [2],
+      "strict": false,
+      "keys": {
+        "delimiter": {"type": "string"}
+      },
+      "note": "第 3 参可选 {\"delimiter\": \"#\"}"
+    },
+    "input": "参数0、1 均为序列，参数1 非空（首元素广播）；EVENT_SEQUENCE 拒绝",
+    "output": "STRING 序列"
+  },
+  "hit": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": ["seq_kv", "seq_key"],
+    "config": null,
+    "input": "参数0：EVENT_SEQUENCE 或 Map 序列（元素含 key）；参数1：STRING 标量或序列",
+    "output": "透传参数0"
+  },
+  "group_count_concat": {
+    "min_args": 1,
+    "max_args": 2,
+    "named_params": ["sequence", "config"],
+    "config": {
+      "position": [1],
+      "strict": false,
+      "keys": {
+        "delimiter": {"type": "string"},
+        "order": {"type": "enum", "values": ["FIRST_OCCURRENCE", "COUNT_DESC"]}
+      },
+      "note": "第 2 参可选 {\"delimiter\":\"#\", \"order\":\"FIRST_OCCURRENCE\"}，order 默认 FIRST_OCCURRENCE"
+    },
+    "input": "参数0：非事件序列",
+    "output": "STRING 序列（值#次数）"
+  },
+  "calc_delta_seq": {
+    "min_args": 2,
+    "max_args": 3,
+    "named_params": [],
+    "config": {
+      "position": [2],
+      "strict": true,
+      "keys": {
+        "direction": {"type": "enum", "values": ["ELEMENT_MINUS_BASE", "BASE_MINUS_ELEMENT"]},
+        "divisor": {"type": "positive_number"},
+        "need_ceil": {"type": "enum", "values": [0, 1]}
+      },
+      "note": "第 3 参 {\"direction\":\"BASE_MINUS_ELEMENT\",\"divisor\":60,\"need_ceil\":0}：direction 默认 BASE_MINUS_ELEMENT；divisor 默认 1；need_ceil 默认 0；未知键引擎直接报错"
+    },
+    "input": "参数0：数值序列（EVENT_SEQUENCE 拒绝）；参数1：数值标量 base",
+    "output": "DOUBLE 序列（与输入等长）"
+  },
+  "to_int": {
+    "min_args": 1,
+    "max_args": 1,
+    "named_params": [],
+    "config": null,
+    "input": "数值或数字字符串；标量→标量，序列→序列",
+    "output": "INT（截断取整，溢出运行期报错）"
+  },
+  "to_bigint": {
+    "min_args": 1,
+    "max_args": 1,
+    "named_params": [],
+    "config": null,
+    "input": "数值或数字字符串；标量→标量，序列→序列",
+    "output": "BIGINT"
+  },
+  "min": {
+    "min_args": 2,
+    "max_args": null,
+    "named_params": [],
+    "config": null,
+    "input": "全部数值标量；EVENT_SEQUENCE 拒绝",
+    "output": "数值提升类型标量"
+  },
+  "max": {
+    "min_args": 2,
+    "max_args": null,
+    "named_params": [],
+    "config": null,
+    "input": "全部数值标量；EVENT_SEQUENCE 拒绝",
+    "output": "数值提升类型标量"
+  },
+  "add": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": ["value", "addend"],
+    "config": null,
+    "input": "数值标量",
+    "output": "数值提升类型标量"
+  },
+  "sub": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": ["value", "margin"],
+    "config": null,
+    "input": "数值标量",
+    "output": "数值提升类型标量"
+  },
+  "mul": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": ["value", "multiplier"],
+    "config": null,
+    "input": "数值标量",
+    "output": "数值提升类型标量"
+  },
+  "div": {
+    "min_args": 2,
+    "max_args": 2,
+    "named_params": ["value", "divisor"],
+    "config": null,
+    "input": "数值标量",
+    "output": "恒为 DOUBLE 标量（除 0 返回 0.0）"
+  }
+}

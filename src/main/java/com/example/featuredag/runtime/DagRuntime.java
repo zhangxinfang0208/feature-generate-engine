@@ -8,6 +8,7 @@ import com.example.featuredag.operator.BatchLayout;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorEvaluationException;
 import com.example.featuredag.operator.BatchOperatorResult;
+import com.example.featuredag.operator.ListBatchColumn;
 import com.example.featuredag.operator.OperatorEvaluationResult;
 import com.example.featuredag.operator.OperatorRegistry;
 import com.example.featuredag.operator.OperatorSequence;
@@ -285,7 +286,7 @@ public final class DagRuntime {
                 0);
         List<Object> result = evaluateBatch(
                 node, operatorName, inputHandles, domain, context, state);
-        // result 是本次求值刚构建的独占列表，不再被其他引用持有，交给对应 owned() 工厂避免二次拷贝。
+        // C9：result 为本次求值独占列表或 Kernel 已冻结的列表；运行时只读共享，避免二次拷贝。
         return switch (domain) {
             case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
             case OFFLINE_ROW -> OfflineBatchValue.owned(result, logicalValueShape);
@@ -346,8 +347,10 @@ public final class DagRuntime {
             RuntimeNodeState state) {
         int originalSize = evaluationSize(domain, context);
         state.setBatchRowCount(originalSize);
-        List<Integer> healthyRows = new ArrayList<>(originalSize);
-        List<Object> merged = new ArrayList<>(Collections.nCopies(originalSize, null));
+        if (originalSize == 0) return Collections.emptyList();
+        // C10：正常批次使用连续行布局；只有继承失败时才构造投影与散射容器。
+        List<Integer> healthyRows = null;
+        List<Object> merged = null;
         for (int originalRow = 0; originalRow < originalSize; originalRow++) {
             EvaluationFailure inherited = null;
             for (ValueHandle inputHandle : inputHandles) {
@@ -358,25 +361,29 @@ public final class DagRuntime {
                 }
             }
             if (inherited == null) {
-                healthyRows.add(originalRow);
+                if (healthyRows != null) healthyRows.add(originalRow);
             } else {
+                if (healthyRows == null) {
+                    healthyRows = new ArrayList<>(originalSize);
+                    for (int previous = 0; previous < originalRow; previous++) healthyRows.add(previous);
+                    merged = new ArrayList<>(Collections.nCopies(originalSize, null));
+                }
                 merged.set(originalRow, inherited);
             }
         }
-        if (healthyRows.isEmpty()) return merged;
+        if (healthyRows != null && healthyRows.isEmpty()) return merged;
 
         RuntimeBatchLayout layout = new RuntimeBatchLayout(domain, context, healthyRows);
         SequenceViewInputMode sequenceMode = sequenceViewInputMode(node);
-        // 不支持视图的算子按组复用物化结果；支持视图的算子则直接读取零拷贝序列协议。
-        Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup =
-                new LinkedHashMap<>();
-        List<BatchColumn> arguments = inputHandles.stream()
-                .map(handle -> (BatchColumn) new SequenceAdaptingBatchColumn(
-                        new InputBatchColumn(handle, layout, context),
-                        layout,
-                        sequenceMode,
-                        materializedByGroup))
-                .toList();
+        // C10：按计划声明的能力直接传列；物化缓存仅在首次访问序列视图时创建，且按组隔离。
+        BatchSequenceMaterialization materialization = sequenceMode == SequenceViewInputMode.DIRECT
+                ? null : new BatchSequenceMaterialization();
+        List<BatchColumn> arguments = new ArrayList<>(inputHandles.size());
+        for (ValueHandle handle : inputHandles) {
+            BatchColumn input = new InputBatchColumn(handle, layout, context);
+            arguments.add(materialization == null ? input
+                    : new SequenceAdaptingBatchColumn(input, layout, sequenceMode, materialization));
+        }
         BatchOperatorResult result;
         try {
             BatchKernelKind plannedKind = plannedBatchKernelKind(node);
@@ -395,6 +402,14 @@ public final class DagRuntime {
                     error);
         }
         state.addOperatorFailures(result.rowFailures().size());
+        if (merged == null && !result.hasFailures()) {
+            // 仅复用明确不可变的内置列；扩展 Kernel 的任意 BatchColumn 仍立即快照，避免别名泄漏。
+            if (result.values() instanceof ListBatchColumn column) return column.values();
+            List<Object> values = new ArrayList<>(originalSize);
+            for (int row = 0; row < originalSize; row++) values.add(result.values().valueAt(row));
+            return values;
+        }
+        if (merged == null) merged = new ArrayList<>(Collections.nCopies(originalSize, null));
         for (int localRow = 0; localRow < result.values().size(); localRow++) {
             int originalRow = layout.originalRowIndex(localRow);
             RuntimeException error = result.rowFailures().get(localRow);
@@ -552,6 +567,7 @@ public final class DagRuntime {
         private final EvaluationDomain evaluationDomain;
         private final ExecutionContext context;
         private final List<Integer> originalRowIndexes;
+        private final int rowCount;
 
         private RuntimeBatchLayout(
                 EvaluationDomain evaluationDomain,
@@ -563,6 +579,11 @@ public final class DagRuntime {
             this.evaluationDomain = evaluationDomain;
             this.context = context;
             int evaluationSize = evaluationSize(evaluationDomain, context);
+            if (originalRowIndexes == null) {
+                this.originalRowIndexes = null;
+                this.rowCount = evaluationSize;
+                return;
+            }
             List<Integer> copiedRows = List.copyOf(originalRowIndexes);
             int previous = -1;
             for (Integer originalRow : copiedRows) {
@@ -575,6 +596,7 @@ public final class DagRuntime {
                 previous = originalRow;
             }
             this.originalRowIndexes = copiedRows;
+            this.rowCount = copiedRows.size();
         }
 
         @Override
@@ -584,7 +606,7 @@ public final class DagRuntime {
 
         @Override
         public int rowCount() {
-            return originalRowIndexes.size();
+            return rowCount;
         }
 
         @Override
@@ -605,12 +627,12 @@ public final class DagRuntime {
         }
 
         private int originalRowIndex(int rowIndex) {
-            if (rowIndex < 0 || rowIndex >= originalRowIndexes.size()) {
+            if (rowIndex < 0 || rowIndex >= rowCount) {
                 throw new IndexOutOfBoundsException(
                         "Batch row " + rowIndex + " out of bounds for size "
-                                + originalRowIndexes.size());
+                                + rowCount);
             }
-            return originalRowIndexes.get(rowIndex);
+            return originalRowIndexes == null ? rowIndex : originalRowIndexes.get(rowIndex);
         }
     }
 
@@ -647,17 +669,17 @@ public final class DagRuntime {
         private final BatchColumn delegate;
         private final RuntimeBatchLayout layout;
         private final SequenceViewInputMode mode;
-        private final Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup;
+        private final BatchSequenceMaterialization materialization;
 
         private SequenceAdaptingBatchColumn(
                 BatchColumn delegate,
                 RuntimeBatchLayout layout,
                 SequenceViewInputMode mode,
-                Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup) {
+                BatchSequenceMaterialization materialization) {
             this.delegate = delegate;
             this.layout = layout;
             this.mode = mode;
-            this.materializedByGroup = materializedByGroup;
+            this.materialization = materialization;
         }
 
         @Override
@@ -668,11 +690,19 @@ public final class DagRuntime {
         @Override
         public Object valueAt(int rowIndex) {
             Object value = delegate.valueAt(rowIndex);
-            if (mode == SequenceViewInputMode.DIRECT
-                    || !(value instanceof OperatorSequence sequence)) {
+            if (!(value instanceof OperatorSequence sequence)) {
                 return value;
             }
-            int groupIndex = layout.groupIndexAt(rowIndex);
+            return materialization.adapt(sequence, mode, layout.groupIndexAt(rowIndex));
+        }
+    }
+
+    /** 单次 Batch 调用内共享；普通标量和 List 输入不分配物化缓存。 */
+    private static final class BatchSequenceMaterialization {
+        private Map<Integer, IdentityHashMap<OperatorSequence, Object>> materializedByGroup;
+
+        private Object adapt(OperatorSequence sequence, SequenceViewInputMode mode, int groupIndex) {
+            if (materializedByGroup == null) materializedByGroup = new LinkedHashMap<>();
             IdentityHashMap<OperatorSequence, Object> groupValues =
                     materializedByGroup.computeIfAbsent(
                             groupIndex, ignored -> new IdentityHashMap<>());

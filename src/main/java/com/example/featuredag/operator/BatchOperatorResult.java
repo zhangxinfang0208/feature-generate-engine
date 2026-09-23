@@ -12,18 +12,22 @@ public record BatchOperatorResult(
     public BatchOperatorResult {
         Objects.requireNonNull(values, "values");
         Objects.requireNonNull(rowFailures, "rowFailures");
-        LinkedHashMap<Integer, RuntimeException> copiedFailures = new LinkedHashMap<>();
-        for (Map.Entry<Integer, RuntimeException> entry : rowFailures.entrySet()) {
-            Integer rowIndex = Objects.requireNonNull(entry.getKey(), "rowFailures key");
-            RuntimeException failure = Objects.requireNonNull(
-                    entry.getValue(), "rowFailures[" + rowIndex + "]");
-            if (rowIndex < 0 || rowIndex >= values.size()) {
-                throw new IllegalArgumentException(
-                        "Failure row index " + rowIndex + " is outside 0.." + (values.size() - 1));
+        if (rowFailures.isEmpty()) {
+            rowFailures = Collections.emptyMap();
+        } else {
+            LinkedHashMap<Integer, RuntimeException> copiedFailures = new LinkedHashMap<>();
+            for (Map.Entry<Integer, RuntimeException> entry : rowFailures.entrySet()) {
+                Integer rowIndex = Objects.requireNonNull(entry.getKey(), "rowFailures key");
+                RuntimeException failure = Objects.requireNonNull(
+                        entry.getValue(), "rowFailures[" + rowIndex + "]");
+                if (rowIndex < 0 || rowIndex >= values.size()) {
+                    throw new IllegalArgumentException(
+                            "Failure row index " + rowIndex + " is outside 0.." + (values.size() - 1));
+                }
+                copiedFailures.put(rowIndex, failure);
             }
-            copiedFailures.put(rowIndex, failure);
+            rowFailures = Collections.unmodifiableMap(copiedFailures);
         }
-        rowFailures = Collections.unmodifiableMap(copiedFailures);
     }
 
     public BatchOperatorResult(BatchColumn values) {

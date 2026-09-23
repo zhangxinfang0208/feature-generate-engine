@@ -89,6 +89,12 @@ Single 恢复调用使用 `OperatorEvaluationResult` 表示成功值或 Kernel `
 的行，只把健康行投影给 Kernel，再按原始 row/group/candidate 位置散射结果。失败单元不会重试，失败
 对象不会进入缓存。
 
+运行时对没有上游失败的批次使用连续行布局，不构造健康行下标列表。只有发现上游失败时才投影
+健康行；Kernel 新产生的失败仍按原始 row/group/candidate 位置恢复。全成功的内置不可变
+`ListBatchColumn` 可直接只读共享，扩展 Kernel 返回的其他列仍立即复制，保持结果快照语义。
+失败 Map 在第一次失败时分配；`DIRECT` 输入直接使用参数列，`MATERIALIZE` 的缓存在首次
+访问序列视图时创建，同组同视图复用，不跨组或跨调用共享。
+
 融合改写还必须用 `PhysicalRewrite.failureRecoverySupported` 声明专用执行器是否具有等价的隔离能力。
 恢复必需路径不会选择未声明能力的 Rewrite；声明支持后，专用执行器必须逐 group/candidate 隔离失败，
 并保持融合前后的影响范围一致。

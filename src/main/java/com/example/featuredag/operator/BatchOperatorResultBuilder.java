@@ -1,6 +1,7 @@
 package com.example.featuredag.operator;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,7 +11,7 @@ import java.util.Objects;
 public final class BatchOperatorResultBuilder {
     private final int expectedRows;
     private final List<Object> values;
-    private final Map<Integer, RuntimeException> rowFailures;
+    private Map<Integer, RuntimeException> rowFailures;
 
     public BatchOperatorResultBuilder(int expectedRows) {
         if (expectedRows < 0) {
@@ -18,7 +19,6 @@ public final class BatchOperatorResultBuilder {
         }
         this.expectedRows = expectedRows;
         this.values = new ArrayList<Object>(expectedRows);
-        this.rowFailures = new LinkedHashMap<Integer, RuntimeException>();
     }
 
     public void addValue(Object value) {
@@ -28,9 +28,13 @@ public final class BatchOperatorResultBuilder {
 
     public void addFailure(RuntimeException failure) {
         requireRemainingRow();
+        Objects.requireNonNull(failure, "failure");
+        if (rowFailures == null) {
+            rowFailures = new LinkedHashMap<Integer, RuntimeException>();
+        }
         int rowIndex = values.size();
         values.add(null);
-        rowFailures.put(rowIndex, Objects.requireNonNull(failure, "failure"));
+        rowFailures.put(rowIndex, failure);
     }
 
     public BatchOperatorResult build() {
@@ -38,7 +42,8 @@ public final class BatchOperatorResultBuilder {
             throw new IllegalStateException(
                     "Batch result has " + values.size() + " rows, expected " + expectedRows);
         }
-        return new BatchOperatorResult(ListBatchColumn.owned(values), rowFailures);
+        return new BatchOperatorResult(ListBatchColumn.owned(values),
+                rowFailures == null ? Collections.<Integer, RuntimeException>emptyMap() : rowFailures);
     }
 
     private void requireRemainingRow() {

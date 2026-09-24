@@ -58,6 +58,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.function.BooleanSupplier;
 
 public final class FeatureDagEngine {
     private final ExecutionEnvironment environment;
@@ -78,6 +79,7 @@ public final class FeatureDagEngine {
     private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
     private final RuntimeTraceObserver runtimeTraceObserver;
+    private final BooleanSupplier requestObservationEnabled;
 
     private FeatureDagEngine(
             ExecutionEnvironment environment,
@@ -90,7 +92,8 @@ public final class FeatureDagEngine {
             FeatureOutputEncoder outputEncoder,
             RuntimeObservabilityController observabilityController,
             RuntimeObserver runtimeObserver,
-            RuntimeTraceObserver runtimeTraceObserver) {
+            RuntimeTraceObserver runtimeTraceObserver,
+            BooleanSupplier requestObservationEnabled) {
         this.environment = environment;
         this.featureSetName = mapped.featureSetName();
         this.version = mapped.version();
@@ -131,6 +134,7 @@ public final class FeatureDagEngine {
         this.runtimeObserver = Objects.requireNonNull(runtimeObserver, "runtimeObserver");
         this.runtimeTraceObserver = Objects.requireNonNull(
                 runtimeTraceObserver, "runtimeTraceObserver");
+        this.requestObservationEnabled = Objects.requireNonNull(requestObservationEnabled, "requestObservationEnabled");
     }
 
     public static FeatureDagEngine init(Path configFile, InitOptions options) {
@@ -166,19 +170,20 @@ public final class FeatureDagEngine {
                 ? online.candidates().size()
                 : 0;
         int offlineRowCount = request instanceof OfflineGenerateRequest ? 1 : 0;
+        boolean observationAllowed = isRequestObservationEnabled();
         ExecutionObservation observation = startObservation(
-                request.executionId(), groupCount, candidateCount, offlineRowCount);
+                request.executionId(), groupCount, candidateCount, offlineRowCount, observationAllowed);
         try {
             if (environment == ExecutionEnvironment.OFFLINE) {
                 if (!(request instanceof OfflineGenerateRequest offline)) {
                     throw new IllegalArgumentException("OFFLINE engine requires OfflineGenerateRequest");
                 }
-                return generateOffline(offline, observation);
+                return generateOffline(offline, observation, observationAllowed);
             }
             if (!(request instanceof OnlineGenerateRequest online)) {
                 throw new IllegalArgumentException("ONLINE engine requires OnlineGenerateRequest");
             }
-            return generateOnline(online, observation);
+            return generateOnline(online, observation, observationAllowed);
         } catch (FeatureGenerationException error) {
             markFailure(observation, error);
             throw error;
@@ -195,15 +200,16 @@ public final class FeatureDagEngine {
      */
     public OfflineBatchGenerateResult generateBatch(OfflineBatchGenerateRequest request) {
         Objects.requireNonNull(request, "request");
+        boolean observationAllowed = isRequestObservationEnabled();
         ExecutionObservation observation = startObservation(
-                request.executionId(), 0, 0, request.rows().size());
+                request.executionId(), 0, 0, request.rows().size(), observationAllowed);
         try {
             if (environment != ExecutionEnvironment.OFFLINE) {
                 throw new FeatureGenerationException(
                         "ONLINE engine does not support OfflineBatchGenerateRequest",
                         planId, request.executionId(), null, null);
             }
-            return generateOfflineBatch(request, observation);
+            return generateOfflineBatch(request, observation, observationAllowed);
         } catch (FeatureGenerationException error) {
             markFailure(observation, error);
             throw error;
@@ -223,15 +229,16 @@ public final class FeatureDagEngine {
         int candidateCount = request.groups().stream()
                 .mapToInt(group -> group.candidates().size())
                 .sum();
+        boolean observationAllowed = isRequestObservationEnabled();
         ExecutionObservation observation = startObservation(
-                request.executionId(), request.groups().size(), candidateCount, 0);
+                request.executionId(), request.groups().size(), candidateCount, 0, observationAllowed);
         try {
             if (environment != ExecutionEnvironment.ONLINE) {
                 throw new FeatureGenerationException(
                         "OFFLINE engine does not support OnlineBatchGenerateRequest",
                         planId, request.executionId(), null, null);
             }
-            return generateOnlineBatch(request, observation);
+            return generateOnlineBatch(request, observation, observationAllowed);
         } catch (FeatureGenerationException error) {
             markFailure(observation, error);
             throw error;
@@ -273,14 +280,14 @@ public final class FeatureDagEngine {
      */
     private GenerateResult generateOffline(
             OfflineGenerateRequest request,
-            ExecutionObservation observation) {
+            ExecutionObservation observation, boolean observationAllowed) {
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
                 () -> ExecutionContext.offlineRow(
                         request.executionId(), inputDecoder.decodeOffline(request.rowValues())));
         attachContext(observation, context);
-        ExecutionResult execution = executeRuntime(context, observation);
+        ExecutionResult execution = executeRuntime(context, observation, observationAllowed);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             Map<String, List<?>> result = new LinkedHashMap<>(sharedOutputCapacity);
             for (FeatureOutputDescriptor output : outputs) {
@@ -299,7 +306,7 @@ public final class FeatureDagEngine {
 
     private OfflineBatchGenerateResult generateOfflineBatch(
             OfflineBatchGenerateRequest request,
-            ExecutionObservation observation) {
+            ExecutionObservation observation, boolean observationAllowed) {
         // 整批只创建一个上下文并遍历一次物理计划；各源节点和算子通过 OfflineBatchValue 保持行对齐。
         ExecutionContext context = measure(
                 observation,
@@ -307,7 +314,7 @@ public final class FeatureDagEngine {
                 () -> ExecutionContext.offlineBatch(
                         request.executionId(), inputDecoder.decodeOfflineBatch(request.rows())));
         attachContext(observation, context);
-        ExecutionResult execution = executeRuntime(context, observation);
+        ExecutionResult execution = executeRuntime(context, observation, observationAllowed);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
             for (int index = 0; index < request.rows().size(); index++) {
@@ -351,7 +358,7 @@ public final class FeatureDagEngine {
      */
     private GenerateResult generateOnline(
             OnlineGenerateRequest request,
-            ExecutionObservation observation) {
+            ExecutionObservation observation, boolean observationAllowed) {
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
@@ -360,7 +367,7 @@ public final class FeatureDagEngine {
                         inputDecoder.decodeOnlineShared(request.sharedValues()),
                         inputDecoder.decodeOnlineCandidates(request.candidates())));
         attachContext(observation, context);
-        ExecutionResult execution = executeRuntime(context, observation);
+        ExecutionResult execution = executeRuntime(context, observation, observationAllowed);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             Map<String, List<?>> sharedResults = new LinkedHashMap<>(sharedOutputCapacity);
             List<Map<String, List<?>>> candidateResults =
@@ -398,7 +405,7 @@ public final class FeatureDagEngine {
 
     private OnlineBatchGenerateResult generateOnlineBatch(
             OnlineBatchGenerateRequest request,
-            ExecutionObservation observation) {
+            ExecutionObservation observation, boolean observationAllowed) {
         List<OnlineRequestGroup> groups = request.groups();
         // API 边界保持分组结构；ExecutionContext 内部展平候选，以便物理计划只遍历一次。
         ExecutionContext context = measure(
@@ -410,7 +417,7 @@ public final class FeatureDagEngine {
                         inputDecoder.decodeOnlineSharedBatch(groups),
                         inputDecoder.decodeOnlineCandidateBatch(groups)));
         attachContext(observation, context);
-        ExecutionResult execution = executeRuntime(context, observation);
+        ExecutionResult execution = executeRuntime(context, observation, observationAllowed);
 
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
@@ -486,13 +493,25 @@ public final class FeatureDagEngine {
         });
     }
 
+    private boolean isRequestObservationEnabled() {
+        if (runtimeObserver == RuntimeObserver.NOOP && runtimeTraceObserver == RuntimeTraceObserver.NOOP) {
+            return false;
+        }
+        try {
+            return requestObservationEnabled.getAsBoolean();
+        } catch (RuntimeException ignored) {
+            // 观测故障与计算隔离；不使用线程局部缓存，避免线程复用/嵌套调用串请求。
+            return false;
+        }
+    }
+
     private ExecutionObservation startObservation(
             String executionId,
             int groupCount,
             int candidateCount,
-            int offlineRowCount) {
+            int offlineRowCount, boolean observationAllowed) {
         // NOOP 或完全关闭采集时不分配请求级观测对象，核心执行路径只多一次空判断。
-        if (runtimeObserver == RuntimeObserver.NOOP) return null;
+        if (!observationAllowed || runtimeObserver == RuntimeObserver.NOOP) return null;
         ObservabilityOptions options = observabilityController.options();
         if (!options.canCaptureAnyRequest()) return null;
         return new ExecutionObservation(
@@ -506,22 +525,22 @@ public final class FeatureDagEngine {
 
     private ExecutionResult executeRuntime(
             ExecutionContext context,
-            ExecutionObservation observation) {
+            ExecutionObservation observation, boolean observationAllowed) {
         try {
             ExecutionResult result = measure(
                     observation,
                     ExecutionPhase.RUNTIME,
                     () -> runtime.execute(plan, context));
-            publishRuntimeTrace(context.executionId(), result);
+            if (observationAllowed) publishRuntimeTrace(context.executionId(), result);
             return result;
         } catch (RuntimeException error) {
             // 失败时也发布已完成节点，便于从最后一个 FAILED 节点定位参数和根因。
-            publishRuntimeTrace(
-                    context.executionId(),
-                    new ExecutionResult(
-                            Map.of(),
-                            context.nodeStates(),
-                            context.runtimeCache().snapshot()));
+            if (observationAllowed && runtimeTraceObserver != RuntimeTraceObserver.NOOP) {
+                publishRuntimeTrace(
+                        context.executionId(),
+                        new ExecutionResult(
+                                Map.of(), context.nodeStates(), context.runtimeCache().snapshot()));
+            }
             throw attachRuntimeNodeContext(context, error);
         }
     }
@@ -694,7 +713,8 @@ public final class FeatureDagEngine {
                     outputEncoder,
                     options.observabilityController(),
                     options.runtimeObserver(),
-                    options.runtimeTraceObserver());
+                    options.runtimeTraceObserver(),
+                    options.requestObservationEnabled());
         } catch (RuntimeException error) {
             throw initializationFailure(
                     error, featureSetName, version, configuredPlanId);

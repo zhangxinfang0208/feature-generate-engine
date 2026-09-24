@@ -1,0 +1,55 @@
+{
+  "java" : "21.0.12+8-LTS",
+  "os" : "Windows 10",
+  "processors" : 12,
+  "jvm_args" : [ "-Xms8g", "-Xmx8g", "-XX:+UseZGC", "-XX:+ZGenerational", "-XX:FlightRecorderOptions=stackdepth=128", "-Xlog:gc*,safepoint:file=target/large-online-gc-ba52bafa18fc4532b1918b3b78c957cc.log:time,uptime,level,tags" ],
+  "gc" : [ "ZGC Minor Cycles", "ZGC Minor Pauses", "ZGC Major Cycles", "ZGC Major Pauses" ],
+  "max_heap_bytes" : 8589934592,
+  "base" : 320,
+  "sequence_base" : 160,
+  "derived" : 320,
+  "sequence_length" : 384,
+  "candidates" : 500,
+  "request_pool" : 8,
+  "concurrency" : 1,
+  "observe" : false,
+  "profile" : false,
+  "observer" : "NOOP",
+  "warmup_seconds" : 15,
+  "elapsed_seconds" : 30.0208949,
+  "measurement_start_uptime_ms" : 16211,
+  "measurement_end_uptime_ms" : 46232,
+  "caller_cpu_ms_per_request" : 26.548672566371682,
+  "caller_cpu_fraction" : 0.9993039881032993,
+  "process_cpu_ms_per_request" : 27.461283185840706,
+  "process_cpu_equivalent_cores" : 1.0336550626943504,
+  "gc_counter_deltas" : {
+    "ZGC Minor Cycles" : {
+      "count" : 11,
+      "collection_time_ms" : 629
+    },
+    "ZGC Minor Pauses" : {
+      "count" : 33,
+      "collection_time_ms" : 0
+    },
+    "ZGC Major Cycles" : {
+      "count" : 1,
+      "collection_time_ms" : 201
+    },
+    "ZGC Major Pauses" : {
+      "count" : 5,
+      "collection_time_ms" : 0
+    }
+  },
+  "init_ms" : 170.648101,
+  "requests" : 1130,
+  "request_qps" : 37.64045021855761,
+  "candidate_rows_per_second" : 18820.225109278803,
+  "mean_ms" : 26.56225787699115,
+  "p50_ms" : 25.6663,
+  "p95_ms" : 30.216599,
+  "p99_ms" : 36.925501,
+  "max_ms" : 49.963101,
+  "allocated_bytes_per_request" : 7.983627425840709E7,
+  "allocation_mib_per_second" : 2865.8612316691247
+}

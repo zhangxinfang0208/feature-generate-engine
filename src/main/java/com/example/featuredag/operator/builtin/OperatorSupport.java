@@ -138,10 +138,13 @@ final class OperatorSupport {
         return Double.valueOf(doubleResult);
     }
 
-    private static boolean isIntegralCarrier(Object value) {
+    static boolean isLongCarrier(Object value) {
         return value instanceof Byte || value instanceof Short
-                || value instanceof Integer || value instanceof Long
-                || value instanceof BigInteger;
+                || value instanceof Integer || value instanceof Long;
+    }
+
+    private static boolean isIntegralCarrier(Object value) {
+        return isLongCarrier(value) || value instanceof BigInteger;
     }
 
     static double finiteQuotient(BigDecimal dividend, BigDecimal divisor, String operator) {

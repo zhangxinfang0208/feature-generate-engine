@@ -19,6 +19,14 @@ import static org.junit.Assert.*;
 
 public class SequenceOutputMaterializationTest {
     @Test
+    public void unknownOutputKeepsItsExceptionTypeAndFeatureName() {
+        FeatureOutputEncoder encoder = encoder(null);
+        NullPointerException error = assertThrows(NullPointerException.class,
+                () -> encoder.encodeBatchElement("missing", List.of(1)));
+        assertEquals("Unknown output feature: missing", error.getMessage());
+    }
+
+    @Test
     public void truncationReadsOnlyTheReturnedPrefix() {
         CountingList input = new CountingList(100_000);
         assertEquals(List.of(0, 1, 2), encoder(3).encodeBatchElement("seq", input));

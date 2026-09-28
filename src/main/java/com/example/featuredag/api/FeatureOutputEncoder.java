@@ -19,7 +19,7 @@ import java.util.Objects;
  * 候选向量输出的每个候选元素单独编码。
  */
 final class FeatureOutputEncoder {
-    private record OutputSpec(
+    record OutputSpec(
             ValueShape shape,
             Object defaultValue,
             Integer sequenceMaxLength) {}
@@ -68,6 +68,10 @@ final class FeatureOutputEncoder {
         return encodeValue(featureName, Objects.requireNonNull(handle, "handle"));
     }
 
+    List<?> encode(String featureName, ValueHandle handle, OutputSpec spec) {
+        return encodeValue(featureName, Objects.requireNonNull(handle, "handle"), spec);
+    }
+
     List<?> encodeCandidateElement(String featureName, Object value) {
         return encodeBatchElement(featureName, value);
     }
@@ -77,10 +81,19 @@ final class FeatureOutputEncoder {
     }
 
     private List<?> encodeValue(String featureName, Object rawValue) {
+        return encodeValue(featureName, rawValue, requireSpec(featureName));
+    }
+
+    OutputSpec requireSpec(String featureName) {
         OutputSpec spec = outputSpecs.get(featureName);
         if (spec == null) {
             throw new NullPointerException("Unknown output feature: " + featureName);
         }
+        return spec;
+    }
+
+    // C6：同一输出特征的配置在候选/批次循环外解析一次，循环内直接复用。
+    List<?> encodeValue(String featureName, Object rawValue, OutputSpec spec) {
         // C6：长度规范化只发生于最终输出；物化器不遍历将被丢弃的序列后缀。
         Object value = spec.shape() == ValueShape.SEQUENCE && spec.sequenceMaxLength() != null
                 ? materializer.materializeRaw(rawValue, spec.sequenceMaxLength())

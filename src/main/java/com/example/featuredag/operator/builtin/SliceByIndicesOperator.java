@@ -1,9 +1,11 @@
 package com.example.featuredag.operator.builtin;
 
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -13,7 +15,7 @@ import java.util.List;
  * 但每行只省 O(下标数) 次取值，复用收益不足以覆盖批开销（实测 batch 劣化约 0.3x），
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
-public final class SliceByIndicesOperator extends AbstractBuiltinOperator {
+public final class SliceByIndicesOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public SliceByIndicesOperator() {
         super("slice_by_indices", 2, 2, true, true);
     }
@@ -44,6 +46,7 @@ public final class SliceByIndicesOperator extends AbstractBuiltinOperator {
             result.add(OperatorSupport.sequenceElementAt(
                     rawSequence, index, name(), "sequence"));
         }
-        return OperatorSupport.immutableList(result);
+        // result 为本次调用独占的局部列表，包装后不再修改，无需再次复制。
+        return Collections.unmodifiableList(result);
     }
 }

@@ -286,8 +286,9 @@ public final class FeatureDagEngine {
             for (FeatureOutputDescriptor output : outputs) {
                 try {
                     ValueHandle value = execution.feature(output.featureName());
+                    FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     result.put(
-                            output.storeName(), outputEncoder.encode(output.featureName(), value));
+                            output.storeName(), outputEncoder.encode(output.featureName(), value, outputSpec));
                 } catch (RuntimeException error) {
                     throw new FeatureGenerationException(
                             error.getMessage(), planId, request.executionId(), output.featureName(), error);
@@ -316,6 +317,7 @@ public final class FeatureDagEngine {
             for (FeatureOutputDescriptor output : outputs) {
                 try {
                     ValueHandle value = execution.feature(output.featureName());
+                    FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     if (value instanceof OfflineBatchValue batch) {
                         // 批输出逐行回填；行数不一致意味着某个 Kernel 破坏了 Batch 等价性约束。
                         if (batch.size() != rows.size()) {
@@ -326,12 +328,12 @@ public final class FeatureDagEngine {
                         for (int index = 0; index < batch.size(); index++) {
                             rows.get(index).put(
                                     output.storeName(),
-                                    outputEncoder.encodeBatchElement(
-                                            output.featureName(), batch.valueAt(index)));
+                                    outputEncoder.encodeValue(
+                                            output.featureName(), batch.valueAt(index), outputSpec));
                         }
                     } else {
                         // 与行无关的常量结果广播到每一行，不要求上游人为制造重复批值。
-                        List<?> encoded = outputEncoder.encode(output.featureName(), value);
+                        List<?> encoded = outputEncoder.encode(output.featureName(), value, outputSpec);
                         for (Map<String, List<?>> row : rows) {
                             row.put(output.storeName(), encoded);
                         }
@@ -355,7 +357,7 @@ public final class FeatureDagEngine {
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
-                () -> ExecutionContext.onlineRequest(
+                () -> ExecutionContext.onlineRequestFromOwnedDecodedValues(
                         request.executionId(),
                         inputDecoder.decodeOnlineShared(request.sharedValues()),
                         inputDecoder.decodeOnlineCandidates(request.candidates())));
@@ -371,6 +373,7 @@ public final class FeatureDagEngine {
             for (FeatureOutputDescriptor output : outputs) {
                 try {
                     ValueHandle value = execution.feature(output.featureName());
+                    FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     if (value instanceof CandidateVectorValue vector) {
                         if (vector.size() != candidateResults.size()) {
                             throw new IllegalStateException(
@@ -380,12 +383,12 @@ public final class FeatureDagEngine {
                         for (int index = 0; index < vector.size(); index++) {
                             candidateResults.get(index).put(
                                     output.storeName(),
-                                    outputEncoder.encodeCandidateElement(
-                                            output.featureName(), vector.valueAt(index)));
+                                    outputEncoder.encodeValue(
+                                            output.featureName(), vector.valueAt(index), outputSpec));
                         }
                     } else {
                         sharedResults.put(
-                                output.storeName(), outputEncoder.encode(output.featureName(), value));
+                                output.storeName(), outputEncoder.encode(output.featureName(), value, outputSpec));
                     }
                 } catch (RuntimeException error) {
                     throw new FeatureGenerationException(
@@ -428,6 +431,7 @@ public final class FeatureDagEngine {
             for (FeatureOutputDescriptor output : outputs) {
                 try {
                     ValueHandle value = execution.feature(output.featureName());
+                    FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     if (value instanceof RequestBatchValue batch) {
                         if (batch.size() != groups.size()) {
                             throw new IllegalStateException(
@@ -437,8 +441,8 @@ public final class FeatureDagEngine {
                         for (int groupIndex = 0; groupIndex < batch.size(); groupIndex++) {
                             sharedResults.get(groupIndex).put(
                                     output.storeName(),
-                                    outputEncoder.encodeBatchElement(
-                                            output.featureName(), batch.valueAt(groupIndex)));
+                                    outputEncoder.encodeValue(
+                                            output.featureName(), batch.valueAt(groupIndex), outputSpec));
                         }
                     } else if (value instanceof CandidateBatchValue batch) {
                         if (batch.size() != context.candidateCount()) {
@@ -455,8 +459,8 @@ public final class FeatureDagEngine {
                             int indexInGroup = context.candidateIndexInGroup(candidateIndex);
                             candidateResults.get(groupIndex).get(indexInGroup).put(
                                     output.storeName(),
-                                    outputEncoder.encodeBatchElement(
-                                            output.featureName(), batch.valueAt(candidateIndex)));
+                                    outputEncoder.encodeValue(
+                                            output.featureName(), batch.valueAt(candidateIndex), outputSpec));
                         }
                     } else if (value instanceof CandidateVectorValue
                             || value instanceof OfflineBatchValue) {
@@ -464,7 +468,7 @@ public final class FeatureDagEngine {
                                 "Unexpected output handle for online batch: "
                                         + value.getClass().getSimpleName());
                     } else {
-                        List<?> encoded = outputEncoder.encode(output.featureName(), value);
+                        List<?> encoded = outputEncoder.encode(output.featureName(), value, outputSpec);
                         for (Map<String, List<?>> groupResult : sharedResults) {
                             groupResult.put(output.storeName(), encoded);
                         }

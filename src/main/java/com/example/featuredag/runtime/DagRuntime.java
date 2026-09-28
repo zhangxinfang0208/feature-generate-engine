@@ -351,24 +351,35 @@ public final class DagRuntime {
         // C10：正常批次使用连续行布局；只有继承失败时才构造投影与散射容器。
         List<Integer> healthyRows = null;
         List<Object> merged = null;
-        for (int originalRow = 0; originalRow < originalSize; originalRow++) {
-            EvaluationFailure inherited = null;
-            for (ValueHandle inputHandle : inputHandles) {
-                Object argument = argumentAt(inputHandle, domain, originalRow, context);
-                if (argument instanceof EvaluationFailure failure) {
-                    inherited = failure;
-                    break;
-                }
+        boolean inheritedFailures = false;
+        for (ValueHandle inputHandle : inputHandles) {
+            if (context.firstBatchFailure(inputHandle) != null
+                    || inputHandle.raw() instanceof EvaluationFailure) {
+                inheritedFailures = true;
+                break;
             }
-            if (inherited == null) {
-                if (healthyRows != null) healthyRows.add(originalRow);
-            } else {
-                if (healthyRows == null) {
-                    healthyRows = new ArrayList<>(originalSize);
-                    for (int previous = 0; previous < originalRow; previous++) healthyRows.add(previous);
-                    merged = new ArrayList<>(Collections.nCopies(originalSize, null));
+        }
+        // C10：所有批输入已验证成功时，直接使用连续布局；失败时沿用原投影/散射语义。
+        if (inheritedFailures) {
+            for (int originalRow = 0; originalRow < originalSize; originalRow++) {
+                EvaluationFailure inherited = null;
+                for (ValueHandle inputHandle : inputHandles) {
+                    Object argument = argumentAt(inputHandle, domain, originalRow, context);
+                    if (argument instanceof EvaluationFailure failure) {
+                        inherited = failure;
+                        break;
+                    }
                 }
-                merged.set(originalRow, inherited);
+                if (inherited == null) {
+                    if (healthyRows != null) healthyRows.add(originalRow);
+                } else {
+                    if (healthyRows == null) {
+                        healthyRows = new ArrayList<>(originalSize);
+                        for (int previous = 0; previous < originalRow; previous++) healthyRows.add(previous);
+                        merged = new ArrayList<>(Collections.nCopies(originalSize, null));
+                    }
+                    merged.set(originalRow, inherited);
+                }
             }
         }
         if (healthyRows != null && healthyRows.isEmpty()) return merged;
@@ -740,7 +751,8 @@ public final class DagRuntime {
                 node.executorConfig().get("defaultValue"),
                 node.logicalValueShape(),
                 context.executionId(),
-                state);
+                state,
+                context);
         value = normalizeIntegralFeatureOutput(
                 value,
                 node.executorConfig().get("widenIntegralToBigint"),
@@ -757,7 +769,8 @@ public final class DagRuntime {
             Object defaultValue,
             ValueShape logicalValueShape,
             String alignmentId,
-            RuntimeNodeState state) {
+            RuntimeNodeState state,
+            ExecutionContext context) {
         if (handle instanceof FailedValueHandle failed) {
             EvaluationFailure failure = failed.failure();
             if (defaultValue == null) {
@@ -769,7 +782,7 @@ public final class DagRuntime {
             state.addFallbacks(1);
             return defaultHandle(defaultValue, logicalValueShape, alignmentId);
         }
-        EvaluationFailure batchFailure = firstBatchFailure(handle);
+        EvaluationFailure batchFailure = context.firstBatchFailure(handle);
         if (batchFailure != null && defaultValue == null) {
             throw new FeatureEvaluationException(
                     featureName, batchFailure.physicalNodeId(),
@@ -878,19 +891,6 @@ public final class DagRuntime {
         if (replaced == null) return new ElementReplacement(values, 0);
         return new ElementReplacement(
                 Collections.unmodifiableList(replaced), replacementCount);
-    }
-
-    private static EvaluationFailure firstBatchFailure(ValueHandle handle) {
-        List<?> values;
-        if (handle instanceof CandidateVectorValue vector) values = vector.values();
-        else if (handle instanceof OfflineBatchValue batch) values = batch.values();
-        else if (handle instanceof RequestBatchValue batch) values = batch.values();
-        else if (handle instanceof CandidateBatchValue batch) values = batch.values();
-        else return null;
-        for (Object value : values) {
-            if (value instanceof EvaluationFailure failure) return failure;
-        }
-        return null;
     }
 
     private record DefaultApplication(ValueHandle handle, int replacementCount) {

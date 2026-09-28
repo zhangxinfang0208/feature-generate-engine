@@ -5,6 +5,7 @@ import com.example.featuredag.physical.ExecutionEnvironment;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,9 @@ public final class ExecutionContext {
     private final Map<String, ValueHandle> resultSlots = new LinkedHashMap<>();
     private final RuntimeCache runtimeCache = new RuntimeCache();
     private final Map<String, RuntimeNodeState> nodeStates = new LinkedHashMap<>();
+    private static final Object NO_BATCH_FAILURE = new Object();
+    // 只在当前请求存活，以 identity 为键，避免 record.hashCode 遍历整个向量。
+    private IdentityHashMap<ValueHandle, Object> batchFailureChecks;
 
     private ExecutionContext(
             String executionId,
@@ -42,12 +46,28 @@ public final class ExecutionContext {
             List<Map<String, Object>> onlineSharedGroups,
             int[] candidateGroupOffsets,
             boolean onlineBatch) {
+        this(executionId, environment, sharedSourceValues, candidates, offlineRows, offlineBatch,
+                onlineGroupExecutionIds, onlineSharedGroups, candidateGroupOffsets, onlineBatch, false);
+    }
+
+    private ExecutionContext(
+            String executionId,
+            ExecutionEnvironment environment,
+            Map<String, Object> sharedSourceValues,
+            List<Map<String, Object>> candidates,
+            List<Map<String, Object>> offlineRows,
+            boolean offlineBatch,
+            List<String> onlineGroupExecutionIds,
+            List<Map<String, Object>> onlineSharedGroups,
+            int[] candidateGroupOffsets,
+            boolean onlineBatch,
+            boolean ownedDecodedInputs) {
         // 输入容器在请求入口复制并冻结，确保执行期间看到稳定快照；结果槽、缓存和状态则仅在本上下文内可变。
         this.executionId = Objects.requireNonNull(executionId, "executionId");
         this.environment = Objects.requireNonNull(environment, "environment");
-        this.sharedSourceValues = Collections.unmodifiableMap(new LinkedHashMap<>(sharedSourceValues));
+        this.sharedSourceValues = freezeInputMap(sharedSourceValues, ownedDecodedInputs);
         this.candidates = candidates.stream()
-                .map(candidate -> Collections.unmodifiableMap(new LinkedHashMap<>(candidate)))
+                .map(candidate -> freezeInputMap(candidate, ownedDecodedInputs))
                 .toList();
         this.offlineRows = offlineRows.stream()
                 .map(row -> Collections.unmodifiableMap(new LinkedHashMap<>(row)))
@@ -55,12 +75,57 @@ public final class ExecutionContext {
         this.offlineBatch = offlineBatch;
         this.onlineGroupExecutionIds = List.copyOf(onlineGroupExecutionIds);
         this.onlineSharedGroups = onlineSharedGroups.stream()
-                .map(group -> Collections.unmodifiableMap(new LinkedHashMap<>(group)))
+                // 单请求的共享输入与唯一 group 是同一张 Map，只需冻结一次。
+                .map(group -> group == sharedSourceValues ? this.sharedSourceValues
+                        : freezeInputMap(group, ownedDecodedInputs))
                 .toList();
         this.candidateGroupOffsets = candidateGroupOffsets.clone();
         this.onlineBatch = onlineBatch;
         validateOnlineBatchLayout();
         this.candidateGroupIndexes = buildCandidateGroupIndexes();
+    }
+
+    private static Map<String, Object> freezeInputMap(Map<String, Object> values, boolean owned) {
+        return Collections.unmodifiableMap(owned ? values : new LinkedHashMap<>(values));
+    }
+
+    /**
+     * 引擎编解码边界的所有权交接入口（C1/C10），只用于刚完成解码的独占 Map。
+     * 调用方交出共享 Map 和每张候选 Map 的所有权，后续不得通过任何别名修改；
+     * 嵌套值必须已由解码器完成必要的快照/转换。外层候选列表仍重新组装并冻结。
+     * 普通调用方应使用保留防御复制的 onlineRequest。
+     */
+    public static ExecutionContext onlineRequestFromOwnedDecodedValues(
+            String requestId,
+            Map<String, Object> shared,
+            List<Map<String, Object>> candidates) {
+        Objects.requireNonNull(candidates, "candidates");
+        return new ExecutionContext(requestId, ExecutionEnvironment.ONLINE,
+                shared, candidates, List.of(), false, List.of(requestId), List.of(shared),
+                new int[] {0, candidates.size()}, false, true);
+    }
+
+    /** 顶层批元素不可变；逐个值句柄只扫描一次，不能依赖算子纯度推断成功。 */
+    EvaluationFailure firstBatchFailure(ValueHandle handle) {
+        List<?> values;
+        if (handle instanceof CandidateVectorValue vector) values = vector.values();
+        else if (handle instanceof OfflineBatchValue batch) values = batch.values();
+        else if (handle instanceof RequestBatchValue batch) values = batch.values();
+        else if (handle instanceof CandidateBatchValue batch) values = batch.values();
+        else return null;
+        if (batchFailureChecks == null) batchFailureChecks = new IdentityHashMap<>();
+        Object checked = batchFailureChecks.get(handle);
+        if (checked != null) {
+            return checked == NO_BATCH_FAILURE ? null : (EvaluationFailure) checked;
+        }
+        for (Object value : values) {
+            if (value instanceof EvaluationFailure failure) {
+                batchFailureChecks.put(handle, failure);
+                return failure;
+            }
+        }
+        batchFailureChecks.put(handle, NO_BATCH_FAILURE);
+        return null;
     }
 
     public static ExecutionContext offlineRow(String executionId, Map<String, Object> rowValues) {

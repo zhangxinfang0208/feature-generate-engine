@@ -87,11 +87,13 @@ final class FeatureInputDecoder {
     private static Map<String, Object> decode(
             Map<String, List<?>> external,
             List<SourceSpec> sources) {
-        Map<String, Object> result = new LinkedHashMap<>();
+        Map<String, Object> result = new LinkedHashMap<>(
+                FeatureValueCollections.mapCapacity(Math.min(external.size(), sources.size())));
         for (SourceSpec source : sources) {
             // 缺失值不在解码层报错：运行时 SOURCE_BINDING 还需要按实体域检查默认值和候选位置。
-            if (!external.containsKey(source.sourceBinding())) continue;
             List<?> values = external.get(source.sourceBinding());
+            // 显式 null 仍由 decodeValue 报错；正常非空输入只查找一次。
+            if (values == null && !external.containsKey(source.sourceBinding())) continue;
             Object decoded = decodeValue(source, values);
             result.put(source.sourceBinding(), decoded);
         }

@@ -12,20 +12,20 @@ public final class ExternalValueMaterializer {
         Objects.requireNonNull(handle, "handle");
         if (handle instanceof SequenceValue sequence) return materializeSequence(sequence);
         if (handle instanceof ListSequenceValue sequence) {
-            return sequence.values().stream().map(this::materializeRaw).toList();
+            return materializeList(sequence.values(), Integer.MAX_VALUE);
         }
         if (handle instanceof ScalarValue scalar) return materializeRaw(scalar.value());
         if (handle instanceof CandidateVectorValue vector) {
-            return vector.values().stream().map(this::materializeRaw).toList();
+            return materializeList(vector.values(), Integer.MAX_VALUE);
         }
         if (handle instanceof OfflineBatchValue batch) {
-            return batch.values().stream().map(this::materializeRaw).toList();
+            return materializeList(batch.values(), Integer.MAX_VALUE);
         }
         if (handle instanceof RequestBatchValue batch) {
-            return batch.values().stream().map(this::materializeRaw).toList();
+            return materializeList(batch.values(), Integer.MAX_VALUE);
         }
         if (handle instanceof CandidateBatchValue batch) {
-            return batch.values().stream().map(this::materializeRaw).toList();
+            return materializeList(batch.values(), Integer.MAX_VALUE);
         }
         throw new IllegalArgumentException(
                 "Unsupported public output handle: " + handle.getClass().getName());
@@ -41,7 +41,7 @@ public final class ExternalValueMaterializer {
             return Collections.unmodifiableMap(result);
         }
         if (value instanceof List<?> list) {
-            return list.stream().map(this::materializeRaw).toList();
+            return materializeList(list, Integer.MAX_VALUE);
         }
         return value;
     }

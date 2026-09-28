@@ -31,6 +31,21 @@ request-to-candidate 广播由运行时虚拟列完成，不复制展开后的�
 
 ## 3. 规划期选择
 
+### 默认适配器的参数容器
+
+普通 `SingleOperatorKernel` 在 Batch 适配时仍收到每行独立的可变参数列表，允许既有扩展
+保留、修改或返回列表。只有显式实现 `BorrowedArgumentsKernel` 的 Kernel 才使用借用容器：
+参数列表只在本次同步调用期间有效，不得修改、保存或返回列表及其派生引用；需要保留时必须复制。
+参数元素本身的生命周期不受影响。
+
+适配器每次 Batch 调用创建独立数组和只读列表包装，每行按原顺序读取所有参数列一次，再调用
+Single Kernel。列读取异常仍直接传播，Kernel 的 `RuntimeException` 仍按行恢复。容器不放入
+共享实例或 ThreadLocal，保持并发和重入隔离，不改变 `SCALAR_ADAPTER` 路由。
+
+当前仅经审计的 final 类 `AddOperator`、`MulOperator`、`SliceByIndicesOperator`、
+`GetSequenceLengthOperator` 显式实现此协议，公共 `AbstractBuiltinOperator` 不自动声明，
+避免影响扩展子类。新增 opt-in 必须检查整个同步调用链不存在参数容器逃逸。
+
 普通算子物理节点记录：
 
 ```text

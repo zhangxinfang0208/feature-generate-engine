@@ -1,5 +1,6 @@
 package com.example.featuredag.operator.builtin;
 
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
@@ -19,7 +20,7 @@ import java.util.List;
  * 中间量，key 分配与查找开销反噬（成本模型见 AGENTS.md），
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
-public final class MulOperator extends AbstractBuiltinOperator {
+public final class MulOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final List<String> PARAMETER_NAMES = Collections.unmodifiableList(
             Arrays.asList("value", "multiplier"));
 

@@ -1,6 +1,7 @@
 package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -16,7 +17,7 @@ import java.util.List;
  * 原生 Batch 内核没有批内复用缓存，只会白付批开销（实测 batch 劣化约 0.2x），
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
-public final class GetSequenceLengthOperator extends AbstractBuiltinOperator {
+public final class GetSequenceLengthOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public GetSequenceLengthOperator() {
         super("get_seq_length", 1, 1, true, true);
     }

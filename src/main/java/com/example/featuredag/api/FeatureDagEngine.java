@@ -277,8 +277,8 @@ public final class FeatureDagEngine {
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
-                () -> ExecutionContext.offlineRow(
-                        request.executionId(), inputDecoder.decodeOffline(request.rowValues())));
+                () -> ExecutionContext.offlineRowFromOwnedDecodedValues(
+                        request.executionId(), inputDecoder.decodeOfflineReadOnly(request.rowValues())));
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
@@ -305,8 +305,8 @@ public final class FeatureDagEngine {
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
-                () -> ExecutionContext.offlineBatch(
-                        request.executionId(), inputDecoder.decodeOfflineBatch(request.rows())));
+                () -> ExecutionContext.offlineBatchFromOwnedDecodedValues(
+                        request.executionId(), inputDecoder.decodeOfflineBatchReadOnly(request.rows())));
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
@@ -343,7 +343,7 @@ public final class FeatureDagEngine {
                             error.getMessage(), planId, request.executionId(), output.featureName(), error);
                 }
             }
-            return new OfflineBatchGenerateResult(request.executionId(), rows);
+            return OfflineBatchGenerateResult.fromOwnedEncodedValues(request.executionId(), rows);
         });
     }
 
@@ -515,7 +515,9 @@ public final class FeatureDagEngine {
             ExecutionResult result = measure(
                     observation,
                     ExecutionPhase.RUNTIME,
-                    () -> runtime.execute(plan, context));
+                    () -> runtime.execute(plan, context,
+                            context.environment() != ExecutionEnvironment.OFFLINE
+                                    || observation != null || runtimeTraceObserver != RuntimeTraceObserver.NOOP));
             publishRuntimeTrace(context.executionId(), result);
             return result;
         } catch (RuntimeException error) {

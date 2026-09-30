@@ -57,10 +57,15 @@ def main():
     (directory / 'cpu-flame.svg').write_text(cpu, encoding='utf-8')
     (directory / 'allocation-flame.svg').write_text(allocation, encoding='utf-8')
     summary = json.loads((directory / 'summary.json').read_text(encoding='utf-8'))
-    metrics = ' | '.join(f'{k}: {summary[k]}' for k in ['candidates', 'sequence_length', 'observe', 'p50_ms', 'p99_ms'])
-    page = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>ZGC / JFR 火焰图</title>
+    offline = summary.get('environment') == 'OFFLINE'
+    keys = (['mode', 'scope', 'batch_size', 'long_sequence_length', 'rows_per_second', 'p99_batch_ms']
+            if offline else ['candidates', 'sequence_length', 'observe', 'p50_ms', 'p99_ms'])
+    metrics = ' | '.join(f'{k}: {summary[k]}' for k in keys)
+    heading = (f"离线批处理 · {summary['batch_size']} 行 / 批 · JFR" if offline
+               else f"单人单场景 · {summary['candidates']} 货 · JFR")
+    page = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>JFR 火焰图</title>
 <style>body{font:15px system-ui;margin:24px;background:#fafafa;color:#17212b}section{overflow:auto;background:white;margin:20px 0;padding:12px;border:1px solid #ddd}svg{width:100%;height:auto}input,button{font:inherit;padding:6px}h1{font-size:26px}</style>
-<h1>单人单场景 · CANDIDATES 货 · ZGC / JFR</h1><p>METRICS</p>
+<h1>HEADING</h1><p>METRICS</p>
 <p>横向宽度表示采样占比，纵向表示调用栈；不是时间轴。点击矩形放大；悬停查看方法、权重和占比。分配图是估算分配字节，不是存活堆。</p>
 <input id="search" placeholder="搜索方法 / 类名" oninput="searchFrames()"><button onclick="reset()">重置缩放</button>
 <section>CPU_SVG</section><section>ALLOC_SVG</section>
@@ -74,7 +79,7 @@ function reset(){svgs.forEach((s,i)=>s.setAttribute('viewBox',original[i]));}
 function searchFrames(){const q=document.getElementById('search').value.toLowerCase();
 document.querySelectorAll('g[data-name]').forEach(g=>g.style.opacity=!q||g.dataset.name.toLowerCase().includes(q)?1:0.2);}
 </script></html>'''
-    page = page.replace('CANDIDATES', str(summary['candidates'])).replace('METRICS', html.escape(metrics)).replace('CPU_SVG', cpu).replace('ALLOC_SVG', allocation)
+    page = page.replace('HEADING', html.escape(heading)).replace('METRICS', html.escape(metrics)).replace('CPU_SVG', cpu).replace('ALLOC_SVG', allocation)
     (directory / 'flamegraphs.html').write_text(page, encoding='utf-8')
     print(directory / 'flamegraphs.html')
 

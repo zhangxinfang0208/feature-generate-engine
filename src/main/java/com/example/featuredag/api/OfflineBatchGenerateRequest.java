@@ -14,8 +14,7 @@ public final class OfflineBatchGenerateRequest {
     public OfflineBatchGenerateRequest(
             String executionId,
             List<? extends Map<String, ? extends List<?>>> rows) {
-        this.executionId = requireText(executionId, "executionId");
-        this.rows = FeatureValueCollections.immutableFeatureRows(rows);
+        this(executionId, rows, false);
     }
 
     public String executionId() { return executionId; }
@@ -36,7 +35,9 @@ public final class OfflineBatchGenerateRequest {
     private OfflineBatchGenerateRequest(
             String executionId, List<? extends Map<String, ? extends List<?>>> rows, boolean borrowed) {
         this.executionId = requireText(executionId, "executionId");
-        this.rows = FeatureValueCollections.borrowedFeatureRows(rows);
+        this.rows = borrowed
+                ? FeatureValueCollections.borrowedFeatureRows(rows)
+                : FeatureValueCollections.immutableFeatureRows(rows);
     }
 
     private static String requireText(String value, String field) {

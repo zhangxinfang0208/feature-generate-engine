@@ -92,6 +92,28 @@ public class OfflineBorrowedInputTest {
     }
 
     @Test
+    public void singleAndBatchConstructorsSelectSnapshotOrBorrowing() {
+        Map<String, List<?>> input = row();
+        var singleSnapshot = new OfflineGenerateRequest("single-snapshot", input);
+        var singleBorrowed = OfflineGenerateRequest.borrowed("single-borrowed", input);
+        var batchSnapshot = new OfflineBatchGenerateRequest("batch-snapshot", List.of(input));
+        var batchBorrowed = OfflineBatchGenerateRequest.borrowed("batch-borrowed", List.of(input));
+        assertSame(input.get("x"), singleBorrowed.rowValues().get("x"));
+        assertSame(input.get("x"), batchBorrowed.rows().get(0).get("x"));
+        input.get("x").clear();
+        input.put("t", List.of(2));
+        assertEquals(List.of(1, 2, 1), singleSnapshot.rowValues().get("x"));
+        assertEquals(List.of(1), singleSnapshot.rowValues().get("t"));
+        assertEquals(List.of(1, 2, 1), batchSnapshot.rows().get(0).get("x"));
+        assertEquals(List.of(1), batchSnapshot.rows().get(0).get("t"));
+        // 请求尚未执行，可观察借用视图与快照的差异；实际执行期间输入必须稳定。
+        assertTrue(singleBorrowed.rowValues().get("x").isEmpty());
+        assertEquals(List.of(2), singleBorrowed.rowValues().get("t"));
+        assertTrue(batchBorrowed.rows().get(0).get("x").isEmpty());
+        assertEquals(List.of(2), batchBorrowed.rows().get(0).get("t"));
+    }
+
+    @Test
     public void bigintSequenceKeepsExactConversionAndRejectsFractions() {
         String config = CONFIG.replace("\"type\":\"INT\"", "\"type\":\"BIGINT\"");
         var engine = FeatureDagEngine.init(config, InitOptions.offline("bigint"));

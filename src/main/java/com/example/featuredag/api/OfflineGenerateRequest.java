@@ -9,8 +9,7 @@ public final class OfflineGenerateRequest implements GenerateRequest {
     private final Map<String, List<?>> rowValues;
 
     public OfflineGenerateRequest(String executionId, Map<String, List<?>> rowValues) {
-        this.executionId = requireText(executionId, "executionId");
-        this.rowValues = FeatureValueCollections.immutableFeatureMap(rowValues);
+        this(executionId, rowValues, false);
     }
 
     @Override
@@ -28,7 +27,9 @@ public final class OfflineGenerateRequest implements GenerateRequest {
 
     private OfflineGenerateRequest(String executionId, Map<String, List<?>> rowValues, boolean borrowed) {
         this.executionId = requireText(executionId, "executionId");
-        this.rowValues = FeatureValueCollections.borrowedFeatureMap(rowValues);
+        this.rowValues = borrowed
+                ? FeatureValueCollections.borrowedFeatureMap(rowValues)
+                : FeatureValueCollections.immutableFeatureMap(rowValues);
     }
 
     private static String requireText(String value, String field) {

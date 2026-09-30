@@ -13,8 +13,7 @@ public final class OfflineBatchGenerateResult {
     public OfflineBatchGenerateResult(
             String executionId,
             List<? extends Map<String, ? extends List<?>>> rows) {
-        this.executionId = Objects.requireNonNull(executionId, "executionId");
-        this.rows = FeatureValueCollections.immutableFeatureRows(rows);
+        this(executionId, rows, false);
     }
 
     public String executionId() { return executionId; }
@@ -27,11 +26,20 @@ public final class OfflineBatchGenerateResult {
     }
 
     private OfflineBatchGenerateResult(
-            String executionId, List<Map<String, List<?>>> rows, boolean owned) {
+            String executionId,
+            List<? extends Map<String, ? extends List<?>>> rows,
+            boolean ownedEncodedValues) {
         this.executionId = Objects.requireNonNull(executionId, "executionId");
-        for (int index = 0; index < rows.size(); index++) {
-            rows.set(index, Collections.unmodifiableMap(rows.get(index)));
+        if (ownedEncodedValues) {
+            // true 仅由接收精确类型独占容器的包内工厂传入；公共入口始终走快照分支。
+            @SuppressWarnings("unchecked")
+            List<Map<String, List<?>>> ownedRows = (List<Map<String, List<?>>>) rows;
+            for (int index = 0; index < ownedRows.size(); index++) {
+                ownedRows.set(index, Collections.unmodifiableMap(ownedRows.get(index)));
+            }
+            this.rows = Collections.unmodifiableList(ownedRows);
+        } else {
+            this.rows = FeatureValueCollections.immutableFeatureRows(rows);
         }
-        this.rows = Collections.unmodifiableList(rows);
     }
 }

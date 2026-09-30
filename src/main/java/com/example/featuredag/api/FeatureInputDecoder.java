@@ -61,6 +61,15 @@ final class FeatureInputDecoder {
         return externalRows.stream().map(row -> decode(row, sources)).toList();
     }
 
+    /** C1：仅接收离线请求已快照冻结或显式借用的稳定输入。 */
+    Map<String, Object> decodeOfflineReadOnly(Map<String, List<?>> external) {
+        return decode(external, sources, true);
+    }
+
+    List<Map<String, Object>> decodeOfflineBatchReadOnly(List<Map<String, List<?>>> rows) {
+        return rows.stream().map(row -> decode(row, sources, true)).toList();
+    }
+
     Map<String, Object> decodeOnlineShared(Map<String, List<?>> external) {
         return decode(external, sharedSources);
     }
@@ -87,6 +96,13 @@ final class FeatureInputDecoder {
     private static Map<String, Object> decode(
             Map<String, List<?>> external,
             List<SourceSpec> sources) {
+        return decode(external, sources, false);
+    }
+
+    private static Map<String, Object> decode(
+            Map<String, List<?>> external,
+            List<SourceSpec> sources,
+            boolean readOnlyInputs) {
         Map<String, Object> result = new LinkedHashMap<>(
                 FeatureValueCollections.mapCapacity(Math.min(external.size(), sources.size())));
         for (SourceSpec source : sources) {
@@ -94,13 +110,13 @@ final class FeatureInputDecoder {
             List<?> values = external.get(source.sourceBinding());
             // 显式 null 仍由 decodeValue 报错；正常非空输入只查找一次。
             if (values == null && !external.containsKey(source.sourceBinding())) continue;
-            Object decoded = decodeValue(source, values);
+            Object decoded = decodeValue(source, values, readOnlyInputs);
             result.put(source.sourceBinding(), decoded);
         }
         return result;
     }
 
-    private static Object decodeValue(SourceSpec source, List<?> values) {
+    private static Object decodeValue(SourceSpec source, List<?> values, boolean readOnlyInputs) {
         if (values == null) {
             throw new IllegalArgumentException(
                     "Feature " + source.sourceBinding() + " values must not be null");
@@ -111,16 +127,17 @@ final class FeatureInputDecoder {
                 return decodeEventSequence(source.sourceBinding(), values);
             }
             if (source.dataType() == DataType.BIGINT) {
-                return decodeBigintValues(source.sourceBinding(), values);
+                return decodeBigintValues(source.sourceBinding(), values, readOnlyInputs);
             }
-            return FeatureValueCollections.immutableList(values);
+            // 离线请求已快照冻结或显式只读借用（C1/C6），只加只读视图，不再复制序列。
+            return readOnlyInputs ? Collections.unmodifiableList(values) : FeatureValueCollections.immutableList(values);
         }
         if (source.shape() == ValueShape.CANDIDATE_VECTOR) {
             // 向量保持全部元素；标量则遵循公共 API 的单元素 List 契约，只读取首项。
             if (source.dataType() == DataType.BIGINT) {
-                return decodeBigintValues(source.sourceBinding(), values);
+                return decodeBigintValues(source.sourceBinding(), values, readOnlyInputs);
             }
-            return FeatureValueCollections.immutableList(values);
+            return readOnlyInputs ? Collections.unmodifiableList(values) : FeatureValueCollections.immutableList(values);
         }
         if (values.isEmpty()) {
             throw new IllegalArgumentException(
@@ -133,11 +150,19 @@ final class FeatureInputDecoder {
                 : value;
     }
 
-    private static List<?> decodeBigintValues(String sourceBinding, List<?> values) {
-        List<Long> decoded = new ArrayList<>(values.size());
+    private static List<?> decodeBigintValues(String sourceBinding, List<?> values, boolean readOnlyInputs) {
+        List<Long> decoded = readOnlyInputs ? null : new ArrayList<>(values.size());
         for (int index = 0; index < values.size(); index++) {
-            decoded.add(decodeBigintValue(sourceBinding, values.get(index), index));
+            Object original = values.get(index);
+            Long converted = decodeBigintValue(sourceBinding, original, index);
+            if (decoded == null && converted != original) {
+                decoded = new ArrayList<>(values.size());
+                for (int prefix = 0; prefix < index; prefix++) decoded.add((Long) values.get(prefix));
+            }
+            if (decoded != null) decoded.add(converted);
         }
+        // 已是 Long 的稳定序列只校验，不分配引用数组；确需转换时才写时复制（C6）。
+        if (decoded == null) return Collections.unmodifiableList(values);
         // 此列表为解码器独占，冻结后直接交给运行时，避免再复制一份引用数组。
         return Collections.unmodifiableList(decoded);
     }

@@ -52,6 +52,11 @@ public final class DagRuntime {
     }
 
     public ExecutionResult execute(PhysicalPlan plan, ExecutionContext context) {
+        return execute(plan, context, true);
+    }
+
+    /** retainIntermediateValues=false 仅用于无需值追踪的执行；公共低层默认保留。 */
+    public ExecutionResult execute(PhysicalPlan plan, ExecutionContext context, boolean retainIntermediateValues) {
         if (plan.environment() != context.environment()) {
             throw new IllegalArgumentException(
                     "Plan environment " + plan.environment() + " does not match context " + context.environment());
@@ -59,8 +64,13 @@ public final class DagRuntime {
         executorRegistry.validate(plan);
         validateExecutionStages(plan, context);
         // C9：按物理拓扑序逐节点执行，每个节点只写入计划分配的唯一输出槽（slot:N）。
-        for (PhysicalNode node : plan.nodes()) {
-            executeNode(node, context);
+        for (int index = 0; index < plan.nodes().size(); index++) {
+            executeNode(plan.nodes().get(index), context);
+            if (!retainIntermediateValues) {
+                for (PhysicalPlan.SlotRelease release : plan.releasesAfterNode(index)) {
+                    context.releaseIntermediate(release.slot(), release.physicalNodeId());
+                }
+            }
         }
         Map<String, ValueHandle> outputs = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : plan.outputFeatureSlots().entrySet()) {
@@ -119,8 +129,9 @@ public final class DagRuntime {
             List<Object> values = new ArrayList<>(context.offlineBatchSize());
             for (int index = 0; index < context.offlineRows().size(); index++) {
                 Map<String, Object> row = context.offlineRows().get(index);
-                if (row.containsKey(featureName)) {
-                    values.add(row.get(featureName));
+                Object value = row.get(featureName);
+                if (value != null || row.containsKey(featureName)) {
+                    values.add(value);
                 } else if (defaultValue != null) {
                     values.add(defaultValue);
                 } else {

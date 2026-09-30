@@ -70,7 +70,7 @@ public final class ExecutionContext {
                 .map(candidate -> freezeInputMap(candidate, ownedDecodedInputs))
                 .toList();
         this.offlineRows = offlineRows.stream()
-                .map(row -> Collections.unmodifiableMap(new LinkedHashMap<>(row)))
+                .map(row -> freezeInputMap(row, ownedDecodedInputs))
                 .toList();
         this.offlineBatch = offlineBatch;
         this.onlineGroupExecutionIds = List.copyOf(onlineGroupExecutionIds);
@@ -147,6 +147,23 @@ public final class ExecutionContext {
                 List.of(), List.of(), new int[] {0}, false);
     }
 
+    /** C1/C10：接管解码器新建的独占行 Map；调用方交接后不得修改这些 Map。 */
+    public static ExecutionContext offlineBatchFromOwnedDecodedValues(
+            String executionId, List<Map<String, Object>> rows) {
+        Objects.requireNonNull(rows, "rows");
+        return new ExecutionContext(executionId, ExecutionEnvironment.OFFLINE,
+                Map.of(), List.of(), rows, true,
+                List.of(), List.of(), new int[] {0}, false, true);
+    }
+
+    /** C1/C10：单行解码也使用同一所有权交接契约。 */
+    public static ExecutionContext offlineRowFromOwnedDecodedValues(
+            String executionId, Map<String, Object> row) {
+        return new ExecutionContext(executionId, ExecutionEnvironment.OFFLINE,
+                row, List.of(), List.of(), false,
+                List.of(), List.of(), new int[] {0}, false, true);
+    }
+
     public static ExecutionContext onlineRequest(
             String requestId,
             Map<String, Object> userAndSceneValues,
@@ -212,6 +229,14 @@ public final class ExecutionContext {
         return candidateIndex - candidateGroupOffsets[groupIndex];
     }
     public Map<String, ValueHandle> resultSlots() { return resultSlots; }
+
+    /** 同时清除槽、状态和失败检查缓存持有的引用，保留状态元数据。 */
+    void releaseIntermediate(String slot, String physicalNodeId) {
+        ValueHandle value = resultSlots.remove(slot);
+        RuntimeNodeState state = nodeStates.get(physicalNodeId);
+        if (state != null) state.releaseResult();
+        if (batchFailureChecks != null && value != null) batchFailureChecks.remove(value);
+    }
     public RuntimeCache runtimeCache() { return runtimeCache; }
     /**
      * @deprecated 仅为源兼容保留。直接访问不会生成缓存统计，核心执行器应使用 runtimeCache()。

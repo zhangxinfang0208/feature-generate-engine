@@ -72,7 +72,8 @@ public final class JfrFlamegraphExporter {
                     frames.add(frame.getMethod().getType().getName() + "." + frame.getMethod().getName());
                 }
                 // Restrict both flame graphs to the timed API path, excluding JFR/JIT helper work.
-                if (!frames.contains(LargeOnlineBenchmark.class.getName() + ".executeRequest")) continue;
+                if (!frames.contains(LargeOnlineBenchmark.class.getName() + ".executeRequest")
+                        && !frames.contains(LargeOfflineBenchmark.class.getName() + ".execute")) continue;
                 if (stack.isTruncated()) truncated++;
                 String leaf = frames.get(0);
                 Collections.reverse(frames);
@@ -94,7 +95,7 @@ public final class JfrFlamegraphExporter {
         writeFolded(output.resolve("cpu.folded"), cpu);
         writeFolded(output.resolve("allocation.folded"), allocation);
         Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("note", "Java execution samples in executeRequest, allocation weights are estimates. Inclusive percentages overlap.");
+        summary.put("note", "Java execution samples in online executeRequest or offline execute; allocation weights are estimates. Inclusive percentages overlap.");
         summary.put("cpu_samples", retainedCpu);
         summary.put("all_execution_samples", events.getOrDefault("jdk.ExecutionSample", 0L));
         summary.put("excluded_execution_samples", events.getOrDefault("jdk.ExecutionSample", 0L) - retainedCpu);

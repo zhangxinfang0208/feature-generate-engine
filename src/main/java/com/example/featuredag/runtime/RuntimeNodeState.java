@@ -60,6 +60,7 @@ public final class RuntimeNodeState {
     }
 
     void markRunning() { this.status = ExecutionStatus.RUNNING; }
+    void releaseResult() { this.resultHandle = null; }
     void markSuccess(ValueHandle result, long durationNanos) {
         this.status = ExecutionStatus.SUCCESS;
         this.resultHandle = result;

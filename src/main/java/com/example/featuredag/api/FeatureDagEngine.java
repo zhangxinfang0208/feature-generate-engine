@@ -359,8 +359,8 @@ public final class FeatureDagEngine {
                 ExecutionPhase.DECODE,
                 () -> ExecutionContext.onlineRequestFromOwnedDecodedValues(
                         request.executionId(),
-                        inputDecoder.decodeOnlineShared(request.sharedValues()),
-                        inputDecoder.decodeOnlineCandidates(request.candidates())));
+                        inputDecoder.decodeOnlineSharedReadOnly(request.sharedValues()),
+                        inputDecoder.decodeOnlineCandidatesReadOnly(request.candidates())));
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {

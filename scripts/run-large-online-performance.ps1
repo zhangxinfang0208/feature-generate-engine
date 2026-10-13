@@ -4,6 +4,8 @@ param(
     [ValidateRange(1, 100000)][int]$SequenceLength = 384,
     [ValidateRange(1, 10000)][int]$Candidates = 500,
     [ValidateRange(1, 100)][int]$Runs = 3,
+    [ValidateSet('engine', 'request')][string]$Scope = 'engine',
+    [ValidateSet('snapshot', 'borrowed')][string]$InputMode = 'snapshot',
     [ValidatePattern('^\d+[mgMG]$')][string]$Heap = '2g',
     [switch]$CaptureDiagnostics,
     [switch]$Profile,
@@ -32,7 +34,7 @@ try {
         $jvm = @("-Xms$Heap", "-Xmx$Heap", '-XX:+UseZGC', '-XX:+ZGenerational',
             '-XX:FlightRecorderOptions=stackdepth=128', "-Xlog:gc*,safepoint:file=${gcLog}:time,uptime,level,tags")
         & $javaExecutable @jvm -cp $cp com.example.featuredag.performance.LargeOnlineBenchmark `
-            $out $WarmupSeconds $MeasureSeconds $SequenceLength $Candidates $observe $sample 2>&1 |
+            $out $WarmupSeconds $MeasureSeconds $SequenceLength $Candidates $observe $sample $Scope $InputMode 2>&1 |
             Tee-Object -FilePath (Join-Path $out 'console.log')
         $javaExit = $LASTEXITCODE
         if (Test-Path $gcLog) { Move-Item -LiteralPath $gcLog -Destination (Join-Path $out 'gc.log') }

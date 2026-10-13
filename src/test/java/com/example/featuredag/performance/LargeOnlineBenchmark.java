@@ -2,11 +2,15 @@ package com.example.featuredag.performance;
 
 import com.example.featuredag.api.FeatureDagEngine;
 import com.example.featuredag.api.GenerateResult;
+import com.example.featuredag.api.OnlineGenerateRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 
 import java.lang.management.ManagementFactory;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -19,12 +23,14 @@ import java.util.Map;
 /** Explicit standalone benchmark; never performs timing assertions in Surefire. */
 public final class LargeOnlineBenchmark {
     private static volatile GenerateResult sink;
+    private static MethodHandle requestFactory;
+    private static boolean includeConstruction;
 
     private LargeOnlineBenchmark() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 7) throw new IllegalArgumentException(
-                "outputDir warmupSeconds measureSeconds sequenceLength candidates observe profile");
+        if (args.length != 7 && args.length != 9) throw new IllegalArgumentException(
+                "outputDir warmupSeconds measureSeconds sequenceLength candidates observe profile [engine|request snapshot|borrowed]");
         Path output = Path.of(args[0]);
         int warmup = positive(args[1]);
         int seconds = positive(args[2]);
@@ -32,6 +38,23 @@ public final class LargeOnlineBenchmark {
         int candidates = positive(args[4]);
         boolean observe = bool(args[5]);
         boolean profile = bool(args[6]);
+        String scope = args.length == 9 ? args[7] : "engine";
+        String inputMode = args.length == 9 ? args[8] : "snapshot";
+        if (!scope.equals("engine") && !scope.equals("request")) throw new IllegalArgumentException("Invalid scope");
+        if (!inputMode.equals("snapshot") && !inputMode.equals("borrowed")) throw new IllegalArgumentException("Invalid inputMode");
+        if (scope.equals("engine") && inputMode.equals("borrowed")) {
+            throw new IllegalArgumentException("Engine scope reuses the prebuilt snapshot pool; use snapshot mode");
+        }
+        includeConstruction = scope.equals("request");
+        // Resolve once outside timing. The identical harness also runs on revisions without borrowed().
+        // Both construction modes use the same invokeExact call site, with no per-request reflection.
+        if (includeConstruction) {
+            requestFactory = inputMode.equals("borrowed")
+                    ? MethodHandles.publicLookup().findStatic(OnlineGenerateRequest.class, "borrowed",
+                            MethodType.methodType(OnlineGenerateRequest.class, String.class, Map.class, List.class))
+                    : MethodHandles.publicLookup().findConstructor(OnlineGenerateRequest.class,
+                            MethodType.methodType(void.class, String.class, Map.class, List.class));
+        }
         Files.createDirectories(output);
         LargeOnlineWorkload workload = new LargeOnlineWorkload(length, candidates, 8);
         Files.writeString(output.resolve("features.json"), workload.config());
@@ -107,6 +130,10 @@ public final class LargeOnlineBenchmark {
         result.put("base", 320); result.put("sequence_base", 160); result.put("derived", 320);
         result.put("sequence_length", length); result.put("candidates", candidates);
         result.put("request_pool", 8); result.put("concurrency", 1);
+        result.put("scope", scope); result.put("input_mode", inputMode);
+        result.put("timing_boundary", includeConstruction
+                ? "request construction + generate; excludes business field mapping/splitting and input generation"
+                : "generate only; request constructed before timing");
         result.put("observe", observe); result.put("profile", profile);
         result.put("observer", observe ? "latest-diagnostics-volatile-sink" : "NOOP");
         if (observe) {
@@ -158,11 +185,24 @@ public final class LargeOnlineBenchmark {
     }
 
     private static void executeRequest(FeatureDagEngine engine, LargeOnlineWorkload workload, int index) {
-        sink = engine.generate(workload.request(index));
+        sink = engine.generate(request(workload, index));
+    }
+
+    private static OnlineGenerateRequest request(LargeOnlineWorkload workload, int index) {
+        OnlineGenerateRequest source = workload.request(index);
+        if (!includeConstruction) return source;
+        try {
+            return (OnlineGenerateRequest) requestFactory.invokeExact(
+                    source.executionId(), source.sharedValues(), source.candidates());
+        } catch (RuntimeException | Error error) {
+            throw error;
+        } catch (Throwable error) {
+            throw new IllegalStateException("Request construction failed", error);
+        }
     }
 
     private static void verify(LargeOnlineWorkload workload, FeatureDagEngine engine, int index, int candidates) {
-        GenerateResult result = engine.generate(workload.request(index));
+        GenerateResult result = engine.generate(request(workload, index));
         if (result.candidateFeatureValues().size() != candidates) throw new AssertionError("candidate count");
         for (int row = 0; row < candidates; row++) {
             if (!workload.expected(index, row).equals(result.candidateFeatureValues().get(row))) {

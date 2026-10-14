@@ -74,6 +74,20 @@ final class FeatureInputDecoder {
         return decode(external, sharedSources);
     }
 
+    /** C1：仅接收在线请求已快照冻结或显式借用的稳定输入。 */
+    Map<String, Object> decodeOnlineSharedReadOnly(Map<String, List<?>> external) {
+        return decode(external, sharedSources, true);
+    }
+
+    List<Map<String, Object>> decodeOnlineCandidatesReadOnly(
+            List<Map<String, List<?>>> externalCandidates) {
+        List<Map<String, Object>> decoded = new ArrayList<>(externalCandidates.size());
+        for (Map<String, List<?>> candidate : externalCandidates) {
+            decoded.add(decode(candidate, itemSources, true));
+        }
+        return Collections.unmodifiableList(decoded);
+    }
+
     List<Map<String, Object>> decodeOnlineSharedBatch(
             List<OnlineRequestGroup> groups) {
         return groups.stream()
@@ -129,7 +143,7 @@ final class FeatureInputDecoder {
             if (source.dataType() == DataType.BIGINT) {
                 return decodeBigintValues(source.sourceBinding(), values, readOnlyInputs);
             }
-            // 离线请求已快照冻结或显式只读借用（C1/C6），只加只读视图，不再复制序列。
+            // 请求已快照冻结或显式只读借用（C1/C6），只加只读视图，不再复制序列。
             return readOnlyInputs ? Collections.unmodifiableList(values) : FeatureValueCollections.immutableList(values);
         }
         if (source.shape() == ValueShape.CANDIDATE_VECTOR) {

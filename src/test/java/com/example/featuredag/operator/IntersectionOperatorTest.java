@@ -15,7 +15,7 @@ public final class IntersectionOperatorTest {
     private final OperatorRegistry registry = OperatorRegistry.standard();
 
     @Test public void registersIndependentPureOperatorWithScalarAdapter() {
-        assertEquals(24, InitialBusinessOperators.definitions().size());
+        assertEquals(25, InitialBusinessOperators.definitions().size());
         assertTrue(registry.require("intersection") instanceof IntersectionOperator);
         assertTrue(registry.require("intersection").deterministic());
         assertTrue(registry.require("intersection").sideEffectFree());

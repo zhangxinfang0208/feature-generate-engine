@@ -18,6 +18,7 @@ public final class InitialBusinessOperators {
                 new FindIndicesOperator(),
                 new FindIndicesAnyOperator(),
                 new GetSequenceLengthOperator(),
+                new FirstElementOperator(),
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
                 new ConcatOperator(),

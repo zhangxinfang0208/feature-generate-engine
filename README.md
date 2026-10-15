@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 24 个算子：
+`OperatorRegistry.standard()` 注册以下 25 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
 | `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标并保持源顺序 |
 | `get_seq_length` | `get_seq_length(sequence)` | 返回序列长度 |
+| `first_element` | `first_element(sequence)` | 返回首元素并保留类型；空序列抛出异常，可通过衍生特征默认值回退 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
 | `concat` | `concat(value1, value2, ...)` | 使用可配置分隔符拼接两个或更多标量 |
@@ -37,9 +38,17 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 19 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
+`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 20 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
 
 ## 算子异常与衍生默认值
+
+`first_element(["A", "B"])` 返回 `"A"`；
+`first_element(auid_hwdsp_clk_ts_seq_time_365d)` 在首元素为 `1791281209` 时返回该时间戳。
+输入支持基础类型的 `List` 或 `OperatorSequence`（包括序列视图），只读取逻辑下标 0，
+不排序、不跳过 null；首元素为 null 时返回 null。输出为标量，继承有类型输入的元素类型和实体域。
+序列字面量在逻辑层标记为 `OBJECT`，因此首元素类型暂推断为 `UNKNOWN`，由衍生特征声明确定边界类型。
+空序列、null 输入、非序列输入及结构化首元素会抛出异常；不支持 `EVENT_SEQUENCE`。
+Batch 使用 `SCALAR_ADAPTER`，保持逐行等价及原行序。
 
 在特征 DAG 内执行时，所有已注册算子（包括公共扩展入口注册的算子）的 Kernel 若抛出
 `RuntimeException`，运行时会把失败传递到所属衍生特征的 `FEATURE_OUTPUT` 边界：

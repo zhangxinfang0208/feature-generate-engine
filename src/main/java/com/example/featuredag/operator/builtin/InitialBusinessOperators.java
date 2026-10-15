@@ -29,6 +29,7 @@ public final class InitialBusinessOperators {
                 new HitOperator(),
                 new GroupCountConcatOperator(),
                 new CalculateDeltaSequenceOperator(),
+                new CosSimSeqOperator(),
                 new ToIntOperator(),
                 new ToBigintOperator(),
                 new MinOperator(),

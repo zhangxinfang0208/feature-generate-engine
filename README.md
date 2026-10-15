@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 25 个算子：
+`OperatorRegistry.standard()` 注册以下 26 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -27,6 +27,7 @@
 | `hit` | `hit(eventSequence, keys)` | 按 key 集合过滤事件序列 |
 | `group_count_concat` | `group_count_concat(sequence, {"delimiter":"#"})` | 按首次出现顺序输出“值 + 分隔符 + 频次”序列 |
 | `calc_delta_seq` | `calc_delta_seq(sequence, baseline)` | 逐元素计算 `value - baseline` |
+| `cos_sim_seq` | `cos_sim_seq(emb_seq, target_emb)` | 逐向量计算与目标向量的余弦相似度，保序输出；详见 [使用说明](docs/architecture/cos-sim-seq.md) |
 | `to_int` | `to_int(value)` | 数值或十进制数字字符串标量/序列转 32 位 int 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
 | `to_bigint` | `to_bigint(value)` | 数值或十进制数字字符串标量/序列转 64 位 bigint 载体；序列逐元素转换并保序，小数向零截断，超范围失败 |
 | `min` | `min(value1, value2, ...)` | 数值标量/等长序列逐元素最小值；标量广播，相等保留最左输入 |
@@ -38,7 +39,7 @@
 
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 20 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
+`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 21 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
 
 ## 算子异常与衍生默认值
 

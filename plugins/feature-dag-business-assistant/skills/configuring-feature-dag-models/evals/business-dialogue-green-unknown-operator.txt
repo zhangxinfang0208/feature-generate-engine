@@ -1,0 +1,52 @@
+配置补充项已生成，请按特征复制到前台。
+
+DERIVED 特征 future_output：
+
+```json
+[
+  {
+    "raw_name": "definition_type",
+    "data_value": "DERIVED",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "expression",
+    "data_value": "future_transform(base_a)",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "output_policy",
+    "data_value": "OUTPUT",
+    "data_type": "STRING",
+    "default_value": "",
+    "required": "true"
+  },
+  {
+    "raw_name": "to_use",
+    "data_value": "true",
+    "data_type": "BOOLEAN",
+    "default_value": "",
+    "required": "true"
+  }
+]
+```
+
+算子 future_transform 缺少可用语义契约，以下衍生特征信息需要业务补充：
+
+特征 future_output：
+- type
+- value_shape
+- entity_scopes
+- seq_max_length
+
+请按下面的样例一次性回复：
+
+特征 future_output：
+type: STRING
+value_shape: SCALAR
+entity: USER
+seq_max_length: 365

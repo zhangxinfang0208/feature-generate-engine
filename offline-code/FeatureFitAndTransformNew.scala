@@ -1,3 +1,4 @@
+FeatureFitAndTransformNew\.scala  第 1/5 批
 \
 class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(taskMeta) {
 \
@@ -663,7 +664,380 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
 \
 &#x20;     runDagPreprocess()
 \
-&#x20;   }
+&#x20;   }第 2/5 批
+    // save the map file
+    featureMap ++= featureMapExtra
+    Utils.saveMutableMapV2(spark, featureMap, configSaveRootPath + "/featureMap.json")
+    Utils.saveMutableMapV2(spark, featureMaxIndexMap, configSaveRootPath + "/featureMaxIndexMap.json")
+    Utils.saveMutableMapV2(spark, seqMaxLenMap, configSaveRootPath + "/seqMaxLenMap.json")
+    Utils.saveMutableMapV2(spark, meanAndStdMap, configSaveRootPath + "/meanAndStdMap.json")
+    Utils.saveMutableMapV2(spark, hashEncodeMap, configSaveRootPath + "/hashEncodeMap.json")
+    Utils.saveMutableMapV2(spark, realFeatureMaxIdxMap, configSaveRootPath + "/realFeatureMaxIndexMap.json")
+    Utils.saveTextFile(spark, featureIdxOverflow.mkString(","), configSaveRootPath + "/featureIdxOverflow.txt")
+
+    if (storageMode != null && storageMode.equalsIgnoreCase("nsp")) {
+      info("current storageMode is nsp, start to writes data success file, and preload data")
+      val envConfig = NspUtils.init()
+      val nspService = new NspService(envConfig.cloudMapConfig, envConfig.nspConfig, datasetInfo.getRegion)
+      val basePath = handleNspSavePath(configSaveRootPath, isNeedSuffix = false)
+      saveMutableMapByNsp(nspService, basePath+"/featureMap.json", featureMap,  datasetInfo.isCrossRegion)
+      saveMutableMapByNsp(nspService, basePath+"/featureMaxIndexMap.json", featureMaxIndexMap,  datasetInfo.isCrossRegion)
+      saveMutableMapByNsp(nspService, basePath+"/seqMaxLenMap.json", seqMaxLenMap,  datasetInfo.isCrossRegion)
+      saveMutableMapByNsp(nspService, basePath+"/meanAndStdMap.json", meanAndStdMap,  datasetInfo.isCrossRegion)
+      saveMutableMapByNsp(nspService, basePath+"/hashEncodeMap.json", hashEncodeMap,  datasetInfo.isCrossRegion)
+      saveMutableMapByNsp(nspService, basePath+"/realFeatureMaxIndexMap.json", realFeatureMaxIdxMap,  datasetInfo.isCrossRegion)
+      nspService.putObjectWithResponse(basePath+"/featureIdxOverflow.txt", featureIdxOverflow.mkString(",").getBytes())
+      nspService.close()
+      val DataMangerService = new DataMangerService()
+      val preloadPaths = new util.ArrayList[String]()
+      preloadPaths.add(basePath)
+      info(s"preload path  ${basePath}")
+      DataMangerService.preloadDataSet(datasetInfo, preloadPaths)
+    }
+    val chunkSize = 1024 * 1024
+    Utils.writeMapToHDFSInChunks(featureMap, syncBasePath, chunkSize)
+    val broadcastChunkInfo = spark.sparkContext.broadcast(ChunkInfo(syncBasePath, (featureMap.size + chunkSize - 1) / chunkSize))
+
+    // step3: transform the data
+    if (unionData != null) {
+      // 保留 DAG 结果；原有样本计数逻辑不变。
+      if (externalOnly) {
+        trainDataCnt = externalData.count()
+      } else {
+        trainDataCnt = trainData.count()
+      }
+      info(s"=========== unionData count = ${trainDataCnt}")
+    }
+
+    if (materialSwitch) {
+      trainDataCnt = trainData.count()
+      testDataCnt = testData.count()
+      validDataCnt = validData.count()
+    }
+
+    // debug模式下, 输出数据集的相关统计指标,  map("MissingRate" -> Map("train" -> Map(fea1 -> value1), "valid" -> Map(fea1 -> value1)))
+    var statInfoMap: mutable.Map[String, Any] = mutable.Map.empty[String, Any]
+    if (isDebugMode) {
+      SqlTemplateExecutor.sqlTemplate(spark, Array(Tuple3("train", trainData, trainDataCnt),
+        Tuple3("valid", validData, validDataCnt), Tuple3("test", testData, testDataCnt)), labelCol, statInfoMap, "MissingRate", buildMissingValueSqlBuffer)
+      if (!(labelCol.length == 1 && labelCol(0).isEmpty)) {
+        SqlTemplateExecutor.sqlTemplate(spark, Array(Tuple3("train", trainData, trainDataCnt),
+          Tuple3("valid", validData, validDataCnt), Tuple3("test", testData, testDataCnt)), labelCol, statInfoMap, "OtherStatInfo", buildOtherStatSqlBuffer)
+        if (trainSql.contains(",pt_h") | trainSql.contains(", pt_h")) {
+          SqlTemplateExecutor.sqlTemplate(spark, Array(Tuple3("train", trainData, trainDataCnt),
+            Tuple3("valid", validData, validDataCnt), Tuple3("test", testData, testDataCnt)), labelCol, statInfoMap, "PartitionStatInfo", buildMoreInfoStatSqlBuffer, true)
+        }
+      }
+      if (materialSwitch) statInfoMap = FeatureFitAndTransformNew.removeGroupId(statInfoMap)
+      info(s"statInfoMap is ${statInfoMap}")
+    }
+
+    var featureCols = Array[String]()
+
+    for (data <- Array(Tuple2(trainData, "train"), Tuple2(validData, "valid"), Tuple2(testData, "test"))) {
+      var tempData = data._1
+      val dataType = data._2
+      if (varLenDenseFeatures.nonEmpty && dataType != "train") {
+        tempData =
+        if (TransformParamModule.useColumnExprOpt) {
+          FeatureFitAndTransformNew.processVarLenDenseFeatureOpt(tempData, varLenDenseFeatures)
+        } else {
+          FeatureFitAndTransformNew.processVarLenDenseFeature(tempData, varLenDenseFeatures)
+        }
+      }
+
+
+      info("================= dense feature transform started =================")
+      // dense norm
+      tempData = FeatureFitAndTransformNew.transformDenseFeature(tempData, denseFeatures, suffixName, meanAndStdMap, normType)
+      info("================= dense feature transform finished =================")
+
+      // pure dense`
+      tempData = FeatureFitAndTransformNew.transformDenseFeature(tempData, pureDenseFeatures, suffixName, meanAndStdMap, "keep")
+      info("================= pure dense feature transform finished =================")
+
+      // long sequence pureDense transform => Array input, no split
+      if (pureDenseLongSeqFeatures.nonEmpty) {
+        tempData = FeatureFitAndTransformNew.processVarLenDenseLongSeqFeature(tempData, pureDenseLongSeqFeatures)
+        info("================= long seq varLen dense feature pad/truncate finished =================")
+        tempData = FeatureFitAndTransformNew.transformDenseLongSeqFeature(tempData, pureDenseLongSeqFeatures, suffixName, meanAndStdMap)
+        info("================= long seq pureDense feature transform finished =================")
+      }
+
+      // transform the raw encode feature
+      tempData = FeatureFitAndTransformNew.transformRawFeature(tempData, suffixName, seqMaxLenMap, RawNumTransform, isPadding, rawEncodeFeatures)
+      info("================= raw encode feature transform finished =================")
+      // transform the separate encode feature
+      tempData = FeatureFitAndTransformNew.transformCategoricalFeature(modelTrainConfigSavePath, tempData, SEPARATE, suffixName, featureMap, Array(featureMaxIndexMap, seqMaxLenMap), dataType, broadcastChunkInfo, isPadding)
+      info("================= SEPARATE encode feature transform finished =================")
+
+      // transform the joint encode feature
+
+
+
+      tempData = FeatureFitAndTransformNew.transformCategoricalFeature(modelTrainConfigSavePath, tempData, JOINT, suffixName, featureMap, Array(featureMaxIndexMap, seqMaxLenMap), dataType, broadcastChunkInfo, isPadding)
+      info("================= joint encode feature transform finished =================")
+
+      // transform the weighted separate encode feature
+      tempData = FeatureFitAndTransformNew.transformCategoricalFeature(modelTrainConfigSavePath, tempData, WEIGHTED_SEQ, suffixName, featureMap, Array(featureMaxIndexMap, seqMaxLenMap), dataType, broadcastChunkInfo, isPadding)
+      info("================= weightedSeqFeature transform finished =================")
+
+      // transform the accumulate encode features
+      tempData = FeatureFitAndTransformNew.transformCategoricalFeature(modelTrainConfigSavePath, tempData, ACU, suffixName, featureMap, Array(featureMaxIndexMap, seqMaxLenMap), dataType, broadcastChunkInfo, isPadding)
+      info("================= accumulateEncode transform finished =================")
+
+      // transform the hash encode feature
+      info(s"*************${dataType}*************")
+      if (TransformConfigModule.hashJointPrefixMap == null || TransformConfigModule.hashJointPrefixMap.isEmpty) {
+        TransformConfigModule.hashJointPrefixMap = loadAndParseModelFeatureSet(MODEL_FEATURE_SET)
+          .filter(feature => feature.encode.equals(HASH) || feature.encode.equals(AUTO_HASH) || feature.encode.equals(AUTO_HASHWEIGHTED) )
+          // 将交叉特征中的#号连接符替换为__
+          .map(feature => (feature.name.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR), feature.hashJointPrefix))
+          .toMap
+      }
+      // hashEncodeMap 已不含长序特征（长序写入独立的 longSeqHashEncodeMap）
+      if(doComputeCollision){
+        HashEncode.computeCollision(spark, tempData, hashEncodeMap, isModuleInHash, null)
+      }
+
+      tempData = FeatureFitAndTransformNew.transformHashFeature(tempData, suffixName, hashEncodeMap, seqMaxLenMap, minCnt4Features, isPadding, minCount, isDoubleHash, null)
+      info("================= hash Encode transform finished =================")
+
+      // long sequence autoHash transform => Array input, no split
+      if (TransformParamModule.longSeqHashEncodeMap.nonEmpty) {
+        tempData = FeatureFitAndTransformNew.transformHashLongSeqFeature(tempData, suffixName, TransformParamModule.longSeqHashEncodeMap, seqMaxLenMap, isPadding)
+        info("================= long seq hash Encode transform finished =================")
+      }
+      dataType match {
+        case "train" => trainData = tempData
+        case "valid" => validData = tempData
+        case "test" => testData = tempData
+      }
+    }
+
+    // step4: 保存featureMap以及后续训练所需文件
+    // 仅在fit时生成featureMap文件
+    FeatureFitAndTransformNew.saveTransformMap(spark, param, featureMap, featureMaxIndexMap, seqMaxLenMap, meanAndStdMap, hashEncodeMap, jointEncodeFeatures, TransformParamModule.longSeqHashEncodeMap)
+
+    if (sampleZipNum > 1) {
+      trainDataCnt = trainDataCnt - trainDataCnt % sampleZipNum
+      validDataCnt = validDataCnt - validDataCnt % sampleZipNum
+      testDataCnt = testDataCnt - testDataCnt % sampleZipNum
+    }
+    if (saveByColumn.isEmpty || !saveByColumn.equalsIgnoreCase("true")) {
+      FeatureFitAndTransformNew.saveModelTrainConfig(spark, modelTrainConfigSavePath, dataLocalSavePath,
+        featureMaxIndexMap, seqMaxLenMap, trainDataCnt, validDataCnt, testDataCnt, onlyTransform = TransformParamModule.transform, statInfoMap, sampleZipNum, groupParams)
+    } else {
+      val trainCounts = if (trainData != null) trainData.groupBy("pt_d").count().collect()
+        .map(r => r.getString(0) -> r.getLong(1)).toMap else Map.empty[String, Long]
+      val validCounts = if (validData != null) validData.groupBy("pt_d").count().collect()
+        .map(r => r.getString(0) -> r.getLong(1)).toMap else Map.empty[String, Long]
+      val testCounts = if (testData != null) testData.groupBy("pt_d").count().collect()
+        .map(r => r.getString(0) -> r.getLong(1)).toMap else Map.empty[String, Long]
+
+      val allDates = trainCounts.keySet ++ validCounts.keySet ++ testCounts.keySet
+      allDates.foreach { date =>
+        val dataPath = String.join(SLASH_SEP, savePathConfigByColumn, date)
+        val tempPath = String.join(SLASH_SEP, dataPath, "modelTrain.json")
+        FeatureFitAndTransformNew.saveModelTrainConfig(spark, tempPath, dataLocalSavePath,
+          featureMaxIndexMap, seqMaxLenMap, trainCounts.getOrElse(date, 0L), validCounts.getOrElse(date, 0L), testCounts.getOrElse(date, 0L), onlyTransform = TransformParamModule.transform, statInfoMap, sampleZipNum, groupParams)
+      }
+    }
+
+    // step可选: 生成一致性校验文件
+    if (consistencyCheckEnable) {
+      try {
+        val sampledTrainData: DataFrame = SamplingUtils.samplingByCount(trainData, consistencyCheckSampleNum)
+        startConsistencyCheck(spark, suffixName, sampledTrainData)
+      } catch {
+        case ex: Exception =>
+          LOGGER.error(s"consistencyCheck error with message: ${ex.getMessage}", ex)
+      }
+    }
+
+    // step5: 将转换后DataFrame保存为csv|tfrecord文件格式
+    // 选择label与转换后的特征
+    if (!dataSrc && unionData != null) {
+      // 三方数据，并且不保留 data_src 列 删除
+      separateEncodeFeatures = separateEncodeFeatures.filterNot(_.equals(dataSrcCol))
+    }
+
+    if (denseFeatures != null && denseFeatures.length > 0)
+      featureCols = featureCols.++(denseFeatures.map(_ + suffixName))
+    if (pureDenseFeatures != null && pureDenseFeatures.length > 0)
+      featureCols = featureCols.++(pureDenseFeatures.map(_ + suffixName))
+    if (separateEncodeFeatures != null && separateEncodeFeatures.length > 0)
+      featureCols = featureCols.++(separateEncodeFeatures.map(_.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR) + suffixName))
+
+    if (rawEncodeFeatures != null && rawEncodeFeatures.length > 0)
+      featureCols = featureCols.++(rawEncodeFeatures.map(_.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR) + suffixName))
+
+    if (jointEncodeFeatures != null && jointEncodeFeatures.size > 0) {
+      for (jointFeat <- jointEncodeFeatures) {
+        featureCols = featureCols.++(jointFeat._2.map(_.trim + suffixName)
+          .map(name => name.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR)))
+      }
+    }
+    if (weightedSeqFeatures != null && weightedSeqFeatures.length > 0) {
+      featureCols = featureCols.++(weightedSeqFeatures.map(_ + FEATURE_VALUE_SUFFIX))
+      featureCols = featureCols.++(weightedSeqFeatures.map(_ + FEATURE_WEIGHT_SUFFIX))
+    }
+
+    if (hashEncodeMap.nonEmpty) {
+      val hashEncodeFeatureBuffer = ArrayBuffer.empty[String]
+      hashEncodeMap.keys.map(feature => {
+        if (arrayContainsString(autoHashWeightedFeatures, feature)){
+          hashEncodeFeatureBuffer += (feature + FEATURE_VALUE_SUFFIX + suffixName)
+          hashEncodeFeatureBuffer += (feature + FEATURE_WEIGHT_SUFFIX + suffixName)
+        }else{
+          hashEncodeFeatureBuffer += (feature + suffixName)
+        }
+      })
+      featureCols ++= hashEncodeFeatureBuffer
+    }
+
+    // 长序 hash 特征输出列
+    if (TransformParamModule.longSeqHashEncodeMap.nonEmpty) {
+      featureCols ++= TransformParamModule.longSeqHashEncodeMap.keys.map(_ + suffixName).toSeq
+    }
+
+    // 长序 pureDense 特征输出列
+    if (pureDenseLongSeqFeatures != null && pureDenseLongSeqFeatures.length > 0) {
+      featureCols = featureCols.++(pureDenseLongSeqFeatures.map(_ + suffixName))
+    }
+
+    if (accumulateFeatures != null && accumulateFeatures.length > 0) {
+      featureCols = featureCols.++(accumulateFeatures.map(_.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR) + suffixName))
+    }
+    for (feaName <- featureCols){
+      info(s"outFeatureNames:${feaName}")
+    }
+
+
+    // 按照时间顺序计算traindata里面的样本权重
+    var selectedCol = Array[String]()
+    var newCols = Array[String]()
+
+    if (!(labelCol.length == 1 && labelCol(0).isEmpty)) {
+      selectedCol = selectedCol.++(labelCol)
+      newCols = newCols.++(labelCol)
+    }
+    if (materialSwitch) {
+      selectedCol = selectedCol.++(Array(Const.GROUP_ID))
+      newCols = newCols.++(Array(Const.GROUP_ID))
+    }
+    if (saveByColumn.nonEmpty && saveByColumn.equalsIgnoreCase("true")) {
+      selectedCol = selectedCol.++(Array("pt_d"))
+      newCols = newCols.++(Array("pt_d"))
+    }
+    if (sampleWeightCol != null && sampleWeightCol(0).length != 0) {
+      if (!sampleWeightMethod.equals("")) {
+        trainData = FeatureFitAndTransformNew.computeSampleWeight(trainData, sampleWeightCol(0), sampleWeightMethod)
+      }
+      selectedCol = selectedCol.++(sampleWeightCol).++(uniqueId).++(featureCols)
+      newCols = newCols.++(sampleWeightCol).++(uniqueId).++(featureCols)
+    } else {
+      selectedCol = selectedCol.++(uniqueId).++(featureCols)
+      newCols = newCols.++(uniqueId).++(featureCols)
+    }
+
+    // 增加透传字段
+    if (requiredPassFeatures.nonEmpty) {
+      selectedCol = selectedCol.++(requiredPassFeatures)
+      newCols = newCols.++(requiredPassFeatures)
+    }
+
+    val finalSelectedCol = selectedCol.map(col(_))
+    val finalNewCols = newCols.map(name => Utils.encodeFeatureName(name.replaceAll(suffixName, "")))
+
+    for (data <- Array(Tuple2(trainData, "train"), Tuple2(validData, "valid"), Tuple2(testData, "test"))) {
+      var tempData = data._1
+      val dataType = data._2
+      if (tempData != null) {
+        if (dataType.equals("train") && externalOnly) {
+          tempData = tempData.filter(s"$dataSrcCol == 0").toDF()
+        }
+        LogUtil.infoLog(LOGGER, s"${dataType} dataset have been saved successfully.")
+        tempData = tempData.select(finalSelectedCol: _*).toDF(finalNewCols: _*)
+        if (isFeatureConcat) {
+          val sparseConcatExpr = sparseFeatureCols.sortWith(_ < _).map(col).reduce((a, b) => concat(a, b))
+          val denseConcatExpr = denseFeatureCols.sortWith(_ < _).map(col).reduce((a, b) => concat(a, b))
+          val allFeatureCols = sparseFeatureCols.++(denseFeatureCols)
+          tempData = tempData.withColumn("sparse_concat", sparseConcatExpr).withColumn("dense_concat", denseConcatExpr).drop(allFeatureCols: _*)
+        }
+        if (saveByColumn.isEmpty || !saveByColumn.equalsIgnoreCase("true")) {
+          FeatureFitAndTransformNew.saveHdfsFile(spark, tempData, labelCol, saveFormat, dataHdfsSavePath, outputRepartitionNum, resultFileSizeInMB, dataType, compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
+        } else {
+          val uniqueValues = tempData.select(col("pt_d"))
+            .distinct()
+            .collect()
+            .map(_.getString(0))
+          uniqueValues.foreach { value =>
+            val filteredDF = tempData.filter(col("pt_d") === value)
+            val saveByColumnPath = savePathByColmun + "/" + value
+            FeatureFitAndTransformNew.saveHdfsFile(spark, filteredDF, labelCol, saveFormat, saveByColumnPath, outputRepartitionNum, resultFileSizeInMB, dataType, compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
+          }
+        }
+        LogUtil.infoLog(LOGGER, s"${dataType} dataset have been saved successfully.")
+      }
+      dataType match {
+        case "train" => trainData = tempData
+        case "valid" => validData = tempData
+        case "test" => testData = tempData
+      }
+    }
+
+    if (metaFeatureList.nonEmpty) {
+      val isDebugMode = TransformParamModule.isDebugMode
+      val (metaGroupA, metaGroupB) = stratifiedMetaFeatureSampling(spark, trainData, metaMinBatch, metaFeatureList, isDebugMode)
+      FeatureFitAndTransformNew.saveHdfsFile(spark, metaGroupA, labelCol, saveFormat, dataHdfsSavePath, outputRepartitionNum, resultFileSizeInMB, "meta/groupA", compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
+      FeatureFitAndTransformNew.saveHdfsFile(spark, metaGroupB, labelCol, saveFormat, dataHdfsSavePath, outputRepartitionNum, resultFileSizeInMB, "meta/groupB", compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
+    }
+
+    if (storageMode != null && storageMode.equalsIgnoreCase("nsp")) {
+      val envConfig = NspUtils.init()
+      val nspService = new NspService(envConfig.cloudMapConfig, envConfig.nspConfig, datasetInfo.getRegion)
+      val basePath = handleNspSavePath(dataHdfsSavePath)
+      if (TransformParamModule.isWriteSuccessFile) {
+        info("data write success,now to write success_file")
+        val success_file = basePath + "_SUCCESS"
+        nspService.putObjectWithResponse(success_file, "_SUCCESS".getBytes(Charset.forName("UTF-8")), datasetInfo.isCrossRegion)
+      } else {
+        info("skip writing success_file, isWriteSuccessFile is false")
+      }
+      nspService.close()
+      info("data write success,now to preload")
+      val DataMangerService = new DataMangerService()
+      val preloadPaths = new util.ArrayList[String]()
+      preloadPaths.add(basePath)
+      info(s"preload path  ${basePath}")
+      DataMangerService.preloadDataSet(datasetInfo, preloadPaths)
+    }
+
+    // 增量transform下,increaseTransformBaseVer.txt
+    if (TransformParamModule.transform && updateTransformBaseDateFlag) {
+      var savePath = modelTrainConfigSavePath.split("\\/").dropRight(2).mkString("/") + "/" + INCREASE_DATA_BASE_VER_TXT
+      if (modelTrainConfigSavePath.split("\\/").dropWhile(_ != "config").length == 4) {
+        savePath = modelTrainConfigSavePath.split("\\/").reverse.dropWhile(_ != "config").reverse.mkString("/") + "/" + INCREASE_DATA_BASE_VER_TXT
+      }
+      info(s"savepath : ${savePath}")
+      Utils.saveTextFile(spark, increaseDataBaseVer, savePath)
+      info(s"successfully save increaseDataBaseVer : ${increaseDataBaseVer}")
+    }
+    // 清理缓存
+    spark.sparkContext.getPersistentRDDs.foreach(rddItem => {
+      rddItem._2.unpersist()
+    })
+    mutable.Map("train" -> originTrainDF)
+    } finally {
+      try {
+        dagPreProcess.close()
+      } catch {
+        case scala.util.control.NonFatal(e) =>
+          LOGGER.warn("Failed to close DAG preprocess", e)
+      }
+    }
+  }
 
 第 3/5 批
   def loadLocalConfigFile(spark: SparkSession,path:String): (mutable.Map[String, Any], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, mutable.Map[String, Array[Double]]], String, mutable.Set[String]) ={

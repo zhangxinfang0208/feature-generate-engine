@@ -1,4 +1,3 @@
-FeatureFitAndTransformNew\.scala  第 1/5 批
 \
 class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(taskMeta) {
 \
@@ -664,7 +663,7 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
 \
 &#x20;     runDagPreprocess()
 \
-&#x20;   }第 2/5 批
+&#x20;   }
     // save the map file
     featureMap ++= featureMapExtra
     Utils.saveMutableMapV2(spark, featureMap, configSaveRootPath + "/featureMap.json")
@@ -1039,7 +1038,6 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
     }
   }
 
-第 3/5 批
   def loadLocalConfigFile(spark: SparkSession,path:String): (mutable.Map[String, Any], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, mutable.Map[String, Array[Double]]], String, mutable.Set[String]) ={
 
     var featureIdxOverflow = mutable.Set.empty[String]
@@ -1521,7 +1519,6 @@ object FeatureFitAndTransformNew {
     info(s"transformCategoricalFeature type = ${categoricalType} start!!!")
     res
   }
-第 4/5 批
   def transformHashFeature(input: DataFrame, suffixName: String, hashNumMap: mutable.Map[String, Int], seqMaxLength: mutable.Map[String, Int],
                            minCnt4Features: mutable.Map[String, Int], isPaddingFlag: Boolean, minCnt: Int = 100, isCrossDoubleHash: Boolean = false, hashType:String): DataFrame = {
     if (hashNumMap.isEmpty || input == null)
@@ -2062,7 +2059,6 @@ object FeatureFitAndTransformNew {
 
 
   }
-第 5/5 批
   def saveModelTrainConfig(spark: SparkSession, modelTrainConfigSavePath: String, dataLocalSavePath: String,
                            featureMaxIndexMap: mutable.Map[String, Int], seqMaxLenMap: mutable.Map[String, Int],
                            trainCount: Long, validCount: Long = 0, testCount: Long = 0, onlyTransform: Boolean = false, statInfoMap: mutable.Map[String, Any] = mutable.Map.empty[String, Any]

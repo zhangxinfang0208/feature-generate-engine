@@ -1,4 +1,669 @@
+\
+class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(taskMeta) {
+\
+&#x20; private val LOGGER = LoggerFactory.getLogger(this.getClass)
+\
+&#x20; override def execute(spark: SparkSession, input: mutable.Map[String, DataFrame]): mutable.Map[String, DataFrame] = {
+\
 
+\
+&#x20;   val param = taskMeta.parameter
+\
+&#x20;   // check the input parameter
+\
+&#x20;   checkInputParam(param)
+\
+&#x20;   setCompressMode(spark, param)
+\
+&#x20;   init(param)
+\
+&#x20;   val featuresNeedMod = if(isModuleInHash) features.filter(\_.isModuleInHash).map(\_.name).toSet else Set[String]\()
+\
+&#x20;   // param init
+\
+&#x20;   var featureMap = mutable.Map[String, Any]\().empty
+\
+&#x20;   var featureMapExtra = mutable.Map[String, Any]\().empty
+\
+&#x20;   var featureMaxIndexMap = mutable.Map[String, Int]\().empty
+\
+&#x20;   var realFeatureMaxIdxMap = mutable.Map[String, Int]\().empty
+\
+&#x20;   var featureIdxOverflow = mutable.Set.empty[String]
+\
+&#x20;   var meanAndStdMap = mutable.Map[String, mutable.Map[String, Array[Double]]]\().empty
+\
+
+\
+&#x20;   val preProcess = new Preprocess(taskMeta)
+\
+&#x20;   val dagPreProcess = new DagPreprocess(taskMeta)
+\
+
+\
+&#x20;   // DAG 广播必须保留到所有计算、保存完成；异常时也释放。
+\
+&#x20;   try {
+\
+&#x20;   val syncBasePath = configSaveRootPath + "/sync/feature_map"
+\
+
+\
+&#x20;   // 特征转换时，随机掩埋部分比例特征增加泛化能力
+\
+&#x20;   Const.setMaskRate(maskRate)
+\
+
+\
+&#x20;   // 增量任务需要加载的config路径
+\
+&#x20;   var preConfigLoadPath = ""
+\
+&#x20;   // 增量任务increaseDataBaseVer.txt需要更新的周期
+\
+&#x20;   var increaseDataBaseVer = ""
+\
+&#x20;   // 是否需要更新increaseTransformBaseVer.txt
+\
+&#x20;   var updateTransformBaseDateFlag = false
+\
+
+\
+&#x20;   if (!sampleWeightMethod.equals("") && sampleWeightCol != null && sampleWeightCol(0).length == 0)
+\
+&#x20;     throw new IllegalArgumentException("if use computeSampleWeightMethod, need to set sampleWeightCol")
+\
+
+\
+&#x20;   val nameNode = dataHdfsSavePath.split("(\\\\/)+")(0) + "//" + dataHdfsSavePath.split("(\\\\/)+")(1)
+\
+&#x20;   spark.sparkContext.hadoopConfiguration.set("fs.defaultFS", s"${nameNode}")
+\
+&#x20;   spark.conf.set("fs.defaultFS", s"${nameNode}")
+\
+
+\
+&#x20;   val suffixName = "\_Index"
+\
+&#x20;   val dataSrcCol = "data_src"
+\
+
+\
+&#x20;   val inputDF = if (input.contains(INPUT_NAME_DATA)) input(INPUT_NAME_DATA) else null
+\
+&#x20;   // 构建训练集、验证集与测试集
+\
+&#x20;   var Array(trainData, validData, testData) = Array(Tuple2(trainSql, "train"), Tuple2(validSql, "valid"), Tuple2(testSql, "test")).map(
+\
+&#x20;     x => loadHiveData(spark, x.\_1, x.\_2, partitionNum,isCache, storageLevel, inputDF)
+\
+&#x20;   )
+\
+&#x20;   if (param.getBoolean("consistencyCheck", Some(false))){
+\
+&#x20;     if (!uniqueId.contains("column_id")) {
+\
+&#x20;       uniqueId :+ "column_id"
+\
+&#x20;     }
+\
+&#x20;     val consistencyChecker = new ConsistencyCheckTransform(taskMeta, tranFeatures)
+\
+&#x20;     testData = consistencyChecker.execute(spark, testData)
+\
+&#x20;   }
+\
+&#x20;   if (param.getBoolean("fillDefaultValue", Some(false))){
+\
+&#x20;     trainData = fillDefaultValue(trainData,featureDefaultValue, labelCol, uniqueId, "train")
+\
+&#x20;     validData = fillDefaultValue(validData,featureDefaultValue, labelCol, uniqueId, "valid")
+\
+&#x20;     testData = fillDefaultValue(testData,featureDefaultValue, labelCol, uniqueId, "test")
+\
+&#x20;   }
+\
+&#x20;   val originTrainDF: DataFrame = trainData.select(trainData.columns.map(col): \_\*)
+\
+&#x20;   if (trainData == null && validData == null && testData == null) {
+\
+&#x20;     throw new IllegalArgumentException("trainSql, validSql, testSql are all empty, please check...")
+\
+&#x20;   }
+\
+&#x20;   // 获取训练集、验证集、测试集的样本数量
+\
+&#x20;   var Array(trainDataCnt, validDataCnt, testDataCnt) = Array(trainData, validData, testData).map(x => if (x != null) x.count() else 0)
+\
+
+\
+&#x20;   info(s"Datacount train:$trainDataCnt  valid:$validDataCnt  test:$testDataCnt")
+\
+&#x20;   // 如果进行分组, 需要分组后计算样本数量
+\
+&#x20;   if (groupParams.getOrElse("groupKey", "").nonEmpty){
+\
+&#x20;     val groupPhase = groupParams.getOrElse("groupPhase", "")
+\
+&#x20;     val groupKeyOpt = groupParams.getOrElse("groupKey", "")
+\
+&#x20;     // 只在配置了对应 groupPhase 时统计分组数；否则保留前面的样本数。
+\
+&#x20;     // 不能把原始 DataFrame 放入 grouped\* 后再 collect().length，否则会把全量样本拉到 Driver。
+\
+&#x20;     val groupedTrainData = if (groupPhase.split(COMMA_SEP).contains("train"))
+\
+&#x20;       trainData.groupBy(groupKeyOpt).count() else null
+\
+&#x20;     val groupedValidData = if (groupPhase.split(COMMA_SEP).contains("valid"))
+\
+&#x20;       validData.groupBy(groupKeyOpt).count() else null
+\
+&#x20;     val groupedTestData = if (groupPhase.split(COMMA_SEP).contains("test"))
+\
+&#x20;       testData.groupBy(groupKeyOpt).count() else null
+\
+
+\
+&#x20;     // 保留原分组条件和完整行求值，以 RDD count 避免 SQL 列裁剪及全量结果进入 Driver。
+\
+&#x20;     trainDataCnt = if (groupedTrainData != null) groupedTrainData.rdd.count() else trainDataCnt
+\
+&#x20;     validDataCnt = if (groupedValidData != null) groupedValidData.rdd.count() else validDataCnt
+\
+&#x20;     testDataCnt = if (groupedTestData != null) groupedTestData.rdd.count() else testDataCnt
+\
+&#x20;   }
+\
+&#x20;   if (trainDataCnt == 0 || validDataCnt == 0 || testDataCnt == 0) {
+\
+&#x20;     throw new IllegalArgumentException("train set count, valid set count or test set count may be 0, please check...")
+\
+&#x20;   }
+\
+
+\
+&#x20;   // 获取外部数据
+\
+&#x20;   var externalData = loadHiveData(spark, externalSql, "external", partitionNum,isCache, storageLevel, null)
+\
+&#x20;   var unionData: DataFrame = null
+\
+&#x20;   var externalOnly: Boolean = false
+\
+&#x20;   if (externalData != null) {
+\
+&#x20;     if (labelCol.length == 1 && labelCol(0).isEmpty) throw new IllegalArgumentException(s"to use externalsql need input label")
+\
+&#x20;     val defaultCxr = SamplingUtils.getPositiveProportion(trainData, labelCol(0))
+\
+&#x20;     info(s"=========== default cxr: $defaultCxr")
+\
+&#x20;     // cxr 参数
+\
+&#x20;     val cxr = Utils.getParamDouble(param, CXR, defaultCxr)
+\
+&#x20;     // 判断是否有三方数据并进行采样
+\
+&#x20;     if (sampleScope.equals("external")) {
+\
+&#x20;       externalData = SamplingUtils.externalSampling(spark, trainData, externalData, labelCol(0), cxr)
+\
+&#x20;       // sampleScope 配置为 external，开关决定是否只保存采样数据
+\
+&#x20;       externalOnly = TransformParamModule.externalOnly
+\
+&#x20;     } else if (sampleScope.equals("third_dsp")) {
+\
+&#x20;       externalData = SamplingUtils.thirdDspSampling(spark, externalData, labelCol(0), cxr)
+\
+&#x20;     }
+\
+&#x20;     // 添加 data_src 列
+\
+&#x20;     externalData = externalData.withColumn(dataSrcCol, lit(0))
+\
+&#x20;     trainData = trainData.withColumn(dataSrcCol, lit(1))
+\
+&#x20;     validData = validData.withColumn(dataSrcCol, lit(1))
+\
+&#x20;     testData = testData.withColumn(dataSrcCol, lit(1))
+\
+&#x20;     unionData = SamplingUtils.unionDataFrame(trainData, externalData)
+\
+&#x20;     // shuffle
+\
+&#x20;     unionData = SamplingUtils.shuffleDataSet(unionData)
+\
+&#x20;     separateEncodeFeatures = separateEncodeFeatures :+ dataSrcCol
+\
+&#x20;   }
+\
+
+\
+&#x20;   // DAG 接入：在素材拆分和 DAG 前确定训练数据源，后续不再覆盖。
+\
+&#x20;   if (unionData != null) {
+\
+&#x20;     trainData = unionData
+\
+&#x20;   }
+\
+
+\
+&#x20;   val materialFeatures = features.filter(feature => feature.isMaterial == true)
+\
+&#x20;     .map(feature => (feature.name -> feature.creative_sep)).toMap
+\
+&#x20;   info(s"materialFeatures is:{${materialFeatures}}")
+\
+
+\
+&#x20;   val materialSwitch = TransformParamModule.materialSwitch
+\
+&#x20;   info(s"materialSwitch is:{${materialSwitch}}")
+\
+
+\
+&#x20;   if (materialSwitch) {
+\
+&#x20;     require(materialFeatures.nonEmpty, s"there is no material features,please close materialSwitch!")
+\
+&#x20;     info(s"split material started")
+\
+&#x20;     trainData = splitMaterializedColumns(trainData, materialFeatures)
+\
+&#x20;     validData = splitMaterializedColumns(validData, materialFeatures)
+\
+&#x20;     testData = splitMaterializedColumns(testData, materialFeatures)
+\
+&#x20;     info(s"split material ended")
+\
+&#x20;   }
+\
+
+\
+&#x20;   val varLenDenseFeatures = (denseFeatures ++ pureDenseFeatures).filter(seqMaxLenMap.contains)
+\
+
+\
+&#x20;   // 三个互斥分支各调用一次；不改变原有 Preprocess 的执行范围。
+\
+&#x20;   def runDagPreprocess(): Unit = {
+\
+&#x20;     val arrayOutputNames = (
+\
+&#x20;       Option(pureDenseLongSeqFeatures).toSeq.flatMap(\_.toSeq) ++
+\
+&#x20;         Option(autoHashLongSeqFeatures).toSeq.flatMap(\_.toSeq) ++
+\
+&#x20;         TransformParamModule.longSeqHashEncodeMap.keys
+\
+&#x20;       ).toSet
+\
+
+\
+&#x20;     val dagResult = dagPreProcess.execute(
+\
+&#x20;       spark,
+\
+&#x20;       mutable.LinkedHashMap(
+\
+&#x20;         "train" -> trainData,
+\
+&#x20;         "valid" -> validData,
+\
+&#x20;         "test" -> testData
+\
+&#x20;       ),
+\
+&#x20;       arrayOutputNames
+\
+&#x20;     )
+\
+
+\
+&#x20;     var newTrainData = dagResult.getOrElse("train", null)
+\
+&#x20;     val newValidData = dagResult.getOrElse("valid", null)
+\
+&#x20;     val newTestData = dagResult.getOrElse("test", null)
+\
+
+\
+&#x20;     // DERIVED 列必须先生成，训练集的变长 dense 只处理一次。
+\
+&#x20;     if (varLenDenseFeatures.nonEmpty && newTrainData != null) {
+\
+&#x20;       newTrainData = if (TransformParamModule.useColumnExprOpt) {
+\
+&#x20;         FeatureFitAndTransformNew\.processVarLenDenseFeatureOpt(
+\
+&#x20;           newTrainData, varLenDenseFeatures)
+\
+&#x20;       } else {
+\
+&#x20;         FeatureFitAndTransformNew\.processVarLenDenseFeature(
+\
+&#x20;           newTrainData, varLenDenseFeatures)
+\
+&#x20;       }
+\
+&#x20;     }
+\
+
+\
+&#x20;     // DAG 输出缓存由 DagPreprocess 通过 dagOutputStorageLevel 参数管理（默认 NONE 不缓存）。
+\
+&#x20;     trainData = newTrainData
+\
+&#x20;     validData = newValidData
+\
+&#x20;     testData = newTestData
+\
+&#x20;   }
+\
+&#x20;   // step2: fit the feature, include dense、pureDense、sparse feature、jointEncode、hashEncode
+\
+&#x20;   if (!TransformParamModule.transform) {
+\
+&#x20;     // preProcess
+\
+&#x20;     trainData = preProcess.execute(spark, mutable.Map("train" -> trainData)).getOrElse("train", null)
+\
+&#x20;     validData = preProcess.execute(spark, mutable.Map("valid" -> validData)).getOrElse("valid", null)
+\
+&#x20;     testData = preProcess.execute(spark, mutable.Map("test" -> testData)).getOrElse("test", null)
+\
+
+\
+&#x20;     runDagPreprocess()
+\
+
+\
+&#x20;     // fit the dense feature and add the value to meanAndStdMap
+\
+&#x20;     // when transform is false, adctr will fit the train data to get the needed parameter file
+\
+&#x20;     meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew\.fitDenseFeature(spark, trainData, denseFeatures, normType, seqMaxLenMap))
+\
+
+\
+&#x20;     // fit the pure dense feature => not use norm action
+\
+&#x20;     meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew\.fitDenseFeature(spark, trainData, pureDenseFeatures, "keep", seqMaxLenMap))
+\
+
+\
+&#x20;     // fit the long sequence pureDense feature => Array input, no split
+\
+&#x20;     meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew\.fitDenseLongSeqFeature(spark, trainData, pureDenseLongSeqFeatures, seqMaxLenMap))
+\
+
+\
+&#x20;     // fit the raw feature
+\
+&#x20;     val rawSeqMaxLengthMap = FeatureFitAndTransformNew\.fitRawFeature(spark, trainData, rawEncodeFeatures, seqMaxLenMap)
+\
+&#x20;     seqMaxLenMap = seqMaxLenMap.++(rawSeqMaxLengthMap)
+\
+
+\
+&#x20;     // fit the separate encode feature
+\
+&#x20;     val tempTuple = FeatureFitAndTransformNew\.fitSeperateFeature(spark, trainData, separateEncodeFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCnt4Features, minCount = minCount)
+\
+&#x20;     featureMap = tempTuple.\_1
+\
+&#x20;     featureMapExtra = tempTuple.\_2
+\
+&#x20;     featureMaxIndexMap = tempTuple.\_3
+\
+&#x20;     seqMaxLenMap = tempTuple.\_4
+\
+
+\
+&#x20;     // fit the joint encode feature
+\
+&#x20;     val tempTuple2 = FeatureFitAndTransformNew\.fitJointFeature(spark, trainData, jointEncodeFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCount = minCount)
+\
+&#x20;     featureMap = tempTuple2.\_1
+\
+&#x20;     featureMapExtra = tempTuple2.\_2
+\
+&#x20;     featureMaxIndexMap = tempTuple2.\_3
+\
+&#x20;     seqMaxLenMap = tempTuple2.\_4
+\
+
+\
+&#x20;     // fit the joint encode feature, update the hashEncodeMap
+\
+&#x20;     FeatureFitAndTransformNew\.processAutoHash(trainData, hashEncodeMap, hashBufPercent, autoHashFeatures++(autoHashWeightedFeatures), minCnt4Features, minCount, featuresNeedMod)
+\
+
+\
+&#x20;     // fit the long sequence autoHash feature => Array input, no split
+\
+&#x20;     // 写入独立的 longSeqHashEncodeMap，不混入 hashEncodeMap
+\
+&#x20;     if (autoHashLongSeqFeatures.nonEmpty) {
+\
+&#x20;       FeatureFitAndTransformNew\.processAutoHashLongSeq(trainData, TransformParamModule.longSeqHashEncodeMap, hashBufPercent, autoHashLongSeqFeatures, minCnt4Features, minCount, featuresNeedMod)
+\
+&#x20;     }
+\
+
+\
+&#x20;     hashEncodeMap = mutable.Map[String, Int]\(hashEncodeMap.toSeq.map(x => (x.\_1.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR), x.\_2)): \_\*)
+\
+
+\
+&#x20;     if (!hashEncodeMap.isEmpty) {
+\
+&#x20;       for (key <- hashEncodeMap.keys) {
+\
+&#x20;         featureMaxIndexMap += key -> hashEncodeMap(key)
+\
+&#x20;       }
+\
+&#x20;       val tmpSeqMaxLengthMap = FeatureFitAndTransformNew\.fitHashFeature(spark, trainData,
+\
+&#x20;         hashEncodeMap.keys.toArray, seqMaxLenMap)
+\
+&#x20;       seqMaxLenMap = seqMaxLenMap.++(tmpSeqMaxLengthMap)
+\
+&#x20;     }
+\
+
+\
+&#x20;     // fit the weighted feature
+\
+&#x20;     val tempTuple3 = FeatureFitAndTransformNew\.fitWeightedSeparateFeature(spark, trainData, weightedSeqFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCount = minCount)
+\
+&#x20;     info("================= weightedSeqFeature fit finished =================")
+\
+&#x20;     featureMap = tempTuple3.\_1
+\
+&#x20;     featureMapExtra = tempTuple3.\_2
+\
+&#x20;     featureMaxIndexMap = tempTuple3.\_3
+\
+&#x20;     seqMaxLenMap = tempTuple3.\_4
+\
+
+\
+&#x20;     // fit the accumulated_encoded features
+\
+&#x20;     val result = FeatureFitAndTransformNew\.fitAccumulatedFeaturesByFull(spark, trainData, accumulateFeatures, featureMap, featureMapExtra, featureMaxIndexMap, realFeatureMaxIdxMap, seqMaxLenMap, minCount = minCount, accumulateBufPercent)
+\
+&#x20;     info("================= accumulate features fit finished =================")
+\
+&#x20;     featureMap = result.\_1
+\
+&#x20;     featureMapExtra = result.\_2
+\
+&#x20;     featureMaxIndexMap = result.\_3
+\
+&#x20;     realFeatureMaxIdxMap = result.\_4
+\
+&#x20;     seqMaxLenMap = result.\_5
+\
+
+\
+&#x20;     for (k <- featureMaxIndexMap.keys) {
+\
+&#x20;       info(s"the max index of feature:${k} is ${featureMaxIndexMap(k)}")
+\
+&#x20;     }
+\
+&#x20;   } else if(StringUtils.isBlank(previousDate)){
+\
+&#x20;     // 基于共享文件的增量transform逻辑
+\
+&#x20;     var latestFullDate = ""
+\
+&#x20;     var latestIncreaseData = ""
+\
+&#x20;     try {
+\
+&#x20;       latestFullDate = Utils.loadWholeLocalFile(LATEST_FULL_DATA_TXT)
+\
+&#x20;       latestIncreaseData = Utils.loadWholeLocalFile(LATEST_INCREASE_DATA_TXT)
+\
+&#x20;       increaseDataBaseVer = Utils.loadWholeLocalFile(INCREASE_DATA_BASE_VER_TXT)
+\
+&#x20;     } catch {
+\
+&#x20;       case ex: Exception => LOGGER.error(s"load file cause error with message : ${ex.getMessage}")
+\
+&#x20;     }
+\
+&#x20;     info(s"latestFullDate is ${latestFullDate}, increaseDataBaseVer is ${increaseDataBaseVer}")
+\
+
+\
+&#x20;     import org.apache.commons.lang3.StringUtils;
+\
+&#x20;     val configRootPath = modelTrainConfigSavePath.split("\\\\/").reverse.dropWhile(\_ != "config").reverse.mkString("/")
+\
+&#x20;     if (StringUtils.isEmpty(latestFullDate)) {
+\
+&#x20;       // first full transform has not finished, skip current incremental transform
+\
+&#x20;       throw new Exception(s"full transform has not finished, skip current incremental transform")
+\
+&#x20;     }
+\
+
+\
+&#x20;     if (latestFullDate.equals(increaseDataBaseVer)) {
+\
+&#x20;       // 找最新的且正确的增量transform的周期
+\
+&#x20;       preConfigLoadPath = modelTrainConfigSavePath.split("\\\\/").dropRight(2).mkString("/") + '/' + latestIncreaseData
+\
+&#x20;     } else {
+\
+&#x20;       // 注意增量tfrecord生成好了之后(在saveHdfsFile方法之后),需要去更新transformBaseVer.txt
+\
+&#x20;       preConfigLoadPath = configRootPath + "/full/" + latestFullDate
+\
+&#x20;       updateTransformBaseDateFlag = true
+\
+&#x20;       increaseDataBaseVer = latestFullDate
+\
+&#x20;     }
+\
+&#x20;     info(s"preConfigLoadPath is ${preConfigLoadPath}")
+\
+
+\
+&#x20;     //4月增量方案v3版本中对于增量的tfrecord存在路径从 /data/incremental/date -> /data/incremental/latestFullDate/date
+\
+&#x20;     val tmpArray = dataLocalSavePath.split("\\\\/")
+\
+&#x20;     val curIncrementPeriod = tmpArray(tmpArray.length - 1)
+\
+&#x20;     dataLocalSavePath = tmpArray.dropRight(1).mkString("/") + "/" + latestFullDate + "/" + curIncrementPeriod
+\
+
+\
+&#x20;     info(s"dataLocalSavePath is ${dataLocalSavePath}")
+\
+
+\
+&#x20;     // load the given date json file to init the map
+\
+&#x20;     val res = loadLocalConfigFile(spark,preConfigLoadPath)
+\
+&#x20;     featureMap = res.\_1
+\
+&#x20;     featureMaxIndexMap = res.\_2
+\
+&#x20;     realFeatureMaxIdxMap = res.\_3
+\
+&#x20;     seqMaxLenMap = res.\_4
+\
+&#x20;     hashEncodeMap = res.\_5
+\
+&#x20;     meanAndStdMap = res.\_6
+\
+&#x20;     featureIdxOverflow = res.\_8
+\
+&#x20;     LOGGER.info("Load all jsons successfully")
+\
+
+\
+&#x20;     // 增量 fit 也需要先生成衍生特征。
+\
+&#x20;     runDagPreprocess()
+\
+
+\
+&#x20;     val result = FeatureFitAndTransformNew\.fitAccumulatedFeaturesByIncrement(spark, trainData, accumulateFeatures, featureMap, featureMaxIndexMap, realFeatureMaxIdxMap, featureIdxOverflow, seqMaxLenMap, minCount)
+\
+&#x20;     featureMap = result.\_1
+\
+&#x20;     featureMaxIndexMap = result.\_2
+\
+&#x20;     realFeatureMaxIdxMap = result.\_3
+\
+&#x20;     seqMaxLenMap = result.\_4
+\
+&#x20;     featureIdxOverflow = result.\_5
+\
+&#x20;   } else {
+\
+&#x20;     val previousDateConfigLoadPath = modelTrainConfigSavePath.split("\\\\/").dropRight(2).mkString("/") + '/' + previousDate
+\
+
+\
+&#x20;     info(s"previousDateConfigLoadPath is ${previousDateConfigLoadPath}")
+\
+&#x20;     val res = loadLocalConfigFile(spark,previousDateConfigLoadPath)
+\
+&#x20;     featureMap = res.\_1
+\
+&#x20;     featureMaxIndexMap = res.\_2
+\
+&#x20;     realFeatureMaxIdxMap = res.\_3
+\
+&#x20;     seqMaxLenMap = res.\_4
+\
+&#x20;     hashEncodeMap = res.\_5
+\
+&#x20;     meanAndStdMap = res.\_6
+\
+&#x20;     featureIdxOverflow = res.\_8
+\
+
+\
+&#x20;     // 指定历史版本仅 transform 时，也生成衍生特征。
+\
+&#x20;     runDagPreprocess()
+\
+&#x20;   }
 
 第 3/5 批
   def loadLocalConfigFile(spark: SparkSession,path:String): (mutable.Map[String, Any], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, Int], mutable.Map[String, mutable.Map[String, Array[Double]]], String, mutable.Set[String]) ={

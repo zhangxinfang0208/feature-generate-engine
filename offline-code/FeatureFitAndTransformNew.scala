@@ -16,6 +16,31 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
     var meanAndStdMap = mutable.Map[String, mutable.Map[String, Array[Double]]]().empty
     val preProcess = new Preprocess(taskMeta)
     val dagPreProcess = new DagPreprocess(taskMeta)
+    // 仅管理本次执行新建的 Hive 缓存，不清理调用者已有的缓存。
+    val ownedHiveCaches = mutable.LinkedHashMap.empty[String, DataFrame]
+    def releaseHiveCache(key: String): Unit = {
+      ownedHiveCaches.get(key).foreach { df =>
+        df.unpersist(blocking = true)
+        ownedHiveCaches.remove(key)
+      }
+    }
+    def loadOwnedHiveData(sql: String, key: String, source: DataFrame): DataFrame = {
+      val df = loadHiveData(spark, sql, key, partitionNum, false, storageLevel, source)
+      if (df != null && isCache && df.storageLevel == StorageLevel.NONE) {
+        val level = StorageLevel.fromString(storageLevel)
+        if (level != StorageLevel.NONE) {
+          df.persist(level)
+          ownedHiveCaches.put(key, df)
+        }
+      }
+      df
+    }
+    def outputPartitionsFor(key: String): Int = key match {
+      case "train" => param.getInt("trainOutputRepartitionNum", Some(outputRepartitionNum))
+      case "valid" => param.getInt("validOutputRepartitionNum", Some(-1))
+      case "test" => param.getInt("testOutputRepartitionNum", Some(-1))
+      case _ => -1
+    }
     // DAG 广播必须保留到所有计算、保存完成；异常时也释放。
     try {
     val syncBasePath = configSaveRootPath + "/sync/feature_map"
@@ -37,7 +62,7 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
     val inputDF = if (input.contains(INPUT_NAME_DATA)) input(INPUT_NAME_DATA) else null
     // 构建训练集、验证集与测试集
     var Array(trainData, validData, testData) = Array(Tuple2(trainSql, "train"), Tuple2(validSql, "valid"), Tuple2(testSql, "test")).map(
-      x => loadHiveData(spark, x._1, x._2, partitionNum,isCache, storageLevel, inputDF)
+      x => loadOwnedHiveData(x._1, x._2, inputDF)
     )
     if (param.getBoolean("consistencyCheck", Some(false))){
       if (!uniqueId.contains("column_id")) {
@@ -51,7 +76,7 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
       validData = fillDefaultValue(validData,featureDefaultValue, labelCol, uniqueId, "valid")
       testData = fillDefaultValue(testData,featureDefaultValue, labelCol, uniqueId, "test")
     }
-    val originTrainDF: DataFrame = trainData.select(trainData.columns.map(col): _\*)
+    val originTrainDF: DataFrame = trainData.select(trainData.columns.map(col): _*)
     if (trainData == null && validData == null && testData == null) {
       throw new IllegalArgumentException("trainSql, validSql, testSql are all empty, please check...")
     }
@@ -79,7 +104,7 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
       throw new IllegalArgumentException("train set count, valid set count or test set count may be 0, please check...")
     }
     // 获取外部数据
-    var externalData = loadHiveData(spark, externalSql, "external", partitionNum,isCache, storageLevel, null)
+    var externalData = loadOwnedHiveData(externalSql, "external", null)
     var unionData: DataFrame = null
     var externalOnly: Boolean = false
     if (externalData != null) {
@@ -140,16 +165,24 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
         ),
         arrayOutputNames
       )
+      // 只预热 train；valid/test 保持惰性。计数不覆盖后面的业务样本数。
+      if (param.getBoolean("materializeTrainDagBeforeFit", Some(true)) &&
+          (!TransformParamModule.transform || StringUtils.isBlank(previousDate)) &&
+          ownedHiveCaches.contains("train") && dagPreProcess.hasCachedOutput("train")) {
+        val dagRows = dagResult("train").count()
+        info(s"Train DAG materialized before fit: rows=$dagRows")
+        releaseHiveCache("train")
+      }
       var newTrainData = dagResult.getOrElse("train", null)
       val newValidData = dagResult.getOrElse("valid", null)
       val newTestData = dagResult.getOrElse("test", null)
       // DERIVED 列必须先生成，训练集的变长 dense 只处理一次。
       if (varLenDenseFeatures.nonEmpty && newTrainData != null) {
         newTrainData = if (TransformParamModule.useColumnExprOpt) {
-          FeatureFitAndTransformNew\.processVarLenDenseFeatureOpt(
+          FeatureFitAndTransformNew.processVarLenDenseFeatureOpt(
             newTrainData, varLenDenseFeatures)
         } else {
-          FeatureFitAndTransformNew\.processVarLenDenseFeature(
+          FeatureFitAndTransformNew.processVarLenDenseFeature(
             newTrainData, varLenDenseFeatures)
         }
       }
@@ -167,51 +200,51 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
       runDagPreprocess()
       // fit the dense feature and add the value to meanAndStdMap
       // when transform is false, adctr will fit the train data to get the needed parameter file
-      meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew\.fitDenseFeature(spark, trainData, denseFeatures, normType, seqMaxLenMap))
+      meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew.fitDenseFeature(spark, trainData, denseFeatures, normType, seqMaxLenMap))
       // fit the pure dense feature => not use norm action
-      meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew\.fitDenseFeature(spark, trainData, pureDenseFeatures, "keep", seqMaxLenMap))
+      meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew.fitDenseFeature(spark, trainData, pureDenseFeatures, "keep", seqMaxLenMap))
       // fit the long sequence pureDense feature => Array input, no split
-      meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew\.fitDenseLongSeqFeature(spark, trainData, pureDenseLongSeqFeatures, seqMaxLenMap))
+      meanAndStdMap = meanAndStdMap.++(FeatureFitAndTransformNew.fitDenseLongSeqFeature(spark, trainData, pureDenseLongSeqFeatures, seqMaxLenMap))
       // fit the raw feature
-      val rawSeqMaxLengthMap = FeatureFitAndTransformNew\.fitRawFeature(spark, trainData, rawEncodeFeatures, seqMaxLenMap)
+      val rawSeqMaxLengthMap = FeatureFitAndTransformNew.fitRawFeature(spark, trainData, rawEncodeFeatures, seqMaxLenMap)
       seqMaxLenMap = seqMaxLenMap.++(rawSeqMaxLengthMap)
       // fit the separate encode feature
-      val tempTuple = FeatureFitAndTransformNew\.fitSeperateFeature(spark, trainData, separateEncodeFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCnt4Features, minCount = minCount)
+      val tempTuple = FeatureFitAndTransformNew.fitSeperateFeature(spark, trainData, separateEncodeFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCnt4Features, minCount = minCount)
       featureMap = tempTuple._1
       featureMapExtra = tempTuple._2
       featureMaxIndexMap = tempTuple._3
       seqMaxLenMap = tempTuple._4
       // fit the joint encode feature
-      val tempTuple2 = FeatureFitAndTransformNew\.fitJointFeature(spark, trainData, jointEncodeFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCount = minCount)
+      val tempTuple2 = FeatureFitAndTransformNew.fitJointFeature(spark, trainData, jointEncodeFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCount = minCount)
       featureMap = tempTuple2._1
       featureMapExtra = tempTuple2._2
       featureMaxIndexMap = tempTuple2._3
       seqMaxLenMap = tempTuple2._4
       // fit the joint encode feature, update the hashEncodeMap
-      FeatureFitAndTransformNew\.processAutoHash(trainData, hashEncodeMap, hashBufPercent, autoHashFeatures++(autoHashWeightedFeatures), minCnt4Features, minCount, featuresNeedMod)
+      FeatureFitAndTransformNew.processAutoHash(trainData, hashEncodeMap, hashBufPercent, autoHashFeatures++(autoHashWeightedFeatures), minCnt4Features, minCount, featuresNeedMod)
       // fit the long sequence autoHash feature => Array input, no split
       // 写入独立的 longSeqHashEncodeMap，不混入 hashEncodeMap
       if (autoHashLongSeqFeatures.nonEmpty) {
-        FeatureFitAndTransformNew\.processAutoHashLongSeq(trainData, TransformParamModule.longSeqHashEncodeMap, hashBufPercent, autoHashLongSeqFeatures, minCnt4Features, minCount, featuresNeedMod)
+        FeatureFitAndTransformNew.processAutoHashLongSeq(trainData, TransformParamModule.longSeqHashEncodeMap, hashBufPercent, autoHashLongSeqFeatures, minCnt4Features, minCount, featuresNeedMod)
       }
-      hashEncodeMap = mutable.Map[String, Int](hashEncodeMap.toSeq.map(x => (x._1.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR), x._2)): _\*)
+      hashEncodeMap = mutable.Map[String, Int](hashEncodeMap.toSeq.map(x => (x._1.replace(Const.CONFIG_CROSS_SEP_CHAR, Const.ACTUAL_SEP_CHAR), x._2)): _*)
       if (!hashEncodeMap.isEmpty) {
         for (key <- hashEncodeMap.keys) {
           featureMaxIndexMap += key -> hashEncodeMap(key)
         }
-        val tmpSeqMaxLengthMap = FeatureFitAndTransformNew\.fitHashFeature(spark, trainData,
+        val tmpSeqMaxLengthMap = FeatureFitAndTransformNew.fitHashFeature(spark, trainData,
           hashEncodeMap.keys.toArray, seqMaxLenMap)
         seqMaxLenMap = seqMaxLenMap.++(tmpSeqMaxLengthMap)
       }
       // fit the weighted feature
-      val tempTuple3 = FeatureFitAndTransformNew\.fitWeightedSeparateFeature(spark, trainData, weightedSeqFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCount = minCount)
+      val tempTuple3 = FeatureFitAndTransformNew.fitWeightedSeparateFeature(spark, trainData, weightedSeqFeatures, featureMap, featureMapExtra, featureMaxIndexMap, seqMaxLenMap, minCount = minCount)
       info("================= weightedSeqFeature fit finished =================")
       featureMap = tempTuple3._1
       featureMapExtra = tempTuple3._2
       featureMaxIndexMap = tempTuple3._3
       seqMaxLenMap = tempTuple3._4
       // fit the accumulated_encoded features
-      val result = FeatureFitAndTransformNew\.fitAccumulatedFeaturesByFull(spark, trainData, accumulateFeatures, featureMap, featureMapExtra, featureMaxIndexMap, realFeatureMaxIdxMap, seqMaxLenMap, minCount = minCount, accumulateBufPercent)
+      val result = FeatureFitAndTransformNew.fitAccumulatedFeaturesByFull(spark, trainData, accumulateFeatures, featureMap, featureMapExtra, featureMaxIndexMap, realFeatureMaxIdxMap, seqMaxLenMap, minCount = minCount, accumulateBufPercent)
       info("================= accumulate features fit finished =================")
       featureMap = result._1
       featureMapExtra = result._2
@@ -266,7 +299,7 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
       LOGGER.info("Load all jsons successfully")
       // 增量 fit 也需要先生成衍生特征。
       runDagPreprocess()
-      val result = FeatureFitAndTransformNew\.fitAccumulatedFeaturesByIncrement(spark, trainData, accumulateFeatures, featureMap, featureMaxIndexMap, realFeatureMaxIdxMap, featureIdxOverflow, seqMaxLenMap, minCount)
+      val result = FeatureFitAndTransformNew.fitAccumulatedFeaturesByIncrement(spark, trainData, accumulateFeatures, featureMap, featureMaxIndexMap, realFeatureMaxIdxMap, featureIdxOverflow, seqMaxLenMap, minCount)
       featureMap = result._1
       featureMaxIndexMap = result._2
       realFeatureMaxIdxMap = result._3
@@ -587,7 +620,7 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
           tempData = tempData.withColumn("sparse_concat", sparseConcatExpr).withColumn("dense_concat", denseConcatExpr).drop(allFeatureCols: _*)
         }
         if (saveByColumn.isEmpty || !saveByColumn.equalsIgnoreCase("true")) {
-          FeatureFitAndTransformNew.saveHdfsFile(spark, tempData, labelCol, saveFormat, dataHdfsSavePath, outputRepartitionNum, resultFileSizeInMB, dataType, compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
+          FeatureFitAndTransformNew.saveHdfsFile(spark, tempData, labelCol, saveFormat, dataHdfsSavePath, outputPartitionsFor(dataType), resultFileSizeInMB, dataType, compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
         } else {
           val uniqueValues = tempData.select(col("pt_d"))
             .distinct()
@@ -596,10 +629,15 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
           uniqueValues.foreach { value =>
             val filteredDF = tempData.filter(col("pt_d") === value)
             val saveByColumnPath = savePathByColmun + "/" + value
-            FeatureFitAndTransformNew.saveHdfsFile(spark, filteredDF, labelCol, saveFormat, saveByColumnPath, outputRepartitionNum, resultFileSizeInMB, dataType, compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
+            FeatureFitAndTransformNew.saveHdfsFile(spark, filteredDF, labelCol, saveFormat, saveByColumnPath, outputPartitionsFor(dataType), resultFileSizeInMB, dataType, compress, sampleZipNum, groupParams, materialFeatures, materialSwitch, TransformParamModule.multipartUploadThreshold)
           }
         }
         LogUtil.infoLog(LOGGER, s"${dataType} dataset have been saved successfully.")
+      }
+      // train 的 meta 采样仍依赖 DAG，留到 finally；其余数据集到此已消费完。
+      if (dataType != "train" || metaFeatureList.isEmpty) {
+        dagPreProcess.releaseOutput(dataType)
+        releaseHiveCache(dataType)
       }
       dataType match {
         case "train" => trainData = tempData
@@ -645,12 +683,16 @@ class FeatureFitAndTransformNew(taskMeta: TaskMetaData) extends RcmTaskBatch(tas
       Utils.saveTextFile(spark, increaseDataBaseVer, savePath)
       info(s"successfully save increaseDataBaseVer : ${increaseDataBaseVer}")
     }
-    // 清理缓存
-    spark.sparkContext.getPersistentRDDs.foreach(rddItem => {
-      rddItem._2.unpersist()
-    })
+    // 缓存由下方 finally 按所有权释放。
     mutable.Map("train" -> originTrainDF)
     } finally {
+      // 每个缓存独立清理，单个清理失败不阻断其他资源释放。
+      ownedHiveCaches.keys.toList.foreach { key =>
+        try releaseHiveCache(key)
+        catch { case scala.util.control.NonFatal(e) =>
+          LOGGER.warn(s"Failed to release Hive cache: $key", e)
+        }
+      }
       try {
         dagPreProcess.close()
       } catch {
@@ -1230,11 +1272,29 @@ object FeatureFitAndTransformNew {
     info(s"save ${dataType} data as ${fileFormat} at " + s"${dataSavePath + s"/${dataType}"}")
 
     // 分区数计算：outputPartition 直接用，其余需要 count + 采样估算
-    val numPartitions = if (dataType == "train" && outputPartition > 0) {
+    val numPartitions = if (outputPartition > 0) {
       // 用户明确配置了输出分区数，直接用，不估算
       outputPartition
     } else {
-      val cnt = input.count()
+      // 一个 action 同时计数和抽样估算，避免 count 后再次扫描。
+      // 固定 partition seed 使同一分区布局下重试使用相同采样序列。
+      val sampleFraction = 0.001
+      val sampleStats = input.rdd.mapPartitionsWithIndex { (partitionId, rows) =>
+        val random = new java.util.Random(1729L + partitionId.toLong)
+        var count = 0L
+        var bytes = 0L
+        while (rows.hasNext) {
+          val row = rows.next()
+          count += 1L
+          if (random.nextDouble() < sampleFraction) {
+            bytes += row.toString.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong
+          }
+        }
+        Iterator.single((count, bytes))
+      }.fold((0L, 0L)) { (left, right) =>
+        (left._1 + right._1, left._2 + right._2)
+      }
+      val cnt = sampleStats._1
       info(s"data count is ${cnt}")
 
       if (cnt > 10000) {
@@ -1246,9 +1306,7 @@ object FeatureFitAndTransformNew {
         )
         val factor = formatFactors.getOrElse(fileFormat.toLowerCase, 1.0)
 
-        val sampleFraction = 0.001
-        val sampledData = input.sample(withReplacement = false, sampleFraction)
-        val sampleSizeInBytes = sampledData.rdd.map(_.toString.getBytes("UTF-8").length.toLong).reduce(_ + _)
+        val sampleSizeInBytes = sampleStats._2
 
         val estimatedTotalSizeInBytes = sampleSizeInBytes * (1 / sampleFraction) * factor
         val estimatedTotalSizeInMB = estimatedTotalSizeInBytes / (1024 * 1024)
@@ -1256,8 +1314,11 @@ object FeatureFitAndTransformNew {
         LOGGER.info(s"estimated $dataType dataset size is ${estimatedTotalSizeInMB / 1024}GB")
 
         // 计算分区数
-        if (resultFileSizeInMB > 0) {
-          Math.ceil(estimatedTotalSizeInMB / resultFileSizeInMB).toInt
+        if (sampleSizeInBytes == 0L) {
+          // 空样本不能推断为零字节，也不能给 writer 传入 0 分区。
+          math.max(1, input.rdd.getNumPartitions)
+        } else if (resultFileSizeInMB > 0) {
+          math.max(1, Math.ceil(estimatedTotalSizeInMB / resultFileSizeInMB).toInt)
         } else {
           // 获取当前分区数
           val currentPartitions = input.rdd.getNumPartitions
@@ -1762,8 +1823,9 @@ object FeatureFitAndTransformNew {
   // 计算时间样本权重
   def computeSampleWeight(input: DataFrame, inputCol: String, method: String): DataFrame = {
     val dateInfo = input.withColumn(inputCol, substring(col(inputCol), 1, 8)).select(max(inputCol), min(inputCol))
-    var inputs = input.withColumn("max_date", to_date(lit(dateInfo.first().get(0)), "yyyyMMdd"))
-      .withColumn("min_date", to_date(lit(dateInfo.first().get(1)), "yyyyMMdd"))
+    val dateBounds = dateInfo.first()
+    var inputs = input.withColumn("max_date", to_date(lit(dateBounds.get(0)), "yyyyMMdd"))
+      .withColumn("min_date", to_date(lit(dateBounds.get(1)), "yyyyMMdd"))
       .withColumn("max_date_gap", datediff(col("max_date"), col("min_date")))
       .withColumn("date_gap", datediff(col("max_date"), to_date(col(inputCol), "yyyyMMdd")))
 

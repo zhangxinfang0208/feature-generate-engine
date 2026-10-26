@@ -1,0 +1,6 @@
+{
+  "batchSize": 200,
+  "materializeTrainDagBeforeFit": true,
+  "storageLevel": "MEMORY_AND_DISK_SER",
+  "dagOutputStorageLevel": "MEMORY_AND_DISK_SER"
+}

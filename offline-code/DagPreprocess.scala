@@ -4,7 +4,19 @@ class DagPreprocess(taskMeta: TaskMetaData)
   private val LOGGER = LoggerFactory.getLogger(this.getClass)
   private val ownedBroadcasts = mutable.ArrayBuffer.empty[Broadcast[_]]
   private val ownedOutputs = new util.ArrayList[DataFrame]()
+  private val cachedOutputsByKey = mutable.Map.empty[String, DataFrame]
   private var activeDag = false
+
+  def hasCachedOutput(key: String): Boolean = cachedOutputsByKey.contains(key)
+
+  // 只释放 DAG 本身的缓存，广播由 close 在所有消费者结束后销毁。
+  def releaseOutput(key: String): Unit = {
+    cachedOutputsByKey.get(key).foreach { output =>
+      output.unpersist(blocking = true)
+      ownedOutputs.remove(output)
+      cachedOutputsByKey.remove(key)
+    }
+  }
 
   def hasActiveDag: Boolean = activeDag
 
@@ -30,8 +42,8 @@ class DagPreprocess(taskMeta: TaskMetaData)
     val path = parameter.getString("modelJsonPath", Some(MODEL_FEATURE_SET))
     val planId = parameter.getString("dagPlanId", Some("offline-dag-preprocess"))
     val seqSep = textOrDefault(parameter.getString("sequenceSep", Some("^")), "^")
-    val configuredBatchSize = parameter.getInt("batchSize", Some(1000))
-    val batchSize = if (configuredBatchSize > 0) configuredBatchSize else 1000
+    val configuredBatchSize = parameter.getInt("batchSize", Some(200))
+    val batchSize = if (configuredBatchSize > 0) configuredBatchSize else 200
     // 默认兼容原来的 trim + filter；位置对齐序列应离在线同时启用 preserve。
     val preserveEmptyTokens = parameter.getBoolean("dagPreserveEmptyTokens", Some(false))
     val splitSingletonString = parameter.getBoolean("dagSplitSingletonString", Some(true))
@@ -87,7 +99,7 @@ class DagPreprocess(taskMeta: TaskMetaData)
 
     // 严格兼容模式默认 NONE，保持原有跨 action 重算行为。
     // 仅当上游输入和 DAG 均确定、无副作用时，显式启用缓存复用结果。
-    // 不额外 count 预热；首个下游 action 按需物化。丢块或任务重试仍可能重算。
+    // 本类不主动预热；调用者可物化 train 后释放原始缓存。丢块或重试仍可能重算。
     val outputStorageLevel = OfflineSparkSupport.dagStorageLevel(
       parameter.getString("dagOutputStorageLevel", Some("NONE")))
 
@@ -135,7 +147,9 @@ class DagPreprocess(taskMeta: TaskMetaData)
     input.foreach { case (key, df) =>
       require(df != null, s"DAG input DataFrame '$key' is null")
       val output = applyDagEngine(spark, df, key, bcSpec)
-      result.put(key, OfflineSparkSupport.persistOwned(output, outputStorageLevel, ownedOutputs))
+      val cached = OfflineSparkSupport.persistOwned(output, outputStorageLevel, ownedOutputs)
+      result.put(key, cached)
+      if (ownedOutputs.contains(cached)) cachedOutputsByKey.put(key, cached)
     }
     activeDag = true
     info(s"DAG prepared: planId=$planId, sources=${sources.length}, outputs=${outputs.length}, " +
@@ -184,6 +198,7 @@ class DagPreprocess(taskMeta: TaskMetaData)
       catch { case NonFatal(e) => LOGGER.warn("Failed to destroy DAG broadcast", e) }
     }
     ownedBroadcasts.clear()
+    cachedOutputsByKey.clear()
     activeDag = false
   }
 

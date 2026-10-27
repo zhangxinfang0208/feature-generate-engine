@@ -22,6 +22,7 @@ public final class InitialBusinessOperators {
                 new CountDistinctOperator(),
                 new ZipConcatOperator(),
                 new ConcatOperator(),
+                new LowerOperator(),
                 new AppendOperator(),
                 new IntersectionOperator(),
                 new JoinOperator(),

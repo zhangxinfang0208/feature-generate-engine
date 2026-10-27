@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 25 个算子：
+`OperatorRegistry.standard()` 注册以下 26 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -19,6 +19,7 @@
 | `first_element` | `first_element(sequence)` | 返回首元素并保留类型；空序列抛出异常，可通过衍生特征默认值回退 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
 | `zip_concat` | `zip_concat(sequence1, sequence2, ...)` | 按位置使用 `#` 拼接等长序列 |
+| `lower` | `lower(x)` | 字符串标量或字符串序列逐元素转小写，如 `COM.WA.YY` → `com.wa.yy`；保持序列长度和顺序 |
 | `concat` | `concat(value1, value2, ...)` | 使用可配置分隔符拼接两个或更多标量 |
 | `intersection` | `intersection(left, right)` | 两序列交集，去重并保持左侧顺序；详见 [使用说明](docs/architecture/intersection.md) |
 | `append` | `append(valueOrSequence1, valueOrSequence2)` | 按参数顺序把两个标量或序列合并为一个序列 |
@@ -36,9 +37,11 @@
 | `mul` | `mul(value1, value2)` | 数值标量/等长序列逐元素乘法；标量广播 |
 | `div` | `div(value1, value2)` | 数值标量/等长序列逐元素除法；标量广播，分母为 0 返回 0.0 |
 
+`lower(x)` 使用 `Locale.ROOT`，转换结果不受服务器默认语言影响；保留空串、数字、标点和空白，不修改原始输入。仅接受 STRING 标量/序列，非字符串、null 或含非法元素的序列会报错，并沿用引擎既有失败回退机制。表达式示例：`lower(package_name)`。
+
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 20 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
+`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 21 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
 
 ## 算子异常与衍生默认值
 

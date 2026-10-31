@@ -6,7 +6,7 @@
 
 ## 标准算子
 
-`OperatorRegistry.standard()` 注册以下 26 个算子：
+`OperatorRegistry.standard()` 注册以下 31 个算子：
 
 | 算子 | 签名 | 结果 |
 | --- | --- | --- |
@@ -15,6 +15,11 @@
 | `slice_by_indices` | `slice_by_indices(sequence, indices)` | 按下标选取序列元素 |
 | `find_indices` | `find_indices(sequence, target)` | 返回所有匹配元素的下标 |
 | `find_indices_any` | `find_indices_any(sequence, targets)` | 返回命中任一目标值的全部下标并保持源顺序 |
+| `compare_smaller` | `compare_smaller(sequence, value)` | 返回严格小于数值阈值的全部零基下标，保持顺序 |
+| `compare_greater` | `compare_greater(sequence, value)` | 返回严格大于数值阈值的全部零基下标，保持顺序 |
+| `concat_seq` | `concat_seq(left, right)` | 连接两个序列，保留顺序和重复项 |
+| `calc_seq_sub` | `calc_seq_sub(sequence)` | 后一个元素减前一个元素，返回相邻差值序列 |
+| `mean` | `mean(sequence)` | 数值序列算术平均值，输出 DOUBLE；空序列报错 |
 | `get_seq_length` | `get_seq_length(sequence)` | 返回序列长度 |
 | `first_element` | `first_element(sequence)` | 返回首元素并保留类型；空序列抛出异常，可通过衍生特征默认值回退 |
 | `count_distinct` | `count_distinct(sequence)` | 返回不同元素个数 |
@@ -39,9 +44,11 @@
 
 `lower(x)` 使用 `Locale.ROOT`，转换结果不受服务器默认语言影响；保留空串、数字、标点和空白，不修改原始输入。仅接受 STRING 标量/序列，非字符串、null 或含非法元素的序列会报错，并沿用引擎既有失败回退机制。表达式示例：`lower(package_name)`。
 
+序列比较、连接、相邻差和均值的示例与边界规则见 [使用说明](docs/architecture/sequence-comparison-and-statistics.md)。
+
 每个算子都拥有独立的 `.java` 实现类，负责自己的元数据、类型/shape 推断和单值求值。`InitialBusinessOperators` 是唯一的标准算子清单，`OperatorRegistry.standard()` 直接注册该清单。
 
-`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 21 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
+`find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余 26 个（包括 `concat`、`append`、`join`、`list_concat`、`hit`、`group_count_concat`）不提供原生 Batch，由 `SCALAR_ADAPTER` 逐行适配。`find_indices_any` 会在共享长序列时复用源索引，在短序列、无复用或密集命中时自适应使用线性路径。
 
 ## 算子异常与衍生默认值
 

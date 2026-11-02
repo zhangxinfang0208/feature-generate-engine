@@ -25,7 +25,7 @@ public final class LowerOperatorTest {
 
     @Test
     public void registersPureIndependentOperatorAndInfersShapes() {
-        assertEquals(26, InitialBusinessOperators.definitions().size());
+        assertEquals(31, InitialBusinessOperators.definitions().size());
         OperatorDefinition operator = registry.require("lower");
         assertTrue(operator instanceof LowerOperator);
         assertEquals(1, operator.minArguments());

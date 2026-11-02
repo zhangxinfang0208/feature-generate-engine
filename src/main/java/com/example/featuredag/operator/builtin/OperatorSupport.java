@@ -100,6 +100,24 @@ final class OperatorSupport {
                 hasSequence ? ValueShape.SEQUENCE : ValueShape.SCALAR);
     }
 
+    static void requireNumericSequence(OperatorInputMetadata input, String operator) {
+        // C6：字面量序列未携带元素类型，留到求值时逐元素验证。
+        if (input.valueShape() != ValueShape.SEQUENCE
+                || !(input.outputType().isNumeric() || input.outputType() == DataType.OBJECT
+                        || input.outputType() == DataType.UNKNOWN)) {
+            throw new IllegalArgumentException(operator + " expects a numeric sequence");
+        }
+    }
+
+    static BigDecimal numericSequenceElement(Object sequence, int index, String operator) {
+        try {
+            return arithmeticOperand(sequenceElementAt(sequence, index, operator, "sequence"), operator);
+        } catch (RuntimeException error) {
+            throw new IllegalArgumentException(
+                    operator + " failed at sequence index " + index + ": " + error.getMessage(), error);
+        }
+    }
+
     static DataType numericResultType(List<OperatorInputMetadata> inputs) {
         // 数值运算结果按 DOUBLE > BIGINT > INT 取宽度上界，与 C6 的安全提升方向一致。
         boolean hasBigint = false;

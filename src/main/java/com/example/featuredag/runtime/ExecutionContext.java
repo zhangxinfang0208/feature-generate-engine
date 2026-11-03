@@ -21,6 +21,7 @@ public final class ExecutionContext {
     private final ExecutionEnvironment environment;
     private final Map<String, Object> sharedSourceValues;
     private final List<Map<String, Object>> candidates;
+    private final ColumnarCandidateValues candidateColumns;
     private final List<Map<String, Object>> offlineRows;
     private final boolean offlineBatch;
     private final List<String> onlineGroupExecutionIds;
@@ -62,11 +63,30 @@ public final class ExecutionContext {
             int[] candidateGroupOffsets,
             boolean onlineBatch,
             boolean ownedDecodedInputs) {
+        this(executionId, environment, sharedSourceValues, candidates, offlineRows, offlineBatch,
+                onlineGroupExecutionIds, onlineSharedGroups, candidateGroupOffsets, onlineBatch,
+                ownedDecodedInputs, null);
+    }
+
+    private ExecutionContext(
+            String executionId,
+            ExecutionEnvironment environment,
+            Map<String, Object> sharedSourceValues,
+            List<Map<String, Object>> candidates,
+            List<Map<String, Object>> offlineRows,
+            boolean offlineBatch,
+            List<String> onlineGroupExecutionIds,
+            List<Map<String, Object>> onlineSharedGroups,
+            int[] candidateGroupOffsets,
+            boolean onlineBatch,
+            boolean ownedDecodedInputs,
+            ColumnarCandidateValues candidateColumns) {
         // 输入容器在请求入口复制并冻结，确保执行期间看到稳定快照；结果槽、缓存和状态则仅在本上下文内可变。
         this.executionId = Objects.requireNonNull(executionId, "executionId");
         this.environment = Objects.requireNonNull(environment, "environment");
         this.sharedSourceValues = freezeInputMap(sharedSourceValues, ownedDecodedInputs);
-        this.candidates = candidates.stream()
+        this.candidateColumns = candidateColumns;
+        this.candidates = candidateColumns != null ? candidateColumns : candidates.stream()
                 .map(candidate -> freezeInputMap(candidate, ownedDecodedInputs))
                 .toList();
         this.offlineRows = offlineRows.stream()
@@ -103,6 +123,21 @@ public final class ExecutionContext {
         return new ExecutionContext(requestId, ExecutionEnvironment.ONLINE,
                 shared, candidates, List.of(), false, List.of(requestId), List.of(shared),
                 new int[] {0, candidates.size()}, false, true);
+    }
+
+    /**
+     * C1/C10：接管解码器独占的列 Map，列及嵌套值必须在执行期间稳定且只读。
+     * 不物化候选行；candidates() 保留按需行视图供已有扩展读取。
+     */
+    public static ExecutionContext onlineColumnarRequestFromOwnedDecodedValues(
+            String requestId,
+            Map<String, Object> shared,
+            Map<String, List<?>> columns,
+            int candidateCount) {
+        return new ExecutionContext(requestId, ExecutionEnvironment.ONLINE,
+                shared, List.of(), List.of(), false, List.of(requestId), List.of(shared),
+                new int[] {0, candidateCount}, false, true,
+                new ColumnarCandidateValues(columns, candidateCount));
     }
 
     /** 顶层批元素不可变；逐个值句柄只扫描一次，不能依赖算子纯度推断成功。 */
@@ -210,6 +245,8 @@ public final class ExecutionContext {
     public Map<String, Object> sharedSourceValues() { return sharedSourceValues; }
     public List<Map<String, Object>> candidates() { return candidates; }
     public int candidateCount() { return candidates.size(); }
+    boolean hasCandidateColumns() { return candidateColumns != null; }
+    List<?> candidateColumn(String name) { return candidateColumns.column(name); }
     public List<Map<String, Object>> offlineRows() { return offlineRows; }
     public boolean isOfflineBatch() { return offlineBatch; }
     public int offlineBatchSize() { return offlineRows.size(); }

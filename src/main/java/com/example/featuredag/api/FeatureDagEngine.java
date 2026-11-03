@@ -191,6 +191,38 @@ public final class FeatureDagEngine {
     }
 
     /**
+     * 独立的单请求列式在线入口。ITEM 标量按列直接传值，序列按列传 List 单元；
+     * 结果仍为 GenerateResult，候选顺序与 request.candidateIds() 一致。
+     * 旧 generate/generateBatch 入口及其输入契约保持不变。
+     */
+    public GenerateResult generateColumnar(OnlineColumnarGenerateRequest request) {
+        Objects.requireNonNull(request, "request");
+        ExecutionObservation observation = startObservation(
+                request.executionId(), 1, request.candidateCount(), 0);
+        try {
+            if (environment != ExecutionEnvironment.ONLINE) {
+                throw new IllegalArgumentException("OFFLINE engine does not support OnlineColumnarGenerateRequest");
+            }
+            ExecutionContext context = measure(observation, ExecutionPhase.DECODE,
+                    () -> ExecutionContext.onlineColumnarRequestFromOwnedDecodedValues(
+                            request.executionId(),
+                            inputDecoder.decodeOnlineSharedReadOnly(request.sharedValues()),
+                            inputDecoder.decodeOnlineColumnsReadOnly(
+                                    request.candidateColumns(), request.candidateCount()),
+                            request.candidateCount()));
+            return executeAndEncodeOnline(request.executionId(), request.candidateCount(), context, observation);
+        } catch (FeatureGenerationException error) {
+            markFailure(observation, error);
+            throw error;
+        } catch (RuntimeException error) {
+            markFailure(observation, error);
+            throw generationFailure(request.executionId(), error);
+        } finally {
+            publishObservation(observation);
+        }
+    }
+
+    /**
      * 离线批推理：一次解码整批 RAW 行并只遍历一次物理计划，结果顺序与输入行一致。
      */
     public OfflineBatchGenerateResult generateBatch(OfflineBatchGenerateRequest request) {
@@ -361,13 +393,22 @@ public final class FeatureDagEngine {
                         request.executionId(),
                         inputDecoder.decodeOnlineSharedReadOnly(request.sharedValues()),
                         inputDecoder.decodeOnlineCandidatesReadOnly(request.candidates())));
+        return executeAndEncodeOnline(request.executionId(), request.candidates().size(), context, observation);
+    }
+
+    /** C9：行式与列式入口共用执行和输出编码，保持结果契约一致。 */
+    private GenerateResult executeAndEncodeOnline(
+            String executionId,
+            int candidateCount,
+            ExecutionContext context,
+            ExecutionObservation observation) {
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
             Map<String, List<?>> sharedResults = new LinkedHashMap<>(sharedOutputCapacity);
             List<Map<String, List<?>>> candidateResults =
-                    new ArrayList<>(request.candidates().size());
-            for (int index = 0; index < request.candidates().size(); index++) {
+                    new ArrayList<>(candidateCount);
+            for (int index = 0; index < candidateCount; index++) {
                 candidateResults.add(new LinkedHashMap<>(candidateOutputCapacity));
             }
             for (FeatureOutputDescriptor output : outputs) {
@@ -392,10 +433,10 @@ public final class FeatureDagEngine {
                     }
                 } catch (RuntimeException error) {
                     throw new FeatureGenerationException(
-                            error.getMessage(), planId, request.executionId(), output.featureName(), error);
+                            error.getMessage(), planId, executionId, output.featureName(), error);
                 }
             }
-            return GenerateResult.fromOwnedEncodedValues(request.executionId(), sharedResults, candidateResults);
+            return GenerateResult.fromOwnedEncodedValues(executionId, sharedResults, candidateResults);
         });
     }
 

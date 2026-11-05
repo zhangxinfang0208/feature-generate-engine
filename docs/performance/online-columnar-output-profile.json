@@ -1,0 +1,1217 @@
+{
+  "ordinary_runs": [
+    {
+      "process_cpu_ms_per_request": 21.001855287569573,
+      "profiled": false,
+      "mode": "column-borrowed",
+      "requests": 1617,
+      "qps": 53.87491540479654,
+      "p50_ms": 17.775366,
+      "p95_ms": 25.883717,
+      "p99_ms": 28.517876,
+      "allocated_bytes_per_request": 36375620.408163264,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/1-column-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 1
+    },
+    {
+      "process_cpu_ms_per_request": 16.56550328780981,
+      "profiled": false,
+      "mode": "column-result",
+      "requests": 1977,
+      "qps": 65.89093865615236,
+      "p50_ms": 14.638291,
+      "p95_ms": 18.795227,
+      "p99_ms": 24.18216,
+      "allocated_bytes_per_request": 27944636.84370258,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/1-column-result-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 1
+    },
+    {
+      "process_cpu_ms_per_request": 21.699092088197148,
+      "profiled": false,
+      "mode": "row-borrowed",
+      "requests": 1542,
+      "qps": 51.374639960451155,
+      "p50_ms": 18.455876,
+      "p95_ms": 25.838622,
+      "p99_ms": 32.419799,
+      "allocated_bytes_per_request": 38063715.22178988,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/1-row-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 1
+    },
+    {
+      "process_cpu_ms_per_request": 19.08830275229358,
+      "profiled": false,
+      "mode": "column-borrowed",
+      "requests": 1744,
+      "qps": 58.12306126990176,
+      "p50_ms": 16.568444,
+      "p95_ms": 21.271779,
+      "p99_ms": 27.478358,
+      "allocated_bytes_per_request": 35797721.56880734,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/2-column-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 2
+    },
+    {
+      "process_cpu_ms_per_request": 17.174139728884253,
+      "profiled": false,
+      "mode": "column-result",
+      "requests": 1918,
+      "qps": 63.92753180114558,
+      "p50_ms": 15.072488,
+      "p95_ms": 19.617749,
+      "p99_ms": 24.876369,
+      "allocated_bytes_per_request": 27944640.13764338,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/2-column-result-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 2
+    },
+    {
+      "process_cpu_ms_per_request": 21.134930643127365,
+      "profiled": false,
+      "mode": "row-borrowed",
+      "requests": 1586,
+      "qps": 52.83444204403964,
+      "p50_ms": 18.225948,
+      "p95_ms": 23.343325,
+      "p99_ms": 31.900655,
+      "allocated_bytes_per_request": 37510214.925598994,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/2-row-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 2
+    },
+    {
+      "process_cpu_ms_per_request": 19.76991150442478,
+      "profiled": false,
+      "mode": "column-borrowed",
+      "requests": 1695,
+      "qps": 56.4821520052176,
+      "p50_ms": 17.040619,
+      "p95_ms": 22.244768,
+      "p99_ms": 27.53886,
+      "allocated_bytes_per_request": 36375645.097345136,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/3-column-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 3
+    },
+    {
+      "process_cpu_ms_per_request": 16.659815005138746,
+      "profiled": false,
+      "mode": "column-result",
+      "requests": 1946,
+      "qps": 64.85308598297554,
+      "p50_ms": 14.923132,
+      "p95_ms": 18.469426,
+      "p99_ms": 24.23511,
+      "allocated_bytes_per_request": 27944585.155190133,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/3-column-result-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 3
+    },
+    {
+      "process_cpu_ms_per_request": 21.273764258555133,
+      "profiled": false,
+      "mode": "row-borrowed",
+      "requests": 1578,
+      "qps": 52.57196191471514,
+      "p50_ms": 18.328488,
+      "p95_ms": 23.662577,
+      "p99_ms": 30.956096,
+      "allocated_bytes_per_request": 37486739.77186312,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/3-row-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 3
+    }
+  ],
+  "median_of_fork_metrics": {
+    "row-borrowed": {
+      "p50_ms": 18.328488,
+      "p95_ms": 23.662577,
+      "p99_ms": 31.900655,
+      "qps": 52.57196191471514,
+      "allocated_bytes_per_request": 37510214.925598994,
+      "process_cpu_ms_per_request": 21.273764258555133
+    },
+    "column-borrowed": {
+      "p50_ms": 17.040619,
+      "p95_ms": 22.244768,
+      "p99_ms": 27.53886,
+      "qps": 56.4821520052176,
+      "allocated_bytes_per_request": 36375620.408163264,
+      "process_cpu_ms_per_request": 19.76991150442478
+    },
+    "column-result": {
+      "p50_ms": 14.923132,
+      "p95_ms": 18.795227,
+      "p99_ms": 24.23511,
+      "qps": 64.85308598297554,
+      "allocated_bytes_per_request": 27944636.84370258,
+      "process_cpu_ms_per_request": 16.659815005138746
+    }
+  },
+  "profiled_runs": {
+    "row-borrowed": {
+      "process_cpu_ms_per_request": 25.06949524506218,
+      "profiled": true,
+      "mode": "row-borrowed",
+      "requests": 1367,
+      "qps": 45.537483119058884,
+      "p50_ms": 20.845887,
+      "p95_ms": 31.035853,
+      "p99_ms": 36.201296,
+      "allocated_bytes_per_request": 38063842.05998537,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/profile-row-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback"
+    },
+    "column-borrowed": {
+      "process_cpu_ms_per_request": 20.42117930204573,
+      "profiled": true,
+      "mode": "column-borrowed",
+      "requests": 1662,
+      "qps": 55.38164058739746,
+      "p50_ms": 17.340647,
+      "p95_ms": 22.701238,
+      "p99_ms": 28.206692,
+      "allocated_bytes_per_request": 36375760.909747295,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/profile-column-borrowed-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback"
+    },
+    "column-result": {
+      "process_cpu_ms_per_request": 18.262781748213303,
+      "profiled": true,
+      "mode": "column-result",
+      "requests": 1819,
+      "qps": 60.62905781865824,
+      "p50_ms": 15.7214,
+      "p95_ms": 21.178704,
+      "p99_ms": 26.397849,
+      "allocated_bytes_per_request": 28811615.69653656,
+      "warmup_seconds": 20,
+      "measure_seconds": 30,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4",
+        "-Xlog:gc*,safepoint:file=target/columnar-profile/profile-column-result-gc.log:uptime,level,tags"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback"
+    }
+  },
+  "diagnostics": {
+    "row-borrowed": {
+      "requests": 1367,
+      "request_event_p95_ms": 31.039998999999998,
+      "slow_requests": 69,
+      "events": {
+        "jdk.Compilation": 114,
+        "jdk.CompilationFailure": 2,
+        "jdk.ExecutionSample": 1201,
+        "jdk.CPULoad": 30,
+        "jdk.GCPhasePause": 102,
+        "jdk.GarbageCollection": 34,
+        "jdk.Deoptimization": 1,
+        "featuredag.Request": 1367
+      },
+      "gc": {
+        "count": 34,
+        "total_ms": 3804.586817,
+        "max_ms": 213.672572,
+        "slow_overlap": 40,
+        "all_overlap": 175,
+        "sum_pauses_ms": 1.16465
+      },
+      "pause": {
+        "count": 102,
+        "total_ms": 1.16465,
+        "max_ms": 0.120101,
+        "slow_overlap": 7,
+        "all_overlap": 76
+      },
+      "jit": {
+        "count": 114,
+        "total_ms": 300.034175,
+        "max_ms": 188.280972,
+        "slow_overlap": 3,
+        "all_overlap": 32,
+        "compiler_counts": {
+          "c2": 26,
+          "c1": 88
+        },
+        "top_methods_ms": [
+          [
+            "jdk.jfr.internal.MetadataWriter.write",
+            188.280972
+          ],
+          [
+            "jdk.jfr.internal.MetadataWriter.buildStringPool",
+            16.649777
+          ],
+          [
+            "java.util.regex.Pattern$BmpCharPropertyGreedy.match",
+            15.282823
+          ],
+          [
+            "java.util.HashMap.putVal",
+            8.287061
+          ],
+          [
+            "jdk.jfr.internal.MetadataWriter.writeString",
+            8.069934
+          ],
+          [
+            "java.lang.Long.toString",
+            6.687687
+          ],
+          [
+            "com.example.featuredag.performance.ColumnarOnlineBenchmark.main",
+            5.362675
+          ],
+          [
+            "java.lang.String.substring",
+            3.547592
+          ],
+          [
+            "java.lang.StringLatin1.newString",
+            3.494946
+          ],
+          [
+            "java.lang.StringLatin1.replace",
+            3.485208
+          ],
+          [
+            "java.lang.StringBuilder.append",
+            3.4241800000000002
+          ],
+          [
+            "jdk.jfr.internal.MetadataDescriptor$Element.addAttribute",
+            3.2528919999999997
+          ]
+        ]
+      },
+      "cpu_load_means": {
+        "jvmUser": 0.12469359706666668,
+        "jvmSystem": 0.002596105903333333,
+        "machineTotal": 0.13052711613333334
+      },
+      "execution_samples": {
+        "buckets": {
+          "encode": 328,
+          "runtime": 728,
+          "decode": 78,
+          "other": 67
+        },
+        "slow_buckets": {
+          "runtime": 74,
+          "encode": 28,
+          "decode": 10,
+          "other": 2
+        },
+        "top_leaf": [
+          [
+            "java.util.HashMap.putVal",
+            176
+          ],
+          [
+            "java.util.HashMap.getNode",
+            161
+          ],
+          [
+            "com.example.featuredag.operator.builtin.SliceByIndicesOperator.slice",
+            103
+          ],
+          [
+            "com.example.featuredag.operator.SingleLoopBatchOperatorKernel.evaluateBorrowedArguments",
+            102
+          ],
+          [
+            "java.lang.String.hashCode",
+            97
+          ],
+          [
+            "java.util.Arrays.copyOf",
+            69
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.evaluateElementWise",
+            60
+          ],
+          [
+            "com.example.featuredag.api.FeatureOutputEncoder.encodeValue",
+            49
+          ],
+          [
+            "java.util.LinkedHashMap.forEach",
+            46
+          ],
+          [
+            "java.util.Collections$UnmodifiableCollection.size",
+            42
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeRaw",
+            41
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.isLongCarrier",
+            35
+          ],
+          [
+            "java.util.HashMap.resize",
+            31
+          ],
+          [
+            "java.util.ArrayList$Itr.next",
+            15
+          ],
+          [
+            "com.example.featuredag.api.FeatureValueCollections$$Lambda.0x00007fd30410c000.accept",
+            15
+          ]
+        ],
+        "top_application_frame": [
+          [
+            "com.example.featuredag.api.FeatureDagEngine.lambda$executeAndEncodeOnline$9",
+            143
+          ],
+          [
+            "com.example.featuredag.operator.builtin.SliceByIndicesOperator.slice",
+            106
+          ],
+          [
+            "com.example.featuredag.operator.SingleLoopBatchOperatorKernel.evaluateBorrowedArguments",
+            102
+          ],
+          [
+            "com.example.featuredag.runtime.DagRuntime.executeSource",
+            91
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.evaluateElementWise",
+            88
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeList",
+            75
+          ],
+          [
+            "com.example.featuredag.api.FeatureInputDecoder.decode",
+            71
+          ],
+          [
+            "com.example.featuredag.operator.builtin.FindIndicesOperator.evaluateBatch",
+            53
+          ],
+          [
+            "com.example.featuredag.api.FeatureOutputEncoder.encodeValue",
+            49
+          ],
+          [
+            "com.example.featuredag.api.FeatureValueCollections.borrowedFeatureMap",
+            46
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeRaw",
+            41
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.isLongCarrier",
+            35
+          ],
+          [
+            "com.example.featuredag.operator.builtin.CountDistinctOperator.count",
+            34
+          ],
+          [
+            "com.example.featuredag.operator.BatchOperatorResultBuilder.addValue",
+            25
+          ],
+          [
+            "com.example.featuredag.runtime.DagRuntime.executeNode",
+            24
+          ]
+        ]
+      },
+      "sampled_allocation_weight_by_class": [],
+      "input_groups": {
+        "2": {
+          "count": 171,
+          "p50_ms": 21.351954,
+          "p95_ms": 28.952590999999998
+        },
+        "3": {
+          "count": 171,
+          "p50_ms": 20.99635,
+          "p95_ms": 31.362426
+        },
+        "4": {
+          "count": 171,
+          "p50_ms": 20.3034,
+          "p95_ms": 29.753745000000002
+        },
+        "5": {
+          "count": 171,
+          "p50_ms": 20.572839,
+          "p95_ms": 28.914564
+        },
+        "6": {
+          "count": 171,
+          "p50_ms": 20.792175999999998,
+          "p95_ms": 29.085943
+        },
+        "7": {
+          "count": 171,
+          "p50_ms": 21.114666,
+          "p95_ms": 31.855210000000003
+        },
+        "0": {
+          "count": 171,
+          "p50_ms": 21.118589,
+          "p95_ms": 32.99411
+        },
+        "1": {
+          "count": 170,
+          "p50_ms": 20.850453,
+          "p95_ms": 32.786347
+        }
+      },
+      "ten_second_windows": [
+        {
+          "offset_seconds": 0,
+          "requests": 452,
+          "p50_ms": 20.838065999999998,
+          "p95_ms": 31.903157,
+          "jit_count": 102
+        },
+        {
+          "offset_seconds": 10,
+          "requests": 464,
+          "p50_ms": 20.846561,
+          "p95_ms": 28.142204,
+          "jit_count": 7
+        },
+        {
+          "offset_seconds": 20,
+          "requests": 451,
+          "p50_ms": 20.86104,
+          "p95_ms": 32.685117,
+          "jit_count": 3
+        }
+      ]
+    },
+    "column-borrowed": {
+      "requests": 1662,
+      "request_event_p95_ms": 22.705074,
+      "slow_requests": 84,
+      "events": {
+        "jdk.Compilation": 121,
+        "jdk.CompilationFailure": 3,
+        "jdk.ExecutionSample": 1104,
+        "jdk.GCPhasePause": 114,
+        "jdk.GarbageCollection": 38,
+        "jdk.CPULoad": 30,
+        "jdk.Deoptimization": 3,
+        "featuredag.Request": 1662
+      },
+      "gc": {
+        "count": 38,
+        "total_ms": 3476.889712,
+        "max_ms": 148.988372,
+        "slow_overlap": 49,
+        "all_overlap": 201,
+        "sum_pauses_ms": 1.249579
+      },
+      "pause": {
+        "count": 114,
+        "total_ms": 1.249579,
+        "max_ms": 0.110496,
+        "slow_overlap": 32,
+        "all_overlap": 85
+      },
+      "jit": {
+        "count": 121,
+        "total_ms": 298.095481,
+        "max_ms": 178.223398,
+        "slow_overlap": 2,
+        "all_overlap": 36,
+        "compiler_counts": {
+          "c1": 91,
+          "c2": 30
+        },
+        "top_methods_ms": [
+          [
+            "jdk.jfr.internal.MetadataWriter.write",
+            178.223398
+          ],
+          [
+            "jdk.jfr.internal.MetadataWriter.buildStringPool",
+            15.73389
+          ],
+          [
+            "java.util.regex.Matcher.search",
+            15.05495
+          ],
+          [
+            "java.util.regex.Pattern$BmpCharPropertyGreedy.match",
+            14.284455000000001
+          ],
+          [
+            "java.util.HashMap.putVal",
+            9.165459
+          ],
+          [
+            "java.lang.Long.toString",
+            6.74343
+          ],
+          [
+            "com.example.featuredag.performance.ColumnarOnlineBenchmark.main",
+            6.506904
+          ],
+          [
+            "java.lang.StringLatin1.replace",
+            4.16025
+          ],
+          [
+            "java.lang.String.substring",
+            4.111638
+          ],
+          [
+            "jdk.jfr.internal.event.EventWriter.putUncheckedLong",
+            3.930774
+          ],
+          [
+            "java.util.concurrent.ConcurrentHashMap.get",
+            3.1131290000000003
+          ],
+          [
+            "java.util.IdentityHashMap.put",
+            3.0329489999999995
+          ]
+        ]
+      },
+      "cpu_load_means": {
+        "jvmUser": 0.12429525443333334,
+        "jvmSystem": 0.00147862456,
+        "machineTotal": 0.1257738798
+      },
+      "execution_samples": {
+        "buckets": {
+          "runtime": 691,
+          "encode": 411,
+          "other": 2
+        },
+        "slow_buckets": {
+          "encode": 31,
+          "runtime": 46
+        },
+        "top_leaf": [
+          [
+            "java.util.HashMap.putVal",
+            207
+          ],
+          [
+            "com.example.featuredag.operator.builtin.SliceByIndicesOperator.slice",
+            135
+          ],
+          [
+            "com.example.featuredag.operator.SingleLoopBatchOperatorKernel.evaluateBorrowedArguments",
+            112
+          ],
+          [
+            "java.util.Collections$UnmodifiableCollection.size",
+            89
+          ],
+          [
+            "java.util.HashMap.getNode",
+            68
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeRaw",
+            60
+          ],
+          [
+            "java.util.Arrays.copyOf",
+            55
+          ],
+          [
+            "java.util.HashMap.put",
+            50
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.evaluateElementWise",
+            47
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.isLongCarrier",
+            44
+          ],
+          [
+            "com.example.featuredag.api.FeatureOutputEncoder.encodeValue",
+            44
+          ],
+          [
+            "java.util.HashMap.resize",
+            39
+          ],
+          [
+            "java.util.ArrayList$Itr.next",
+            27
+          ],
+          [
+            "java.util.Objects.equals",
+            14
+          ],
+          [
+            "com.example.featuredag.operator.builtin.AddOperator.evaluate",
+            11
+          ]
+        ],
+        "top_application_frame": [
+          [
+            "com.example.featuredag.api.FeatureDagEngine.lambda$executeAndEncodeOnline$9",
+            209
+          ],
+          [
+            "com.example.featuredag.operator.builtin.SliceByIndicesOperator.slice",
+            138
+          ],
+          [
+            "com.example.featuredag.operator.SingleLoopBatchOperatorKernel.evaluateBorrowedArguments",
+            112
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.evaluateElementWise",
+            81
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeList",
+            68
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeRaw",
+            60
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.isLongCarrier",
+            44
+          ],
+          [
+            "com.example.featuredag.operator.builtin.CountDistinctOperator.count",
+            44
+          ],
+          [
+            "com.example.featuredag.api.FeatureOutputEncoder.encodeValue",
+            44
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.sequenceSize",
+            34
+          ],
+          [
+            "com.example.featuredag.runtime.CandidateVectorValue.size",
+            23
+          ],
+          [
+            "com.example.featuredag.runtime.ExecutionContext.state",
+            21
+          ],
+          [
+            "com.example.featuredag.operator.builtin.FindIndicesOperator.evaluateBatch",
+            21
+          ],
+          [
+            "com.example.featuredag.runtime.DagRuntime.executeNode",
+            21
+          ],
+          [
+            "com.example.featuredag.operator.BatchOperatorResultBuilder.addValue",
+            20
+          ]
+        ]
+      },
+      "sampled_allocation_weight_by_class": [],
+      "input_groups": {
+        "7": {
+          "count": 208,
+          "p50_ms": 17.427981,
+          "p95_ms": 21.806507999999997
+        },
+        "0": {
+          "count": 208,
+          "p50_ms": 17.222801999999998,
+          "p95_ms": 23.640538
+        },
+        "1": {
+          "count": 208,
+          "p50_ms": 17.359066,
+          "p95_ms": 22.137103000000003
+        },
+        "2": {
+          "count": 208,
+          "p50_ms": 17.4624,
+          "p95_ms": 22.947111999999997
+        },
+        "3": {
+          "count": 208,
+          "p50_ms": 17.235491,
+          "p95_ms": 21.920933
+        },
+        "4": {
+          "count": 208,
+          "p50_ms": 17.291594,
+          "p95_ms": 24.092608000000002
+        },
+        "5": {
+          "count": 207,
+          "p50_ms": 17.528098,
+          "p95_ms": 25.015975
+        },
+        "6": {
+          "count": 207,
+          "p50_ms": 17.235770000000002,
+          "p95_ms": 21.634484999999998
+        }
+      },
+      "ten_second_windows": [
+        {
+          "offset_seconds": 0,
+          "requests": 550,
+          "p50_ms": 17.283125,
+          "p95_ms": 24.48382,
+          "jit_count": 112
+        },
+        {
+          "offset_seconds": 10,
+          "requests": 564,
+          "p50_ms": 17.206778,
+          "p95_ms": 21.208247,
+          "jit_count": 5
+        },
+        {
+          "offset_seconds": 20,
+          "requests": 548,
+          "p50_ms": 17.605278,
+          "p95_ms": 21.947523,
+          "jit_count": 2
+        }
+      ]
+    },
+    "column-result": {
+      "requests": 1819,
+      "request_event_p95_ms": 21.187948000000002,
+      "slow_requests": 91,
+      "events": {
+        "jdk.Compilation": 108,
+        "jdk.CompilationFailure": 1,
+        "jdk.ExecutionSample": 1016,
+        "jdk.GCPhasePause": 93,
+        "jdk.GarbageCollection": 31,
+        "jdk.CPULoad": 30,
+        "jdk.Deoptimization": 1,
+        "featuredag.Request": 1819
+      },
+      "gc": {
+        "count": 31,
+        "total_ms": 2828.595669,
+        "max_ms": 125.91097900000001,
+        "slow_overlap": 50,
+        "all_overlap": 173,
+        "sum_pauses_ms": 0.942236
+      },
+      "pause": {
+        "count": 93,
+        "total_ms": 0.942236,
+        "max_ms": 0.045538999999999996,
+        "slow_overlap": 23,
+        "all_overlap": 65
+      },
+      "jit": {
+        "count": 108,
+        "total_ms": 185.17785999999998,
+        "max_ms": 54.128139999999995,
+        "slow_overlap": 3,
+        "all_overlap": 31,
+        "compiler_counts": {
+          "c2": 27,
+          "c1": 81
+        },
+        "top_methods_ms": [
+          [
+            "jdk.jfr.internal.MetadataWriter.write",
+            54.128139999999995
+          ],
+          [
+            "java.util.regex.Matcher.search",
+            14.970664
+          ],
+          [
+            "java.lang.Long.toString",
+            12.453299000000001
+          ],
+          [
+            "jdk.internal.org.objectweb.asm.SymbolTable.addConstantUtf8",
+            10.539188
+          ],
+          [
+            "java.util.HashMap.putVal",
+            9.630782
+          ],
+          [
+            "jdk.jfr.internal.MetadataWriter.buildStringPool",
+            8.660032
+          ],
+          [
+            "sun.invoke.util.VerifyType.isNullConversion",
+            7.548324
+          ],
+          [
+            "com.example.featuredag.performance.ColumnarOnlineBenchmark.main",
+            5.98205
+          ],
+          [
+            "java.lang.invoke.DirectMethodHandle.<init>",
+            4.780355
+          ],
+          [
+            "jdk.jfr.internal.MetadataDescriptor$Element.addAttribute",
+            4.5486759999999995
+          ],
+          [
+            "java.lang.StringLatin1.replace",
+            3.9090599999999998
+          ],
+          [
+            "jdk.jfr.internal.MetadataWriter.writeString",
+            3.894579
+          ]
+        ]
+      },
+      "cpu_load_means": {
+        "jvmUser": 0.12179447376666667,
+        "jvmSystem": 0.0012573830766666667,
+        "machineTotal": 0.12305185656666667
+      },
+      "execution_samples": {
+        "buckets": {
+          "encode": 278,
+          "runtime": 731,
+          "other": 6,
+          "decode": 1
+        },
+        "slow_buckets": {
+          "runtime": 62,
+          "encode": 17,
+          "other": 1
+        },
+        "top_leaf": [
+          [
+            "com.example.featuredag.operator.builtin.SliceByIndicesOperator.slice",
+            140
+          ],
+          [
+            "java.util.Collections$UnmodifiableCollection.size",
+            126
+          ],
+          [
+            "com.example.featuredag.api.FeatureOutputEncoder.encodeColumnCell",
+            120
+          ],
+          [
+            "com.example.featuredag.operator.SingleLoopBatchOperatorKernel.evaluateBorrowedArguments",
+            114
+          ],
+          [
+            "java.util.Arrays.copyOf",
+            75
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.evaluateElementWise",
+            55
+          ],
+          [
+            "java.util.HashMap.getNode",
+            46
+          ],
+          [
+            "java.util.HashMap.putVal",
+            36
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.isLongCarrier",
+            32
+          ],
+          [
+            "java.util.ArrayList$Itr.next",
+            28
+          ],
+          [
+            "java.util.HashMap.resize",
+            26
+          ],
+          [
+            "java.util.Collections$UnmodifiableCollection$1.<init>",
+            20
+          ],
+          [
+            "java.util.Objects.equals",
+            18
+          ],
+          [
+            "java.util.Collections$UnmodifiableCollection$1.next",
+            17
+          ],
+          [
+            "java.lang.String.hashCode",
+            16
+          ]
+        ],
+        "top_application_frame": [
+          [
+            "com.example.featuredag.operator.builtin.SliceByIndicesOperator.slice",
+            146
+          ],
+          [
+            "com.example.featuredag.api.FeatureOutputEncoder.encodeColumnCell",
+            120
+          ],
+          [
+            "com.example.featuredag.operator.SingleLoopBatchOperatorKernel.evaluateBorrowedArguments",
+            114
+          ],
+          [
+            "com.example.featuredag.runtime.ExternalValueMaterializer.materializeList",
+            96
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.evaluateElementWise",
+            84
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.sequenceSize",
+            51
+          ],
+          [
+            "com.example.featuredag.runtime.CandidateVectorValue.size",
+            46
+          ],
+          [
+            "com.example.featuredag.operator.builtin.CountDistinctOperator.count",
+            39
+          ],
+          [
+            "com.example.featuredag.operator.builtin.OperatorSupport.isLongCarrier",
+            32
+          ],
+          [
+            "com.example.featuredag.operator.builtin.FindIndicesOperator.evaluateBatch",
+            30
+          ],
+          [
+            "com.example.featuredag.operator.BatchOperatorResultBuilder.addValue",
+            26
+          ],
+          [
+            "com.example.featuredag.runtime.DagRuntime.executeGenericOperator",
+            19
+          ],
+          [
+            "com.example.featuredag.operator.builtin.FindIndicesOperator.find",
+            19
+          ],
+          [
+            "com.example.featuredag.runtime.ExecutionResult.<init>",
+            18
+          ],
+          [
+            "com.example.featuredag.runtime.ExecutionContext.state",
+            17
+          ]
+        ]
+      },
+      "sampled_allocation_weight_by_class": [],
+      "input_groups": {
+        "2": {
+          "count": 228,
+          "p50_ms": 15.668609,
+          "p95_ms": 21.512653999999998
+        },
+        "3": {
+          "count": 228,
+          "p50_ms": 15.756683,
+          "p95_ms": 22.123703000000003
+        },
+        "4": {
+          "count": 228,
+          "p50_ms": 15.606178,
+          "p95_ms": 21.458092
+        },
+        "5": {
+          "count": 227,
+          "p50_ms": 15.717167,
+          "p95_ms": 19.820601
+        },
+        "6": {
+          "count": 227,
+          "p50_ms": 15.771367000000001,
+          "p95_ms": 20.266203
+        },
+        "7": {
+          "count": 227,
+          "p50_ms": 15.72705,
+          "p95_ms": 19.897646
+        },
+        "0": {
+          "count": 227,
+          "p50_ms": 15.774191,
+          "p95_ms": 21.478884
+        },
+        "1": {
+          "count": 227,
+          "p50_ms": 15.747951,
+          "p95_ms": 21.392153
+        }
+      },
+      "ten_second_windows": [
+        {
+          "offset_seconds": 0,
+          "requests": 611,
+          "p50_ms": 15.697617000000001,
+          "p95_ms": 20.779477,
+          "jit_count": 98
+        },
+        {
+          "offset_seconds": 10,
+          "requests": 615,
+          "p50_ms": 15.658016,
+          "p95_ms": 19.930576,
+          "jit_count": 2
+        },
+        {
+          "offset_seconds": 20,
+          "requests": 593,
+          "p50_ms": 15.839689,
+          "p95_ms": 23.049075,
+          "jit_count": 6
+        }
+      ]
+    }
+  },
+  "environment": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "reported_cpu_count": 9,
+    "/sys/fs/cgroup/cpu.max": "800000 100000\n",
+    "/sys/fs/cgroup/memory.max": "8589934592\n",
+    "/sys/fs/cgroup/cpu.stat": "usage_usec 216953387\nuser_usec 188060435\nsystem_usec 28892952\nnice_usec 0\nnr_periods 13654\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0\n"
+  },
+  "ordinary_run_source_sha256": {
+    "src/main/java/com/example/featuredag/api/FeatureDagEngine.java": "ab000e25fd329d02bd01fc17b523ceddb47dfbd943a52ad8825485d57bf754b4",
+    "src/main/java/com/example/featuredag/api/FeatureOutputEncoder.java": "9db08e565d9ed91de9400dd1c569560218f3670dba36ad95c27fe4092f605a33",
+    "src/main/java/com/example/featuredag/api/OnlineColumnarGenerateResult.java": "61787ac2b77705c60c0b218c9d0f628b23d850693f313e387015bb30d0e64542",
+    "src/test/java/com/example/featuredag/performance/ColumnarOnlineBenchmark.java": "4590e7d72b1f5b59340a57054138d315bb26e63f149838df45bb61d43a10d9a5"
+  }
+}

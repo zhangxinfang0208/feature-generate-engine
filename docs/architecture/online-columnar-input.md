@@ -94,3 +94,26 @@ OnlineColumnarGenerateRequest request = new OnlineColumnarGenerateRequest(
 mvn -Dtest=OnlineColumnarInputTest test
 ./scripts/run-self-test.sh
 ```
+
+## 列式结果入口
+
+下游也消费特征列时，调用 `generateColumnarResult(request)`。它直接编码候选向量，不经过 `GenerateResult` 的逐候选 Map；原 `generateColumnar` 和旧行式接口保持不变。
+
+```java
+OnlineColumnarGenerateResult result = engine.generateColumnarResult(request);
+List<String> ids = result.candidateIds();
+Map<String, List<?>> columns = result.candidateFeatureColumns();
+// columns.get("discount_price").get(i) 对应 ids.get(i)。
+```
+
+候选输出键使用配置的 `store_name`；标量列如 `[79.2, 40.0]`，序列列如 `[[1, 2], [3]]`。序列仍应用 `seq_max_length` 截断/补齐。共享输出 `sharedFeatureValues()` 沿用旧契约：标量为单元素 List，序列为元素 List。结果容器及物化的嵌套集合只读，候选 ID 会生成快照。
+
+复现三种入口的性能对比及 GC/JIT/CPU 采集：
+
+```bash
+bash scripts/run-columnar-profile.sh
+```
+
+使用 Java 21，普通基准各三轮、诊断各一轮；每轮预热 20 秒、测量 30 秒。JFR 在诊断轮次预热前启用，分析时用请求事件筛选测量窗口；GC 日志覆盖整个 JVM 生命周期。不要将诊断轮次与普通轮次混合统计。
+
+诊断导出与分析：`bash scripts/export-columnar-jfr.sh`。原始 JFR 包含分配采样、编译阶段及 CPU 事件；JSON 导出选择请求、GC、编译和 CPU 样本以控制大小。

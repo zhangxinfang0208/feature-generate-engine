@@ -27,7 +27,7 @@ public final class SequenceComparisonAndStatisticsTest {
 
     @Test
     public void registersFiveIndependentPureOperatorsWithScalarBatchAdapters() {
-        assertEquals(31, InitialBusinessOperators.definitions().size());
+        assertEquals(32, InitialBusinessOperators.definitions().size());
         List<Class<?>> classes = List.of(CompareSmallerOperator.class, CompareGreaterOperator.class,
                 ConcatSequenceOperator.class, CalculateSequenceSubOperator.class, MeanOperator.class);
         for (int i = 0; i < NAMES.size(); i++) {

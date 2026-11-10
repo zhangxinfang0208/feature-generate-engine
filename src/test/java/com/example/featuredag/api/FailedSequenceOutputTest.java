@@ -29,15 +29,15 @@ public final class FailedSequenceOutputTest {
     }
 
     @Test
-    public void zeroDefaultOnFailureSkipsPaddingInSingleAndBatch() {
+    public void singleAndBatchReturnActualLengthAfterFallback() {
         FeatureDagEngine engine = engine(0);
         assertEquals(List.of(0), engine.generate(new OfflineGenerateRequest("bad", row(1)))
                 .featureValues().get("selected"));
         var rows = engine.generateBatch(new OfflineBatchGenerateRequest("mixed",
                 List.of(row(0), row(1), row()))).rows();
-        assertEquals(List.of(0, 0, 0, 0), rows.get(0).get("selected"));
+        assertEquals(List.of(0), rows.get(0).get("selected"));
         assertEquals(List.of(0), rows.get(1).get("selected"));
-        assertEquals(List.of(0, 0, 0, 0), rows.get(2).get("selected"));
+        assertEquals(List.of(0), rows.get(2).get("selected"));
     }
 
     @Test
@@ -49,13 +49,13 @@ public final class FailedSequenceOutputTest {
         assertEquals(List.of(1), failed.get("selected_length"));
 
         var successful = engine.generate(new OfflineGenerateRequest("valid-index", row(0))).featureValues();
-        assertEquals(List.of(0, 0, 0, 0), successful.get("selected"));
+        assertEquals(List.of(0), successful.get("selected"));
         assertEquals(List.of(1), successful.get("selected_length"));
     }
 
     @Test
-    public void nonzeroFailureDefaultStillPads() {
-        assertEquals(List.of(9, 9, 9, 9), engine(9)
+    public void nonzeroFailureDefaultReturnsOneElement() {
+        assertEquals(List.of(9), engine(9)
                 .generate(new OfflineGenerateRequest("bad", row(1))).featureValues().get("selected"));
     }
 }

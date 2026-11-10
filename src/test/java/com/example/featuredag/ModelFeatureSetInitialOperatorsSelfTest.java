@@ -146,16 +146,16 @@ public final class ModelFeatureSetInitialOperatorsSelfTest {
                 "model-feature-deep-chain-row", firstRow()));
         Map<String, List<?>> values = result.featureValues();
 
-        assertPaddedFeature(values, "matching_indices", List.of(0, 2), 16, null);
-        assertPaddedFeature(values, "matching_ad_types", List.of("A", "A"), 16, null);
-        assertPaddedFeature(values, "matching_labels", List.of("x", "z"), 16, null);
-        assertPaddedFeature(
-                values, "zipped_matching_context", List.of("A|x", "A|z"), 16, null);
+        assertFeature(values, "matching_indices", List.of(0, 2));
+        assertFeature(values, "matching_ad_types", List.of("A", "A"));
+        assertFeature(values, "matching_labels", List.of("x", "z"));
+        assertFeature(
+                values, "zipped_matching_context", List.of("A|x", "A|z"));
         assertFeature(values, "distinct_matching_context", List.of(2));
         assertFeature(values, "match_count_bucket", List.of(2));
         assertDoubleFeature(values, "match_count_log2", 1.0);
-        assertPaddedDoubleSequence(
-                values, "adjusted_scores", List.of(-1.0, -4.0, -8.0), 16, null);
+        assertDoubleSequence(
+                values, "adjusted_scores", List.of(-1.0, -4.0, -8.0));
         assertFeature(values, "adjusted_scores_length", List.of(3));
         assertFeature(values, "deeply_nested_all_operators", List.of(3));
     }
@@ -176,29 +176,27 @@ public final class ModelFeatureSetInitialOperatorsSelfTest {
         assert result.rows().size() == 3 : result.rows().size();
 
         Map<String, List<?>> noMatch = result.rows().get(1);
-        assertPaddedFeature(noMatch, "matching_indices", List.of(), 16, null);
-        assertPaddedFeature(noMatch, "zipped_matching_context", List.of(), 16, null);
+        assertFeature(noMatch, "matching_indices", List.of());
+        assertFeature(noMatch, "zipped_matching_context", List.of());
         assertFeature(noMatch, "distinct_matching_context", List.of(0));
         assertFeature(noMatch, "match_count_bucket", List.of(1));
         assertDoubleFeature(noMatch, "match_count_log2", 0.0);
-        assertPaddedDoubleSequence(noMatch, "adjusted_scores", List.of(), 16, null);
+        assertDoubleSequence(noMatch, "adjusted_scores", List.of());
         assertFeature(noMatch, "adjusted_scores_length", List.of(0));
         assertFeature(noMatch, "deeply_nested_all_operators", List.of(0));
 
         Map<String, List<?>> fourDistinct = result.rows().get(2);
         double expectedLog = Math.log(3.0) / Math.log(2.0);
-        assertPaddedFeature(
-                fourDistinct, "matching_indices", List.of(0, 1, 2, 3), 16, null);
+        assertFeature(
+                fourDistinct, "matching_indices", List.of(0, 1, 2, 3));
         assertFeature(fourDistinct, "distinct_matching_context", List.of(4));
         assertFeature(fourDistinct, "match_count_bucket", List.of(3));
         assertDoubleFeature(fourDistinct, "match_count_log2", expectedLog);
-        assertPaddedDoubleSequence(
+        assertDoubleSequence(
                 fourDistinct,
                 "adjusted_scores",
                 List.of(expectedLog - 2.0, expectedLog - 5.0,
-                        expectedLog - 9.0, expectedLog - 11.0),
-                16,
-                null);
+                        expectedLog - 9.0, expectedLog - 11.0));
         assertFeature(fourDistinct, "adjusted_scores_length", List.of(4));
         assertFeature(fourDistinct, "deeply_nested_all_operators", List.of(4));
     }
@@ -294,43 +292,18 @@ public final class ModelFeatureSetInitialOperatorsSelfTest {
                 : featureName + ": expected=" + expected + ", actual=" + value;
     }
 
-    private static void assertPaddedFeature(
+    private static void assertDoubleSequence(
             Map<String, List<?>> values,
             String featureName,
-            List<?> expectedPrefix,
-            int expectedLength,
-            Object paddingValue) {
+            List<Double> expected) {
         List<?> actual = values.get(featureName);
-        assert actual != null && actual.size() == expectedLength
-                : featureName + ": expected length=" + expectedLength + ", actual=" + actual;
-        assert actual.subList(0, expectedPrefix.size()).equals(expectedPrefix)
-                : featureName + ": expected prefix=" + expectedPrefix + ", actual=" + actual;
-        for (int index = expectedPrefix.size(); index < actual.size(); index++) {
-            assert java.util.Objects.equals(paddingValue, actual.get(index))
-                    : featureName + "[" + index + "]: expected padding="
-                            + paddingValue + ", actual=" + actual.get(index);
-        }
-    }
-
-    private static void assertPaddedDoubleSequence(
-            Map<String, List<?>> values,
-            String featureName,
-            List<Double> expectedPrefix,
-            int expectedLength,
-            Object paddingValue) {
-        List<?> actual = values.get(featureName);
-        assert actual != null && actual.size() == expectedLength
-                : featureName + ": expected length=" + expectedLength + ", actual=" + actual;
-        for (int index = 0; index < expectedPrefix.size(); index++) {
+        assert actual != null && actual.size() == expected.size()
+                : featureName + ": expected length=" + expected.size() + ", actual=" + actual;
+        for (int index = 0; index < expected.size(); index++) {
             double value = ((Number) actual.get(index)).doubleValue();
-            assert Math.abs(value - expectedPrefix.get(index)) < 1e-9
+            assert Math.abs(value - expected.get(index)) < 1e-9
                     : featureName + "[" + index + "]: expected="
-                            + expectedPrefix.get(index) + ", actual=" + value;
-        }
-        for (int index = expectedPrefix.size(); index < actual.size(); index++) {
-            assert java.util.Objects.equals(paddingValue, actual.get(index))
-                    : featureName + "[" + index + "]: expected padding="
-                            + paddingValue + ", actual=" + actual.get(index);
+                            + expected.get(index) + ", actual=" + value;
         }
     }
 

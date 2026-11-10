@@ -17,7 +17,9 @@ public final class FailedSequenceOutputTest {
                    "value_shape":"SEQUENCE","entity_scopes":["USER"]},
                   {"name":"selected","store_name":"selected","type":"INT","definition_type":"DERIVED",
                    "value_shape":"SEQUENCE","expression":"slice_by_indices(values, indices)",
-                   "dft":%d,"seq_max_length":4,"output_policy":"OUTPUT"}]}
+                   "dft":%d,"seq_max_length":4,"output_policy":"OUTPUT"},
+                  {"name":"selected_length","type":"INT","definition_type":"DERIVED",
+                   "value_shape":"SCALAR","expression":"get_seq_length(selected)","output_policy":"OUTPUT"}]}
                 """.formatted(defaultValue);
         return FeatureDagEngine.init(config, InitOptions.offline("slice"));
     }
@@ -36,6 +38,19 @@ public final class FailedSequenceOutputTest {
         assertEquals(List.of(0, 0, 0, 0), rows.get(0).get("selected"));
         assertEquals(List.of(0), rows.get(1).get("selected"));
         assertEquals(List.of(0, 0, 0, 0), rows.get(2).get("selected"));
+    }
+
+    @Test
+    public void downstreamLengthUsesUnpaddedSequenceForFailedAndSuccessfulSelections() {
+        FeatureDagEngine engine = engine(0);
+
+        var failed = engine.generate(new OfflineGenerateRequest("out-of-bounds", row(1))).featureValues();
+        assertEquals(List.of(0), failed.get("selected"));
+        assertEquals(List.of(1), failed.get("selected_length"));
+
+        var successful = engine.generate(new OfflineGenerateRequest("valid-index", row(0))).featureValues();
+        assertEquals(List.of(0, 0, 0, 0), successful.get("selected"));
+        assertEquals(List.of(1), successful.get("selected_length"));
     }
 
     @Test

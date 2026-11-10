@@ -4,7 +4,6 @@ import com.example.featuredag.physical.ExecutionEnvironment;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -35,19 +34,6 @@ public final class ExecutionContext {
     private static final Object NO_BATCH_FAILURE = new Object();
     // 只在当前请求存活，以 identity 为键，避免 record.hashCode 遍历整个向量。
     private IdentityHashMap<ValueHandle, Object> batchFailureChecks;
-
-    // C9: keep failure provenance per feature and row across default substitution.
-    private Map<String, BitSet> sequenceFailureRows;
-
-    void recordSequenceFailure(String featureName, int row) {
-        if (sequenceFailureRows == null) sequenceFailureRows = new LinkedHashMap<>();
-        sequenceFailureRows.computeIfAbsent(featureName, ignored -> new BitSet()).set(row);
-    }
-
-    public boolean hasSequenceFailure(String featureName, int row) {
-        BitSet rows = sequenceFailureRows == null ? null : sequenceFailureRows.get(featureName);
-        return rows != null && rows.get(row);
-    }
 
     private ExecutionContext(
             String executionId,

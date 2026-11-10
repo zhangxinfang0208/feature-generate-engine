@@ -52,16 +52,16 @@ public class SequenceOutputMaterializationTest {
     }
 
     @Test
-    public void sequenceHandlesRespectViewOrderAndDefaultPadding() {
+    public void sequenceHandlesPreserveViewOrderAndShortLengths() {
         SequenceBlock block = new SequenceBlock("output-prefix", 1,
                 List.of(Map.of("key", "a"), Map.of("key", "b"), Map.of("key", "a")));
         SequenceView view = SequenceView.filterByColumn(block, "key", "a");
         assertEquals(List.of(Map.of("key", "a")), encoder(1).encode("seq", view));
-        assertEquals(Arrays.asList(Map.of("key", "a"), Map.of("key", "a"), null),
+        assertEquals(List.of(Map.of("key", "a"), Map.of("key", "a")),
                 encoder(3).encode("seq", view));
-        assertEquals(Arrays.asList(1, null, null), encoder(3).encode("seq",
+        assertEquals(Arrays.asList(1, null), encoder(3).encode("seq",
                 new ListSequenceValue("list", Arrays.asList(1, null))));
-        assertEquals(Arrays.asList(null, null, null), encoder(3).encodeBatchElement("seq", List.of()));
+        assertEquals(List.of(), encoder(3).encodeBatchElement("seq", List.of()));
     }
 
     @Test
@@ -94,7 +94,7 @@ public class SequenceOutputMaterializationTest {
         OfflineBatchGenerateResult batch = offline.generateBatch(
                 new OfflineBatchGenerateRequest("batch", List.of(longRow, shortRow)));
         assertEquals(single.featureValues(), batch.rows().get(0));
-        assertEquals(List.of(9L, -1L), batch.rows().get(1).get("seq"));
+        assertEquals(List.of(9L), batch.rows().get(1).get("seq"));
         assertEquals(List.of(1), batch.rows().get(1).get("full_length"));
 
         FeatureDagEngine online = FeatureDagEngine.init(config, InitOptions.online("bounded-online"));

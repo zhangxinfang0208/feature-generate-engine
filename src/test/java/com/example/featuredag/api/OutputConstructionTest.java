@@ -77,7 +77,7 @@ public class OutputConstructionTest {
         assertEquals(first.featureValues(), grouped.groupResults().get(0).featureValues());
         assertEquals(first.candidateFeatureValues(), grouped.groupResults().get(0).candidateFeatureValues());
         assertEquals(List.of(11), grouped.groupResults().get(1).candidateFeatureValues().getFirst().get("item_out"));
-        assertEquals(List.of(1, 2, 0), first.featureValues().get("history_out"));
+        assertEquals(List.of(1, 2), first.featureValues().get("history_out"));
         assertEquals(List.of(7), first.candidateFeatureValues().getFirst().get("item_out"));
         assertFrozen(first);
         grouped.groupResults().forEach(OutputConstructionTest::assertFrozen);

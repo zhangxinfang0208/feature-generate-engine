@@ -39,14 +39,14 @@ public class PublicHotPathOptimizationTest {
     }
 
     @Test
-    public void resolvedOutputSpecPreservesTruncationPaddingAndIsolation() {
+    public void resolvedOutputSpecPreservesTruncationShortLengthsAndIsolation() {
         FeatureOutputEncoder encoder = FeatureOutputEncoder.from(dag(),
                 List.of(new FeatureOutputDescriptor("seq", "seq", 0, 0, 3)));
         FeatureOutputEncoder.OutputSpec spec = encoder.requireSpec("seq");
         List<Object> input = new ArrayList<>(Arrays.asList(1, null));
         List<?> result = encoder.encodeValue("seq", input, spec);
         input.clear();
-        assertEquals(Arrays.asList(1, null, null), result);
+        assertEquals(Arrays.asList(1, null), result);
         assertThrows(UnsupportedOperationException.class, result::clear);
         assertEquals(List.of(1, 2, 3), encoder.encodeValue("seq", List.of(1, 2, 3, 4), spec));
         assertEquals("Unknown output feature: missing", assertThrows(NullPointerException.class,

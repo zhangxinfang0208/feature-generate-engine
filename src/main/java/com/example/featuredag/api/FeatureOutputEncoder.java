@@ -6,8 +6,6 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.runtime.ExternalValueMaterializer;
 import com.example.featuredag.runtime.ValueHandle;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +19,6 @@ import java.util.Objects;
 final class FeatureOutputEncoder {
     record OutputSpec(
             ValueShape shape,
-            Object defaultValue,
             Integer sequenceMaxLength) {}
 
     private final Map<String, OutputSpec> outputSpecs;
@@ -58,7 +55,6 @@ final class FeatureOutputEncoder {
                     featureName,
                     new OutputSpec(
                             shape,
-                            dag.featureOutput(featureName).defaultValue(),
                             sequenceMaxLength));
         });
         return new FeatureOutputEncoder(specs);
@@ -104,25 +100,8 @@ final class FeatureOutputEncoder {
                 throw new IllegalStateException(
                         "Sequence output did not materialize as List: " + featureName);
             }
-            return normalizeSequence(list, spec);
+            return list;
         }
         return FeatureValueCollections.singleton(value);
-    }
-
-    /** seq_max_length 是最终模型输入形状：超长截断，不足按 dft（含 null）补齐。 */
-    private static List<?> normalizeSequence(List<?> values, OutputSpec spec) {
-        Integer sequenceMaxLength = spec.sequenceMaxLength();
-        // values 已由物化器构造并冻结，不需要再次进行防御复制。
-        if (sequenceMaxLength == null || values.size() == sequenceMaxLength) return values;
-        int targetLength = sequenceMaxLength;
-        List<Object> normalized = new ArrayList<>(targetLength);
-        int copied = Math.min(values.size(), targetLength);
-        for (int index = 0; index < copied; index++) {
-            normalized.add(values.get(index));
-        }
-        while (normalized.size() < targetLength) {
-            normalized.add(spec.defaultValue());
-        }
-        return Collections.unmodifiableList(normalized);
     }
 }

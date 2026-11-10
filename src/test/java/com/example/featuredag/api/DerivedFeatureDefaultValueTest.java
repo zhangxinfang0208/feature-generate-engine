@@ -3,8 +3,6 @@ package com.example.featuredag.api;
 import org.junit.Test;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,10 +32,10 @@ public class DerivedFeatureDefaultValueTest {
                 "offline-present", row("actual", List.of("actual-item"))));
         assertEquals(List.of("actual"), present.featureValues().get("scalar_with_default"));
         assertEquals(
-                List.of("actual-item", "fallback-item", "fallback-item", "fallback-item"),
+                List.of("actual-item"),
                 present.featureValues().get("sequence_with_default"));
         assertEquals(
-                Arrays.asList("actual-item", null, null, null),
+                List.of("actual-item"),
                 present.featureValues().get("sequence_without_default"));
         assertEquals(List.of(1), present.featureValues().get("fallback_sequence_length"));
 
@@ -66,7 +64,7 @@ public class DerivedFeatureDefaultValueTest {
                 List.of("actual"),
                 offlineResult.rows().get(2).get("scalar_with_default"));
         assertEquals(
-                List.of("actual-item", "fallback-item", "fallback-item", "fallback-item"),
+                List.of("actual-item"),
                 offlineResult.rows().get(2).get("sequence_with_default"));
 
         FeatureDagEngine online = FeatureDagEngine.init(
@@ -135,10 +133,10 @@ public class DerivedFeatureDefaultValueTest {
     private static void assertFallbackValues(Map<String, List<?>> values) {
         assertEquals(List.of("fallback"), values.get("scalar_with_default"));
         assertEquals(
-                List.of("fallback-item", "fallback-item", "fallback-item", "fallback-item"),
+                List.of("fallback-item"),
                 values.get("sequence_with_default"));
         assertEquals(
-                Collections.nCopies(4, null),
+                List.of(),
                 values.get("sequence_without_default"));
         // sequence_with_default 是下游输入，证明默认值在特征边界生效而非仅改写最终编码。
         assertEquals(List.of(1), values.get("fallback_sequence_length"));

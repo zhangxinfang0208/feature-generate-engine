@@ -12,7 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 
-/** Unix 毫秒时间戳按 SQL 的整秒截断语义格式化。 */
+/** Unix 毫秒时间戳按指定时区和模式格式化，保留毫秒精度。 */
 public final class DateFormatOperator extends AbstractBuiltinOperator {
     private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Shanghai");
 
@@ -49,9 +49,9 @@ public final class DateFormatOperator extends AbstractBuiltinOperator {
         try {
             ZoneId zone = arguments.size() == 3
                     ? ZoneId.of(stringArgument(arguments.get(2), "zone")) : DEFAULT_ZONE;
-            long seconds = ((Number) timestamp).longValue() / 1000L;
+            long timestampMs = ((Number) timestamp).longValue();
             return DateTimeFormatter.ofPattern(pattern, Locale.ROOT).withZone(zone)
-                    .format(Instant.ofEpochSecond(seconds));
+                    .format(Instant.ofEpochMilli(timestampMs));
         } catch (DateTimeException e) {
             throw new IllegalArgumentException("date_format: " + e.getMessage(), e);
         }

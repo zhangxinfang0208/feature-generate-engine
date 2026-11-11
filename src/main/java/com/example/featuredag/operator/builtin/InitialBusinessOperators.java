@@ -37,6 +37,7 @@ public final class InitialBusinessOperators {
                 new CalculateDeltaSequenceOperator(),
                 new ToIntOperator(),
                 new ToBigintOperator(),
+                new DateFormatOperator(),
                 new MinOperator(),
                 new MaxOperator(),
                 new AddOperator(),

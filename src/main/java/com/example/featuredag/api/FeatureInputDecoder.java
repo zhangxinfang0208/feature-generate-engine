@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.RandomAccess;
 
 /**
  * 输入解码器（对外契约适配）：把调用方提供的「外部 List 值」转换为内部源值——
@@ -86,6 +87,57 @@ final class FeatureInputDecoder {
             decoded.add(decode(candidate, itemSources, true));
         }
         return Collections.unmodifiableList(decoded);
+    }
+
+    /** C1/C6：按特征列解码；不构建候选 Map 或标量单元素 List，必要转换才复制整列。 */
+    Map<String, List<?>> decodeOnlineColumnsReadOnly(Map<String, List<?>> external, int candidateCount) {
+        Map<String, List<?>> decoded = new LinkedHashMap<>(
+                FeatureValueCollections.mapCapacity(Math.min(external.size(), itemSources.size())));
+        for (SourceSpec source : itemSources) {
+            List<?> column = external.get(source.sourceBinding());
+            if (column == null && !external.containsKey(source.sourceBinding())) continue;
+            if (column == null || column.size() != candidateCount) {
+                throw new IllegalArgumentException("Invalid candidate column " + source.sourceBinding()
+                        + ": expected " + candidateCount + " values");
+            }
+            // 防止 LinkedList 等输入在按候选下标访问时退化为平方复杂度。
+            if (!(column instanceof RandomAccess)) column = new ArrayList<>(column);
+            if (source.shape() != ValueShape.SEQUENCE && source.shape() != ValueShape.CANDIDATE_VECTOR
+                    && source.dataType() != DataType.BIGINT) {
+                // 普通标量列已是运行时载体；数值规范化仍在既有 FEATURE_OUTPUT 边界完成。
+                decoded.put(source.sourceBinding(), Collections.unmodifiableList(column));
+                continue;
+            }
+            List<Object> converted = null;
+            for (int index = 0; index < column.size(); index++) {
+                Object original = column.get(index);
+                Object value;
+                try {
+                    value = decodeColumnCell(source, original, index);
+                } catch (RuntimeException error) {
+                    throw new IllegalArgumentException("Invalid feature " + source.sourceBinding()
+                            + " for candidate " + index + ": " + error.getMessage(), error);
+                }
+                if (converted == null && value != original) converted = new ArrayList<>(column);
+                if (converted != null) converted.set(index, value);
+            }
+            decoded.put(source.sourceBinding(), Collections.unmodifiableList(
+                    converted == null ? column : converted));
+        }
+        return decoded;
+    }
+
+    private static Object decodeColumnCell(SourceSpec source, Object value, int candidateIndex) {
+        // null 单元对应行式输入中缺失的 key，默认值仍由 SOURCE_BINDING 处理。
+        if (value == null) return null;
+        if (source.shape() == ValueShape.SEQUENCE || source.shape() == ValueShape.CANDIDATE_VECTOR) {
+            if (!(value instanceof List<?> values)) {
+                throw new IllegalArgumentException("Expected a List cell for " + source.shape());
+            }
+            return decodeValue(source, values, true);
+        }
+        return source.dataType() == DataType.BIGINT
+                ? decodeBigintValue(source.sourceBinding(), value, candidateIndex) : value;
     }
 
     List<Map<String, Object>> decodeOnlineSharedBatch(

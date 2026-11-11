@@ -104,4 +104,11 @@ final class FeatureOutputEncoder {
         }
         return FeatureValueCollections.singleton(value);
     }
+
+    // C6：序列仅截断、不补齐；标量直接物化，省去单元素包装。
+    Object encodeColumnCell(String featureName, Object value, OutputSpec spec) {
+        return spec.shape() == ValueShape.SEQUENCE
+                ? encodeValue(featureName, value, spec)
+                : materializer.materializeRaw(value);
+    }
 }

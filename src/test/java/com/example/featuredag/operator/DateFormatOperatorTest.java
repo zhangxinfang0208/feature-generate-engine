@@ -35,9 +35,9 @@ public final class DateFormatOperatorTest {
     }
 
     @Test
-    public void formatsTruncatedSecondsInRequestedZone() {
+    public void formatsMillisecondsInRequestedZone() {
         assertEquals("70010108", registry.evaluate("date_format", List.of(0L, "yyMMddHH")));
-        assertEquals("70010100", registry.evaluate("date_format", List.of(-999, "yyMMddHH", "UTC")));
+        assertEquals("69123123", registry.evaluate("date_format", List.of(-999, "yyMMddHH", "UTC")));
         assertEquals("69123123", registry.evaluate("date_format", List.of(-1000, "yyMMddHH", "+00:00")));
         assertEquals("2024-07-01 08", registry.evaluate("date_format",
                 List.of(1719835200000L, "yyyy-MM-dd HH", "America/New_York")));
@@ -45,6 +45,28 @@ public final class DateFormatOperatorTest {
                 () -> registry.evaluate("date_format", List.of(0, "HH", "unknown")));
         assertThrows(IllegalArgumentException.class,
                 () -> registry.evaluate("date_format", List.of(0, "HH'")));
+    }
+
+    @Test
+    public void preservesMillisecondPrecisionForIntAndLongTimestamps() {
+        for (Object timestamp : List.of(1234, 1234L)) {
+            assertEquals("00:00:01.234", registry.evaluate("date_format",
+                    List.of(timestamp, "HH:mm:ss.SSS", "UTC")));
+            assertEquals("08:00:01.234", registry.evaluate("date_format",
+                    List.of(timestamp, "HH:mm:ss.SSS")));
+        }
+        assertEquals("00:00:00.000", registry.evaluate("date_format",
+                List.of(0L, "HH:mm:ss.SSS", "UTC")));
+    }
+
+    @Test
+    public void preservesNegativeMillisecondsAcrossEpochBoundary() {
+        for (Object timestamp : List.of(-1, -1L)) {
+            assertEquals("1969-12-31 23:59:59.999", registry.evaluate("date_format",
+                    List.of(timestamp, "yyyy-MM-dd HH:mm:ss.SSS", "UTC")));
+        }
+        assertEquals("1969-12-31 23:59:58.999", registry.evaluate("date_format",
+                List.of(-1001L, "yyyy-MM-dd HH:mm:ss.SSS", "UTC")));
     }
 
     @Test

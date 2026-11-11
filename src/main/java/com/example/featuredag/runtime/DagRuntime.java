@@ -188,6 +188,9 @@ public final class DagRuntime {
         }
 
         if (context.environment() == com.example.featuredag.physical.ExecutionEnvironment.ONLINE && itemScoped) {
+            if (context.hasCandidateColumns()) {
+                return bindCandidateColumn(featureName, defaultValue, context);
+            }
             List<Object> values = new ArrayList<>(context.candidateCount());
             for (int index = 0; index < context.candidates().size(); index++) {
                 Map<String, Object> candidate = context.candidates().get(index);
@@ -212,6 +215,31 @@ public final class DagRuntime {
             throw new IllegalArgumentException("Missing source feature: " + featureName);
         }
         return wrapSource(defaultValue, node.logicalValueShape(), context);
+    }
+
+    /** C6/C10：列式源直接绑定候选向量；缺失单元沿用行式源默认值语义。 */
+    private static CandidateVectorValue bindCandidateColumn(
+            String featureName, Object defaultValue, ExecutionContext context) {
+        List<?> column = context.candidateColumn(featureName);
+        List<Object> filled = null;
+        for (int index = 0; index < context.candidateCount(); index++) {
+            if (column != null && column.get(index) != null) continue;
+            if (defaultValue == null) {
+                throw new IllegalArgumentException(
+                        "Missing source feature " + featureName + " for candidate " + index);
+            }
+            if (filled == null) {
+                filled = column == null
+                        ? new ArrayList<>(Collections.nCopies(context.candidateCount(), defaultValue))
+                        : new ArrayList<>(column);
+            }
+            filled.set(index, defaultValue);
+        }
+        // CandidateVectorValue 保留既有防御复制；正常列不再先按行收集一份中间 List。
+        @SuppressWarnings("unchecked")
+        List<Object> values = filled != null ? filled
+                : column == null ? List.of() : (List<Object>) column;
+        return new CandidateVectorValue(values);
     }
 
     /** 通用算子执行（运行时）：从输入槽取出已算好的值句柄，交给算子注册表求值。 */

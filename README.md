@@ -4,6 +4,10 @@
 
 项目整体使用 Java 21 构建。首期内置算子源码位于 `operator.builtin`，这部分代码只使用 JDK 1.8 可用的语法和 API，便于后续独立抽取或生成；这不代表整个仓库可直接使用 JDK 1.8 编译。
 
+在线新增独立列式入口 `generateColumnar(OnlineColumnarGenerateRequest)`，支持
+`price: [99, 50]` 这类按候选顺序排列的特征列；旧 `generate()` / `generateBatch()`
+调用保持不变。输入、默认值和借用约束见 [列式在线输入](docs/architecture/online-columnar-input.md)。
+
 ## 标准算子
 
 `OperatorRegistry.standard()` 注册以下 31 个算子：

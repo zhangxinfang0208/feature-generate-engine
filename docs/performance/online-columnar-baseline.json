@@ -1,0 +1,208 @@
+{
+  "source_commit": "564e590ece13c3ea409a7451e8392a60cdcaf577",
+  "runs": [
+    {
+      "mode": "column-borrowed",
+      "requests": 1088,
+      "qps": 54.3899876898231,
+      "p50_ms": 16.786043,
+      "p95_ms": 29.091898,
+      "p99_ms": 33.131677,
+      "allocated_bytes_per_request": 36378520.90441176,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 1
+    },
+    {
+      "mode": "row-borrowed",
+      "requests": 1034,
+      "qps": 51.666858861718595,
+      "p50_ms": 18.698546,
+      "p95_ms": 23.009932,
+      "p99_ms": 33.640436,
+      "allocated_bytes_per_request": 37487482.27466151,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 1
+    },
+    {
+      "mode": "row-snapshot",
+      "requests": 993,
+      "qps": 49.61371953099223,
+      "p50_ms": 19.687963,
+      "p95_ms": 23.782351,
+      "p99_ms": 26.728698,
+      "allocated_bytes_per_request": 43249410.41691843,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 1
+    },
+    {
+      "mode": "column-borrowed",
+      "requests": 1087,
+      "qps": 54.33747216976643,
+      "p50_ms": 16.90875,
+      "p95_ms": 29.362217,
+      "p99_ms": 33.015007,
+      "allocated_bytes_per_request": 36377152.772769086,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 2
+    },
+    {
+      "mode": "row-borrowed",
+      "requests": 971,
+      "qps": 48.51734857642697,
+      "p50_ms": 18.894376,
+      "p95_ms": 33.189135,
+      "p99_ms": 36.986947,
+      "allocated_bytes_per_request": 38089556.22657055,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 2
+    },
+    {
+      "mode": "row-snapshot",
+      "requests": 890,
+      "qps": 44.440004931226724,
+      "p50_ms": 20.888713,
+      "p95_ms": 38.342163,
+      "p99_ms": 49.147136,
+      "allocated_bytes_per_request": 43804637.8247191,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 2
+    },
+    {
+      "mode": "column-borrowed",
+      "requests": 1104,
+      "qps": 55.16608471033644,
+      "p50_ms": 16.712156,
+      "p95_ms": 28.575478,
+      "p99_ms": 30.755547,
+      "allocated_bytes_per_request": 35800561.652173914,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 3
+    },
+    {
+      "mode": "row-borrowed",
+      "requests": 971,
+      "qps": 48.5196291235942,
+      "p50_ms": 20.102013,
+      "p95_ms": 24.588994,
+      "p99_ms": 30.525914,
+      "allocated_bytes_per_request": 37491560.30484037,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 3
+    },
+    {
+      "mode": "row-snapshot",
+      "requests": 995,
+      "qps": 49.7359806977956,
+      "p50_ms": 19.79388,
+      "p95_ms": 22.836816,
+      "p99_ms": 25.355493,
+      "allocated_bytes_per_request": 43802744.20100503,
+      "warmup_seconds": 15,
+      "measure_seconds": 20,
+      "java": "21.0.13+9-LTS",
+      "jvm_args": [
+        "-Xms2g",
+        "-Xmx2g",
+        "-XX:+UseZGC",
+        "-XX:ActiveProcessorCount=4"
+      ],
+      "boundary": "request construction + generate; prebuilt typed inputs; excludes business mapping, splitting and writeback",
+      "round": 3
+    }
+  ],
+  "median_of_fork_metrics": {
+    "row-snapshot": {
+      "qps": 49.61371953099223,
+      "p50_ms": 19.79388,
+      "p95_ms": 23.782351,
+      "p99_ms": 26.728698,
+      "allocated_bytes_per_request": 43802744.20100503
+    },
+    "row-borrowed": {
+      "qps": 48.5196291235942,
+      "p50_ms": 18.894376,
+      "p95_ms": 24.588994,
+      "p99_ms": 33.640436,
+      "allocated_bytes_per_request": 37491560.30484037
+    },
+    "column-borrowed": {
+      "qps": 54.3899876898231,
+      "p50_ms": 16.786043,
+      "p95_ms": 29.091898,
+      "p99_ms": 33.015007,
+      "allocated_bytes_per_request": 36377152.772769086
+    }
+  }
+}

@@ -109,6 +109,13 @@ final class FeatureOutputEncoder {
         return FeatureValueCollections.singleton(value);
     }
 
+    // C6：序列沿用现有截断、补齐契约；标量直接物化，省去单元素包装。
+    Object encodeColumnCell(String featureName, Object value, OutputSpec spec) {
+        return spec.shape() == ValueShape.SEQUENCE
+                ? encodeValue(featureName, value, spec)
+                : materializer.materializeRaw(value);
+    }
+
     /** seq_max_length 是最终模型输入形状：超长截断，不足按 dft（含 null）补齐。 */
     private static List<?> normalizeSequence(List<?> values, OutputSpec spec) {
         Integer sequenceMaxLength = spec.sequenceMaxLength();

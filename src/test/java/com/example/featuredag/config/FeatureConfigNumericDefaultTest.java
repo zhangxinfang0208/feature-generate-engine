@@ -77,7 +77,7 @@ public class FeatureConfigNumericDefaultTest {
     }
 
     @Test
-    public void publicApiUsesTypedDefaultsInSingleBatchAndSequencePadding() {
+    public void publicApiUsesTypedDefaultsInSingleBatchAndSequenceFallback() {
         for (String type : List.of("INT", "BIGINT", "DOUBLE")) {
             Object zero = switch (type) {
                 case "INT" -> Integer.valueOf(0);
@@ -97,7 +97,7 @@ public class FeatureConfigNumericDefaultTest {
                     json.replace("SCALAR", "SEQUENCE").replace(
                             "\"expression\":\"source\"", "\"expression\":\"source\",\"seq_max_length\":3"),
                     InitOptions.offline("numeric-sequence-dft"));
-            assertEquals(Collections.nCopies(3, zero), sequence.generate(new OfflineGenerateRequest(
+            assertEquals(List.of(zero), sequence.generate(new OfflineGenerateRequest(
                     "empty", Map.of("source", List.of()))).featureValues().get("output"));
         }
     }

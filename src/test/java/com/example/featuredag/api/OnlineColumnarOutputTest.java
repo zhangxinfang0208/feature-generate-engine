@@ -40,7 +40,7 @@ public class OnlineColumnarOutputTest {
         }
     }
 
-    @Test public void sequencePaddingStoreNamesAndEmptyCandidates() {
+    @Test public void sequenceTruncationAndShortLengthsStoreNamesAndEmptyCandidates() {
         String config = """
             {"feature_set_name":"output","version":"1","features":[
             {"name":"x","definition_type":"BASE","type":"INT","value_shape":"SEQUENCE","entity_scopes":["ITEM"]},
@@ -49,7 +49,7 @@ public class OnlineColumnarOutputTest {
         var engine = FeatureDagEngine.init(config, InitOptions.builder().environment(ExecutionEnvironment.ONLINE).build());
         var result = engine.generateColumnarResult(OnlineColumnarGenerateRequest.borrowed(
                 "test", Map.of(), List.of("a","b"), Map.of("x", List.of(List.of(1), List.of(2,3,4,5)))));
-        assertEquals(List.of(List.of(1,-1,-1), List.of(2,3,4)), result.candidateFeatureColumns().get("out"));
+        assertEquals(List.of(List.of(1), List.of(2,3,4)), result.candidateFeatureColumns().get("out"));
         assertThrows(UnsupportedOperationException.class, () -> ((List<?>)result.candidateFeatureColumns().get("out").get(0)).clear());
         var empty = engine.generateColumnarResult(OnlineColumnarGenerateRequest.borrowed("empty", Map.of(), List.of(), Map.of()));
         assertTrue(empty.candidateIds().isEmpty());

@@ -789,6 +789,7 @@ public final class DagRuntime {
                         featureName, failure.physicalNodeId(),
                         failure.location(), failure.cause());
             }
+            if (logicalValueShape == ValueShape.SEQUENCE) context.recordSequenceFailure(featureName, 0);
             state.setFallbackUsed(true);
             state.addFallbacks(1);
             return defaultHandle(defaultValue, logicalValueShape, alignmentId);
@@ -820,7 +821,7 @@ public final class DagRuntime {
                     : new DefaultApplication(handle, 0);
             case CandidateVectorValue vector -> {
                 ElementReplacement replaced = replaceEmptyElements(
-                        vector.values(), defaultValue, logicalValueShape);
+                        vector.values(), defaultValue, logicalValueShape, featureName, context);
                 if (replaced.replacementCount() == 0) {
                     yield new DefaultApplication(handle, 0);
                 }
@@ -832,7 +833,7 @@ public final class DagRuntime {
             }
             case OfflineBatchValue batch -> {
                 ElementReplacement replaced = replaceEmptyElements(
-                        batch.values(), defaultValue, batch.elementShape());
+                        batch.values(), defaultValue, batch.elementShape(), featureName, context);
                 if (replaced.replacementCount() == 0) {
                     yield new DefaultApplication(handle, 0);
                 }
@@ -844,7 +845,7 @@ public final class DagRuntime {
             }
             case RequestBatchValue batch -> {
                 ElementReplacement replaced = replaceEmptyElements(
-                        batch.values(), defaultValue, batch.elementShape());
+                        batch.values(), defaultValue, batch.elementShape(), featureName, context);
                 if (replaced.replacementCount() == 0) {
                     yield new DefaultApplication(handle, 0);
                 }
@@ -856,7 +857,7 @@ public final class DagRuntime {
             }
             case CandidateBatchValue batch -> {
                 ElementReplacement replaced = replaceEmptyElements(
-                        batch.values(), defaultValue, batch.elementShape());
+                        batch.values(), defaultValue, batch.elementShape(), featureName, context);
                 if (replaced.replacementCount() == 0) {
                     yield new DefaultApplication(handle, 0);
                 }
@@ -879,12 +880,17 @@ public final class DagRuntime {
     private static ElementReplacement replaceEmptyElements(
             List<?> values,
             Object defaultValue,
-            ValueShape elementShape) {
+            ValueShape elementShape,
+            String featureName,
+            ExecutionContext context) {
         List<Object> replaced = null;
         Object replacement = null;
         int replacementCount = 0;
         for (int index = 0; index < values.size(); index++) {
             Object value = values.get(index);
+            if (value instanceof EvaluationFailure && elementShape == ValueShape.SEQUENCE) {
+                context.recordSequenceFailure(featureName, index);
+            }
             boolean empty = value instanceof EvaluationFailure || isEmptyFeatureValue(value);
             if (empty && replacement == null) {
                 replacement = defaultRawValue(defaultValue, elementShape);

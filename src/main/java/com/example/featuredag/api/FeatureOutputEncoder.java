@@ -3,6 +3,7 @@ package com.example.featuredag.api;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.config.FeatureOutputDescriptor;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.runtime.ExecutionContext;
 import com.example.featuredag.runtime.ExternalValueMaterializer;
 import com.example.featuredag.runtime.ValueHandle;
 
@@ -70,6 +71,14 @@ final class FeatureOutputEncoder {
 
     List<?> encode(String featureName, ValueHandle handle, OutputSpec spec) {
         return encodeValue(featureName, Objects.requireNonNull(handle, "handle"), spec);
+    }
+
+    List<?> encodeOutput(String featureName, Object value, OutputSpec spec, ExecutionContext context, int row) {
+        if (context.hasSequenceFailure(featureName, row)
+                && spec.defaultValue() instanceof Number number && number.doubleValue() == 0.0) {
+            return (List<?>) materializer.materializeRaw(value, 1);
+        }
+        return encodeValue(featureName, value, spec);
     }
 
     List<?> encodeCandidateElement(String featureName, Object value) {

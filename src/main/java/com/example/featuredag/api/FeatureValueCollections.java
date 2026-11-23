@@ -21,6 +21,11 @@ final class FeatureValueCollections {
         return Collections.singletonList(value);
     }
 
+    /** 引擎自产的不可变输出 Map 原样返回，其余容器包一层只读视图。 */
+    static Map<String, List<?>> unmodifiable(Map<String, List<?>> values) {
+        return values instanceof SharedKeyOutputMap ? values : Collections.unmodifiableMap(values);
+    }
+
     /** 以默认负载因子容纳已知元素数量，避免输出组装时反复扩容。 */
     static int mapCapacity(int mappings) {
         if (mappings < 0) throw new IllegalArgumentException("mappings must be non-negative");

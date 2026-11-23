@@ -49,6 +49,7 @@ import com.example.featuredag.runtime.ValueHandle;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -78,6 +79,14 @@ public final class FeatureDagEngine {
     private final RuntimeObservabilityController observabilityController;
     private final RuntimeObserver runtimeObserver;
     private final RuntimeTraceObserver runtimeTraceObserver;
+    /** 最近一次输出路由及其键布局；路由不变时跨请求复用布局（C9）。 */
+    private volatile OutputRouting lastRouting;
+
+    /** 每个输出进入共享行还是候选行，以及两种行族各自的键布局。 */
+    private record OutputRouting(
+            boolean[] candidateLevel,
+            FeatureOutputLayout shared,
+            FeatureOutputLayout candidate) {}
 
     private FeatureDagEngine(
             ExecutionEnvironment environment,
@@ -374,19 +383,10 @@ public final class FeatureDagEngine {
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
-            Map<String, List<?>> result = new LinkedHashMap<>(sharedOutputCapacity);
-            for (FeatureOutputDescriptor output : outputs) {
-                try {
-                    ValueHandle value = execution.feature(output.featureName());
-                    FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
-                    result.put(
-                            output.storeName(), outputEncoder.encode(output.featureName(), value, outputSpec));
-                } catch (RuntimeException error) {
-                    throw new FeatureGenerationException(
-                            error.getMessage(), planId, request.executionId(), output.featureName(), error);
-                }
-            }
-            return GenerateResult.fromOwnedEncodedValues(request.executionId(), result, List.of());
+            FeatureOutputLayout.Rows rows = routeOutputs(execution, null).shared().newRows(1);
+            encodeSharedOutputs(execution, rows, request.executionId());
+            return GenerateResult.fromOwnedEncodedValues(
+                    request.executionId(), rows.toMaps().get(0), List.of());
         });
     }
 
@@ -402,41 +402,78 @@ public final class FeatureDagEngine {
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
-            List<Map<String, List<?>>> rows = new ArrayList<>(request.rows().size());
-            for (int index = 0; index < request.rows().size(); index++) {
-                rows.add(new LinkedHashMap<>(sharedOutputCapacity));
-            }
-            for (FeatureOutputDescriptor output : outputs) {
+            int rowCount = request.rows().size();
+            FeatureOutputLayout.Rows rows = routeOutputs(execution, null).shared().newRows(rowCount);
+            for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
+                FeatureOutputDescriptor output = outputs.get(outputIndex);
                 try {
                     ValueHandle value = execution.feature(output.featureName());
                     FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     if (value instanceof OfflineBatchValue batch) {
                         // 批输出逐行回填；行数不一致意味着某个 Kernel 破坏了 Batch 等价性约束。
-                        if (batch.size() != rows.size()) {
+                        if (batch.size() != rowCount) {
                             throw new IllegalStateException(
                                     "Offline batch output size " + batch.size()
-                                            + " does not match input size " + rows.size());
+                                            + " does not match input size " + rowCount);
                         }
                         for (int index = 0; index < batch.size(); index++) {
-                            rows.get(index).put(
-                                    output.storeName(),
+                            rows.set(
+                                    outputIndex,
+                                    index,
                                     outputEncoder.encodeValue(
                                             output.featureName(), batch.valueAt(index), outputSpec));
                         }
                     } else {
                         // 与行无关的常量结果广播到每一行，不要求上游人为制造重复批值。
-                        List<?> encoded = outputEncoder.encode(output.featureName(), value, outputSpec);
-                        for (Map<String, List<?>> row : rows) {
-                            row.put(output.storeName(), encoded);
-                        }
+                        rows.setAll(
+                                outputIndex,
+                                outputEncoder.encode(output.featureName(), value, outputSpec));
                     }
                 } catch (RuntimeException error) {
                     throw new FeatureGenerationException(
                             error.getMessage(), planId, request.executionId(), output.featureName(), error);
                 }
             }
-            return OfflineBatchGenerateResult.fromOwnedEncodedValues(request.executionId(), rows);
+            return OfflineBatchGenerateResult.fromOwnedEncodedValues(request.executionId(), rows.toMaps());
         });
+    }
+
+    /** 单行请求：全部输出写入同一行；任一输出失败即整体失败，并带上特征名定位。 */
+    private void encodeSharedOutputs(
+            ExecutionResult execution, FeatureOutputLayout.Rows rows, String executionId) {
+        for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
+            FeatureOutputDescriptor output = outputs.get(outputIndex);
+            try {
+                ValueHandle value = execution.feature(output.featureName());
+                FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
+                rows.setAll(outputIndex, outputEncoder.encode(output.featureName(), value, outputSpec));
+            } catch (RuntimeException error) {
+                throw new FeatureGenerationException(
+                        error.getMessage(), planId, executionId, output.featureName(), error);
+            }
+        }
+    }
+
+    /**
+     * C9：按输出句柄的类型决定每个输出进入共享行还是候选行，再据此取出两种行族的键布局。
+     * candidateHandleType 为 null 表示该入口不产生候选行。布局只依赖路由结果，路由不变时直接复用。
+     */
+    private OutputRouting routeOutputs(ExecutionResult execution, Class<? extends ValueHandle> candidateHandleType) {
+        boolean[] candidateLevel = new boolean[outputs.size()];
+        Map<String, ValueHandle> featureOutputs = execution.featureOutputs();
+        for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
+            ValueHandle handle = featureOutputs.get(outputs.get(outputIndex).featureName());
+            candidateLevel[outputIndex] = candidateHandleType != null && candidateHandleType.isInstance(handle);
+        }
+        OutputRouting cached = lastRouting;
+        if (cached == null || !Arrays.equals(cached.candidateLevel(), candidateLevel)) {
+            cached = new OutputRouting(
+                    candidateLevel,
+                    FeatureOutputLayout.forFamily(outputs, candidateLevel, false),
+                    FeatureOutputLayout.forFamily(outputs, candidateLevel, true));
+            lastRouting = cached;
+        }
+        return cached;
     }
 
     /**
@@ -465,38 +502,39 @@ public final class FeatureDagEngine {
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
         return measure(observation, ExecutionPhase.ENCODE, () -> {
-            Map<String, List<?>> sharedResults = new LinkedHashMap<>(sharedOutputCapacity);
-            List<Map<String, List<?>>> candidateResults =
-                    new ArrayList<>(candidateCount);
-            for (int index = 0; index < candidateCount; index++) {
-                candidateResults.add(new LinkedHashMap<>(candidateOutputCapacity));
-            }
-            for (FeatureOutputDescriptor output : outputs) {
+            OutputRouting routing = routeOutputs(execution, CandidateVectorValue.class);
+            FeatureOutputLayout.Rows sharedRows = routing.shared().newRows(1);
+            FeatureOutputLayout.Rows candidateRows = routing.candidate().newRows(candidateCount);
+            for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
+                FeatureOutputDescriptor output = outputs.get(outputIndex);
                 try {
                     ValueHandle value = execution.feature(output.featureName());
                     FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     if (value instanceof CandidateVectorValue vector) {
-                        if (vector.size() != candidateResults.size()) {
+                        if (vector.size() != candidateCount) {
                             throw new IllegalStateException(
                                     "Candidate output size " + vector.size()
-                                            + " does not match input size " + candidateResults.size());
+                                            + " does not match input size " + candidateCount);
                         }
                         for (int index = 0; index < vector.size(); index++) {
-                            candidateResults.get(index).put(
-                                    output.storeName(),
+                            candidateRows.set(
+                                    outputIndex,
+                                    index,
                                     outputEncoder.encodeValue(
                                             output.featureName(), vector.valueAt(index), outputSpec));
                         }
                     } else {
-                        sharedResults.put(
-                                output.storeName(), outputEncoder.encode(output.featureName(), value, outputSpec));
+                        sharedRows.setAll(
+                                outputIndex,
+                                outputEncoder.encode(output.featureName(), value, outputSpec));
                     }
                 } catch (RuntimeException error) {
                     throw new FeatureGenerationException(
                             error.getMessage(), planId, executionId, output.featureName(), error);
                 }
             }
-            return GenerateResult.fromOwnedEncodedValues(executionId, sharedResults, candidateResults);
+            return GenerateResult.fromOwnedEncodedValues(
+                    executionId, sharedRows.toMaps().get(0), candidateRows.toMaps());
         });
     }
 
@@ -523,49 +561,41 @@ public final class FeatureDagEngine {
         ExecutionResult execution = executeRuntime(context, observation);
 
         return measure(observation, ExecutionPhase.ENCODE, () -> {
-            List<Map<String, List<?>>> sharedResults = new ArrayList<>(groups.size());
-            List<List<Map<String, List<?>>>> candidateResults = new ArrayList<>(groups.size());
-            for (OnlineRequestGroup group : groups) {
-                sharedResults.add(new LinkedHashMap<>(sharedOutputCapacity));
-                List<Map<String, List<?>>> groupCandidates =
-                        new ArrayList<>(group.candidates().size());
-                for (int index = 0; index < group.candidates().size(); index++) {
-                    groupCandidates.add(new LinkedHashMap<>(candidateOutputCapacity));
-                }
-                candidateResults.add(groupCandidates);
-            }
+            int groupCount = groups.size();
+            int candidateCount = context.candidateCount();
+            OutputRouting routing = routeOutputs(execution, CandidateBatchValue.class);
+            FeatureOutputLayout.Rows sharedRows = routing.shared().newRows(groupCount);
+            FeatureOutputLayout.Rows candidateRows = routing.candidate().newRows(candidateCount);
 
-            for (FeatureOutputDescriptor output : outputs) {
+            for (int outputIndex = 0; outputIndex < outputs.size(); outputIndex++) {
+                FeatureOutputDescriptor output = outputs.get(outputIndex);
                 try {
                     ValueHandle value = execution.feature(output.featureName());
                     FeatureOutputEncoder.OutputSpec outputSpec = outputEncoder.requireSpec(output.featureName());
                     if (value instanceof RequestBatchValue batch) {
-                        if (batch.size() != groups.size()) {
+                        if (batch.size() != groupCount) {
                             throw new IllegalStateException(
                                     "Online request batch output size " + batch.size()
-                                            + " does not match group size " + groups.size());
+                                            + " does not match group size " + groupCount);
                         }
                         for (int groupIndex = 0; groupIndex < batch.size(); groupIndex++) {
-                            sharedResults.get(groupIndex).put(
-                                    output.storeName(),
+                            sharedRows.set(
+                                    outputIndex,
+                                    groupIndex,
                                     outputEncoder.encodeValue(
                                             output.featureName(), batch.valueAt(groupIndex), outputSpec));
                         }
                     } else if (value instanceof CandidateBatchValue batch) {
-                        if (batch.size() != context.candidateCount()) {
+                        if (batch.size() != candidateCount) {
                             throw new IllegalStateException(
                                     "Online candidate batch output size " + batch.size()
-                                            + " does not match candidate size "
-                                            + context.candidateCount());
+                                            + " does not match candidate size " + candidateCount);
                         }
-                        for (int candidateIndex = 0;
-                                candidateIndex < batch.size();
-                                candidateIndex++) {
-                            // 用上下文保存的组边界把扁平候选结果还原为调用方传入的分组与组内顺序。
-                            int groupIndex = context.candidateGroupIndex(candidateIndex);
-                            int indexInGroup = context.candidateIndexInGroup(candidateIndex);
-                            candidateResults.get(groupIndex).get(indexInGroup).put(
-                                    output.storeName(),
+                        // 候选行已按展平后的候选顺序排列，与 CandidateBatchValue 的行序一致。
+                        for (int candidateIndex = 0; candidateIndex < batch.size(); candidateIndex++) {
+                            candidateRows.set(
+                                    outputIndex,
+                                    candidateIndex,
                                     outputEncoder.encodeValue(
                                             output.featureName(), batch.valueAt(candidateIndex), outputSpec));
                         }
@@ -575,10 +605,10 @@ public final class FeatureDagEngine {
                                 "Unexpected output handle for online batch: "
                                         + value.getClass().getSimpleName());
                     } else {
-                        List<?> encoded = outputEncoder.encode(output.featureName(), value, outputSpec);
-                        for (Map<String, List<?>> groupResult : sharedResults) {
-                            groupResult.put(output.storeName(), encoded);
-                        }
+                        // 与候选无关的结果写入每个分组的共享行。
+                        sharedRows.setAll(
+                                outputIndex,
+                                outputEncoder.encode(output.featureName(), value, outputSpec));
                     }
                 } catch (RuntimeException error) {
                     throw new FeatureGenerationException(
@@ -586,12 +616,16 @@ public final class FeatureDagEngine {
                 }
             }
 
-            List<GenerateResult> groupResults = new ArrayList<>(groups.size());
-            for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            // 用上下文保存的组边界把扁平候选结果还原为调用方传入的分组与组内顺序。
+            List<Map<String, List<?>>> sharedMaps = sharedRows.toMaps();
+            List<Map<String, List<?>>> candidateMaps = candidateRows.toMaps();
+            List<GenerateResult> groupResults = new ArrayList<>(groupCount);
+            for (int groupIndex = 0; groupIndex < groupCount; groupIndex++) {
                 groupResults.add(GenerateResult.fromOwnedEncodedValues(
                         groups.get(groupIndex).executionId(),
-                        sharedResults.get(groupIndex),
-                        candidateResults.get(groupIndex)));
+                        sharedMaps.get(groupIndex),
+                        new ArrayList<>(candidateMaps.subList(
+                                context.candidateGroupStart(groupIndex), context.candidateGroupEnd(groupIndex)))));
             }
             return new OnlineBatchGenerateResult(request.executionId(), groupResults);
         });

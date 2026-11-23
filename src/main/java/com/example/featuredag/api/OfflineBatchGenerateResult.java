@@ -35,7 +35,7 @@ public final class OfflineBatchGenerateResult {
             @SuppressWarnings("unchecked")
             List<Map<String, List<?>>> ownedRows = (List<Map<String, List<?>>>) rows;
             for (int index = 0; index < ownedRows.size(); index++) {
-                ownedRows.set(index, Collections.unmodifiableMap(ownedRows.get(index)));
+                ownedRows.set(index, FeatureValueCollections.unmodifiable(ownedRows.get(index)));
             }
             this.rows = Collections.unmodifiableList(ownedRows);
         } else {

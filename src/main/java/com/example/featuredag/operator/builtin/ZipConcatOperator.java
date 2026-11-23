@@ -122,8 +122,10 @@ public final class ZipConcatOperator extends AbstractBuiltinOperator
         for (int row = 0; row < size; row++) {
             StringBuilder joined = new StringBuilder();
             for (int column = 0; column < sequences.size(); column++) {
+                // 序列类型已在上面统一校验，这里只按下标读取；参数名只用于类型错误的消息，
+                // 该错误在此不可达，因此不再为每个元素拼接列名。
                 Object element = OperatorSupport.sequenceElementAt(
-                        sequences.get(column), row, name(), "sequence " + column);
+                        sequences.get(column), row, name(), "sequence");
                 if (element instanceof Map<?, ?>) {
                     // 事件元素无既定字符串契约，拒绝拼接，避免把事件结构 dump 固化为特征值。
                     throw new IllegalArgumentException(

@@ -88,9 +88,12 @@ public final class DiscreteOperator extends AbstractBuiltinOperator implements B
                 throw new IllegalArgumentException(
                         "discrete boundary at index " + index + " is not numeric: " + boundary);
             }
-            BigDecimal current = OperatorSupport.asPreciseDecimal(
-                    (Number) boundary,
-                    "discrete boundary at index " + index + " must be finite");
+            // 仅在边界非有限时拼接带下标的错误文本。
+            BigDecimal current = OperatorSupport.toPreciseDecimal((Number) boundary);
+            if (current == null) {
+                throw new IllegalArgumentException(
+                        "discrete boundary at index " + index + " must be finite");
+            }
             if (previous != null && current.compareTo(previous) <= 0) {
                 throw new IllegalArgumentException(
                         "discrete boundaries must be strictly increasing at index " + index);

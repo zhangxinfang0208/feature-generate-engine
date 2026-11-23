@@ -134,8 +134,12 @@ final class OperatorSupport {
 
     static BigDecimal arithmeticOperand(Object value, String operator) {
         // 算术操作数统一走精确十进制：先校验有限性，再消除 Integer/Long/Double 混算的精度歧义。
-        return asPreciseDecimal(
-                asNumber(value), operator + " requires finite numeric values");
+        // 错误文本只在失败时拼接，成功路径不分配字符串。
+        BigDecimal decimal = toPreciseDecimal(asNumber(value));
+        if (decimal == null) {
+            throw new IllegalArgumentException(operator + " requires finite numeric values");
+        }
+        return decimal;
     }
 
     static Object arithmeticCarrier(
@@ -187,8 +191,18 @@ final class OperatorSupport {
         throw new IllegalArgumentException("Expected numeric value, got: " + value);
     }
 
+    /**
+     * 整数精确转换；浮点数先验证有限性并采用十进制字符串语义，避免 new BigDecimal(double) 的二进制尾差。
+     * 非有限或无法解析的数值返回 null，由调用方在失败分支拼接自己的错误文本。
+     */
+    /** 错误文本为常量的调用方使用；需要拼接下标的调用方改用 toPreciseDecimal，在失败分支拼接。 */
     static BigDecimal asPreciseDecimal(Number number, String errorMessage) {
-        // 整数精确转换；浮点数先验证有限性并采用十进制字符串语义，避免 new BigDecimal(double) 的二进制尾差。
+        BigDecimal decimal = toPreciseDecimal(number);
+        if (decimal == null) throw new IllegalArgumentException(errorMessage);
+        return decimal;
+    }
+
+    static BigDecimal toPreciseDecimal(Number number) {
         if (number instanceof BigDecimal) return (BigDecimal) number;
         if (number instanceof BigInteger) return new BigDecimal((BigInteger) number);
         if (number instanceof Byte || number instanceof Short
@@ -197,18 +211,18 @@ final class OperatorSupport {
         }
         if (number instanceof Float) {
             float floatValue = number.floatValue();
-            if (!Float.isFinite(floatValue)) throw new IllegalArgumentException(errorMessage);
+            if (!Float.isFinite(floatValue)) return null;
             return new BigDecimal(Float.toString(floatValue));
         }
         if (number instanceof Double) {
             double doubleValue = number.doubleValue();
-            if (!Double.isFinite(doubleValue)) throw new IllegalArgumentException(errorMessage);
+            if (!Double.isFinite(doubleValue)) return null;
             return BigDecimal.valueOf(doubleValue);
         }
         try {
             return new BigDecimal(number.toString());
         } catch (NumberFormatException error) {
-            throw new IllegalArgumentException(errorMessage);
+            return null;
         }
     }
 
@@ -226,12 +240,14 @@ final class OperatorSupport {
             List<Object> arguments,
             String operator,
             Function<List<Object>, Object> scalarEvaluator) {
+        int argumentCount = arguments.size();
+        boolean[] sequenceArgument = new boolean[argumentCount];
         int sequenceSize = -1;
-        for (int argumentIndex = 0; argumentIndex < arguments.size(); argumentIndex++) {
+        for (int argumentIndex = 0; argumentIndex < argumentCount; argumentIndex++) {
             Object argument = arguments.get(argumentIndex);
-            if (!isSequence(argument)) continue;
-            int currentSize = sequenceSize(
-                    argument, operator, "argument " + argumentIndex);
+            sequenceArgument[argumentIndex] = isSequence(argument);
+            if (!sequenceArgument[argumentIndex]) continue;
+            int currentSize = sequenceSize(argument);
             if (sequenceSize < 0) {
                 sequenceSize = currentSize;
             } else if (currentSize != sequenceSize) {
@@ -243,21 +259,18 @@ final class OperatorSupport {
         }
         if (sequenceSize < 0) return scalarEvaluator.apply(arguments);
 
+        // 整个调用只建一个参数列表，逐元素用 set 替换序列位置；
+        // scalarEvaluator 只在本次调用内同步读取该列表，不得保存它。
+        List<Object> scalarArguments = new ArrayList<Object>(arguments);
         List<Object> result = new ArrayList<Object>(sequenceSize);
         for (int sequenceIndex = 0; sequenceIndex < sequenceSize; sequenceIndex++) {
             try {
-                List<Object> scalarArguments = new ArrayList<Object>(arguments.size());
-                for (int argumentIndex = 0;
-                        argumentIndex < arguments.size();
-                        argumentIndex++) {
-                    Object argument = arguments.get(argumentIndex);
-                    scalarArguments.add(isSequence(argument)
-                            ? sequenceElementAt(
-                                    argument,
-                                    sequenceIndex,
-                                    operator,
-                                    "argument " + argumentIndex)
-                            : argument);
+                for (int argumentIndex = 0; argumentIndex < argumentCount; argumentIndex++) {
+                    if (sequenceArgument[argumentIndex]) {
+                        scalarArguments.set(
+                                argumentIndex,
+                                sequenceElement(arguments.get(argumentIndex), sequenceIndex));
+                    }
                 }
                 result.add(scalarEvaluator.apply(scalarArguments));
             } catch (RuntimeException error) {
@@ -288,6 +301,19 @@ final class OperatorSupport {
             }
         }
         return immutableList(result);
+    }
+
+    /** 已由 isSequence 确认是序列的值：按逻辑下标读取，不做类型与参数名校验。 */
+    private static int sequenceSize(Object sequence) {
+        return sequence instanceof OperatorSequence
+                ? ((OperatorSequence) sequence).size()
+                : ((List<?>) sequence).size();
+    }
+
+    private static Object sequenceElement(Object sequence, int index) {
+        return sequence instanceof OperatorSequence
+                ? ((OperatorSequence) sequence).elementAt(index)
+                : ((List<?>) sequence).get(index);
     }
 
     static int sequenceSize(Object value, String operator, String argument) {
@@ -394,8 +420,10 @@ final class OperatorSupport {
                 throw invalidCastValue(operator, value);
             }
         } else {
-            decimal = asPreciseDecimal(
-                    asNumber(value), operator + " requires a finite numeric value");
+            decimal = toPreciseDecimal(asNumber(value));
+            if (decimal == null) {
+                throw new IllegalArgumentException(operator + " requires a finite numeric value");
+            }
         }
         // 把小数部分向零截断（与 SQL CAST 语义一致），不做四舍五入。
         return decimal.setScale(0, RoundingMode.DOWN);
@@ -412,8 +440,7 @@ final class OperatorSupport {
         BigDecimal extreme = null;
         Object winner = null;
         for (Object value : values) {
-            BigDecimal decimal = asPreciseDecimal(
-                    asNumber(value), operator + " requires finite numeric values");
+            BigDecimal decimal = arithmeticOperand(value, operator);
             if (extreme == null
                     || (minimum
                             ? decimal.compareTo(extreme) < 0

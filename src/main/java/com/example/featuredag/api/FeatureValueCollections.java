@@ -7,12 +7,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import com.example.featuredag.runtime.FrozenList;
+
 final class FeatureValueCollections {
     private FeatureValueCollections() {}
 
     static List<?> immutableList(List<?> values) {
         Objects.requireNonNull(values, "feature values");
-        return Collections.unmodifiableList(new ArrayList<>(values));
+        return FrozenList.copyOf(values);
     }
 
     static List<?> singleton(Object value) {

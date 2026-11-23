@@ -64,7 +64,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
         Object sequenceRaw = sequenceHandle.raw();
         EvaluationFailure sequenceFailure = inheritedFailure(sequenceRaw);
         if (sequenceFailure != null) {
-            return new CandidateVectorValue(repeatedFailure(
+            return CandidateVectorValue.owned(repeatedFailure(
                     context.candidateCount(), sequenceFailure));
         }
         if (!(sequenceRaw instanceof SequenceValue sequence)) {
@@ -98,7 +98,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
 
         // 候选 key 先规范化再去重，保证语义等价的输入只做一次索引查询。
         state.setDedupCounts(normalizedKeys.size(), uniqueKeys.size());
-        if (uniqueKeys.isEmpty()) return new CandidateVectorValue(result);
+        if (uniqueKeys.isEmpty()) return CandidateVectorValue.owned(result);
 
         SequenceIndexCacheKey indexCacheKey = new SequenceIndexCacheKey(0, keyDomain, sequence);
         IndexValue index;
@@ -121,7 +121,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
                     failureCount++;
                 }
                 state.addOperatorFailures(failureCount);
-                return new CandidateVectorValue(result);
+                return CandidateVectorValue.owned(result);
             }
             context.runtimeCache().put(
                     CacheKind.SEQUENCE_INDEX, indexCacheKey, index, state);
@@ -163,7 +163,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
             }
         }
         state.addOperatorFailures(queryFailureCount);
-        return new CandidateVectorValue(result);
+        return CandidateVectorValue.owned(result);
     }
 
     private ValueHandle executeOnlineBatch(

@@ -210,7 +210,7 @@ public final class DagRuntime {
                             "Missing source feature " + featureName + " for candidate " + index);
                 }
             }
-            return new CandidateVectorValue(values);
+            return CandidateVectorValue.owned(values);
         }
         Object sharedSourceValue = context.sharedSourceValues().get(featureName);
         if (sharedSourceValue != null || context.sharedSourceValues().containsKey(featureName)) {
@@ -240,11 +240,11 @@ public final class DagRuntime {
             }
             filled.set(index, defaultValue);
         }
-        // CandidateVectorValue 保留既有防御复制；正常列不再先按行收集一份中间 List。
+        // filled 与解码列都是引擎独占且不再修改的列表，直接移交句柄，不再防御复制。
         @SuppressWarnings("unchecked")
         List<Object> values = filled != null ? filled
                 : column == null ? List.of() : (List<Object>) column;
-        return new CandidateVectorValue(values);
+        return CandidateVectorValue.owned(values);
     }
 
     /** 通用算子执行（运行时）：从输入槽取出已算好的值句柄，交给算子注册表求值。 */
@@ -332,7 +332,7 @@ public final class DagRuntime {
                 node, operatorName, inputHandles, domain, context, state);
         // C9：result 为本次求值独占列表或 Kernel 已冻结的列表；运行时只读共享，避免二次拷贝。
         return switch (domain) {
-            case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
+            case SINGLE_CANDIDATE -> CandidateVectorValue.owned(result);
             case OFFLINE_ROW -> OfflineBatchValue.owned(result, logicalValueShape);
             case ONLINE_REQUEST -> RequestBatchValue.owned(result, logicalValueShape);
             case ONLINE_CANDIDATE -> CandidateBatchValue.owned(result, logicalValueShape);
@@ -860,7 +860,7 @@ public final class DagRuntime {
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) replaced.values();
                 yield new DefaultApplication(
-                        new CandidateVectorValue(objectValues),
+                        CandidateVectorValue.owned(objectValues),
                         replaced.replacementCount());
             }
             case OfflineBatchValue batch -> {
@@ -1008,7 +1008,7 @@ public final class DagRuntime {
                 // CandidateVectorValue 的构造器本身已经会拷贝一次。
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) widened;
-                yield new CandidateVectorValue(objectValues);
+                yield CandidateVectorValue.owned(objectValues);
             }
             case OfflineBatchValue batch -> {
                 List<?> widened = normalizeBatchValues(

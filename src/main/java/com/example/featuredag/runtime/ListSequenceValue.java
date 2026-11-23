@@ -18,7 +18,15 @@ public final class ListSequenceValue implements ValueHandle {
     public ListSequenceValue(String alignmentId, List<?> values) {
         this.alignmentId = requireText(alignmentId, "alignmentId");
         Objects.requireNonNull(values, "values");
-        this.values = Collections.unmodifiableList(new ArrayList<>(values));
+        // 解码器已冻结的列表不再防御复制；其余来源（公共工厂、配置默认值）保持拷贝语义。
+        this.values = values instanceof FrozenList<?>
+                ? castValues(values)
+                : Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> castValues(List<?> values) {
+        return (List<Object>) values;
     }
 
     public String alignmentId() { return alignmentId; }

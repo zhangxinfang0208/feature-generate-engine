@@ -217,6 +217,27 @@ public final class ExecutionContext {
             List<String> groupExecutionIds,
             List<Map<String, Object>> sharedGroups,
             List<List<Map<String, Object>>> candidateGroups) {
+        return onlineBatch(batchExecutionId, groupExecutionIds, sharedGroups, candidateGroups, false);
+    }
+
+    /**
+     * C1/C10：接管解码器新建的独占组/候选 Map；调用方交接后不得再修改这些 Map。
+     * 与单请求的 onlineRequestFromOwnedDecodedValues 同一契约：只加只读视图，不再复制。
+     */
+    public static ExecutionContext onlineBatchFromOwnedDecodedValues(
+            String batchExecutionId,
+            List<String> groupExecutionIds,
+            List<Map<String, Object>> sharedGroups,
+            List<List<Map<String, Object>>> candidateGroups) {
+        return onlineBatch(batchExecutionId, groupExecutionIds, sharedGroups, candidateGroups, true);
+    }
+
+    private static ExecutionContext onlineBatch(
+            String batchExecutionId,
+            List<String> groupExecutionIds,
+            List<Map<String, Object>> sharedGroups,
+            List<List<Map<String, Object>>> candidateGroups,
+            boolean ownedDecodedInputs) {
         Objects.requireNonNull(groupExecutionIds, "groupExecutionIds");
         Objects.requireNonNull(sharedGroups, "sharedGroups");
         Objects.requireNonNull(candidateGroups, "candidateGroups");
@@ -225,19 +246,24 @@ public final class ExecutionContext {
             throw new IllegalArgumentException(
                     "Online batch group ids, shared groups and candidate groups must have equal size");
         }
-        List<Map<String, Object>> flattenedCandidates = new ArrayList<>();
+        int candidateCount = 0;
+        for (int groupIndex = 0; groupIndex < candidateGroups.size(); groupIndex++) {
+            List<Map<String, Object>> group = candidateGroups.get(groupIndex);
+            // 仅在失败分支拼接组下标，正常路径不做字符串拼接。
+            if (group == null) throw new NullPointerException("candidate group " + groupIndex);
+            candidateCount += group.size();
+        }
+        List<Map<String, Object>> flattenedCandidates = new ArrayList<>(candidateCount);
         int[] offsets = new int[groupExecutionIds.size() + 1];
         // 在线分组批先展平成连续候选域；offsets 保留组边界，供共享值广播、报错定位和结果还原。
         for (int groupIndex = 0; groupIndex < candidateGroups.size(); groupIndex++) {
-            List<Map<String, Object>> group = Objects.requireNonNull(
-                    candidateGroups.get(groupIndex), "candidate group " + groupIndex);
-            flattenedCandidates.addAll(group);
+            flattenedCandidates.addAll(candidateGroups.get(groupIndex));
             offsets[groupIndex + 1] = flattenedCandidates.size();
         }
         return new ExecutionContext(
                 batchExecutionId, ExecutionEnvironment.ONLINE,
                 Map.of(), flattenedCandidates, List.of(), false,
-                groupExecutionIds, sharedGroups, offsets, true);
+                groupExecutionIds, sharedGroups, offsets, true, ownedDecodedInputs);
     }
 
     public String executionId() { return executionId; }

@@ -140,11 +140,17 @@ final class FeatureInputDecoder {
                 ? decodeBigintValue(source.sourceBinding(), value, candidateIndex) : value;
     }
 
-    List<Map<String, Object>> decodeOnlineSharedBatch(
+    /**
+     * C1：分组批的只读解码。OnlineRequestGroup 的输入在构造时已冻结或显式借用，
+     * 这里只加只读视图，不再复制特征 Map 与序列；解码结果的所有权交给 ExecutionContext。
+     */
+    List<Map<String, Object>> decodeOnlineSharedBatchReadOnly(
             List<OnlineRequestGroup> groups) {
-        return groups.stream()
-                .map(group -> decodeOnlineShared(group.sharedValues()))
-                .toList();
+        List<Map<String, Object>> decoded = new ArrayList<>(groups.size());
+        for (OnlineRequestGroup group : groups) {
+            decoded.add(decodeOnlineSharedReadOnly(group.sharedValues()));
+        }
+        return decoded;
     }
 
     List<Map<String, Object>> decodeOnlineCandidates(
@@ -152,11 +158,13 @@ final class FeatureInputDecoder {
         return externalCandidates.stream().map(values -> decode(values, itemSources)).toList();
     }
 
-    List<List<Map<String, Object>>> decodeOnlineCandidateBatch(
+    List<List<Map<String, Object>>> decodeOnlineCandidateBatchReadOnly(
             List<OnlineRequestGroup> groups) {
-        return groups.stream()
-                .map(group -> decodeOnlineCandidates(group.candidates()))
-                .toList();
+        List<List<Map<String, Object>>> decoded = new ArrayList<>(groups.size());
+        for (OnlineRequestGroup group : groups) {
+            decoded.add(decodeOnlineCandidatesReadOnly(group.candidates()));
+        }
+        return decoded;
     }
 
     private static Map<String, Object> decode(

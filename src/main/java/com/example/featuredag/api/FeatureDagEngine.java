@@ -504,15 +504,21 @@ public final class FeatureDagEngine {
             OnlineBatchGenerateRequest request,
             ExecutionObservation observation) {
         List<OnlineRequestGroup> groups = request.groups();
+        List<String> groupExecutionIds = new ArrayList<>(groups.size());
+        for (OnlineRequestGroup group : groups) {
+            groupExecutionIds.add(group.executionId());
+        }
         // API 边界保持分组结构；ExecutionContext 内部展平候选，以便物理计划只遍历一次。
+        // 分组的输入在 OnlineRequestGroup 构造时已冻结，这里走只读解码并把解码结果移交上下文，
+        // 与单请求路径同一契约，不再逐组复制特征 Map 与序列。
         ExecutionContext context = measure(
                 observation,
                 ExecutionPhase.DECODE,
-                () -> ExecutionContext.onlineBatch(
+                () -> ExecutionContext.onlineBatchFromOwnedDecodedValues(
                         request.executionId(),
-                        groups.stream().map(OnlineRequestGroup::executionId).toList(),
-                        inputDecoder.decodeOnlineSharedBatch(groups),
-                        inputDecoder.decodeOnlineCandidateBatch(groups)));
+                        groupExecutionIds,
+                        inputDecoder.decodeOnlineSharedBatchReadOnly(groups),
+                        inputDecoder.decodeOnlineCandidateBatchReadOnly(groups)));
         attachContext(observation, context);
         ExecutionResult execution = executeRuntime(context, observation);
 

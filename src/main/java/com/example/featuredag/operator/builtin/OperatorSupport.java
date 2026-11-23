@@ -5,6 +5,7 @@ import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
+import com.example.featuredag.operator.OperatorResultList;
 import com.example.featuredag.operator.OperatorSequence;
 
 import java.math.BigDecimal;
@@ -526,8 +527,12 @@ final class OperatorSupport {
         return value == null ? "null" : value.getClass().getName();
     }
 
+    /**
+     * 冻结一个算子独占、之后不再修改的列表：只包装不复制。调用方传入的必须是本次调用新建的局部列表，
+     * 不能是输入参数；输出边界凭 OperatorResultList 识别这类结果并直接透传。
+     */
     static <T> List<T> immutableList(List<T> values) {
-        return Collections.unmodifiableList(new ArrayList<T>(values));
+        return OperatorResultList.wrap(values);
     }
 
     /**

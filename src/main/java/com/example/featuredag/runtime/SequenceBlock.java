@@ -43,6 +43,11 @@ public final class SequenceBlock implements SequenceValue {
         return events.get(index);
     }
 
+    /** 块内已冻结的事件列表；仅供运行时在输出边界直接复用，不得修改。 */
+    List<Map<String, Object>> eventsView() {
+        return events;
+    }
+
     public Object columnValueAt(String column, int baseIndex) {
         Objects.requireNonNull(column, "column");
         return rowAtBaseIndex(baseIndex).get(column);

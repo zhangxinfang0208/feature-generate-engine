@@ -5,7 +5,6 @@ import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorInference;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -47,6 +46,6 @@ public final class SliceByIndicesOperator extends AbstractBuiltinOperator implem
                     rawSequence, index, name(), "sequence"));
         }
         // result 为本次调用独占的局部列表，包装后不再修改，无需再次复制。
-        return Collections.unmodifiableList(result);
+        return OperatorSupport.immutableList(result);
     }
 }

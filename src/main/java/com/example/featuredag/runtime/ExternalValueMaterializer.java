@@ -1,5 +1,7 @@
 package com.example.featuredag.runtime;
 
+import com.example.featuredag.operator.OperatorResultList;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -81,6 +83,13 @@ public final class ExternalValueMaterializer {
 
     private List<Object> materializeList(List<?> values, int maxLength) {
         int size = Math.min(values.size(), maxLength);
+        // C1/C6：引擎独占且元素均为标量的不可变列表直接作为输出返回，不再复制。
+        // 借用调用方容器的视图、含 Map/List/值句柄元素的列表仍按原路径递归物化。
+        if (size == values.size() && isDetachedScalarList(values)) {
+            @SuppressWarnings("unchecked")
+            List<Object> detached = (List<Object>) values;
+            return detached;
+        }
         List<Object> result = new ArrayList<>(size);
         var iterator = values.iterator();
         for (int index = 0; index < size; index++) {
@@ -93,7 +102,25 @@ public final class ExternalValueMaterializer {
         return materializeSequence(sequence, sequence.size());
     }
 
+    /**
+     * 是否为引擎独占（不引用调用方可变容器）的不可变列表，且元素都不需要递归物化。
+     * 只有这样的列表才允许直接进入公共输出。
+     */
+    private static boolean isDetachedScalarList(List<?> values) {
+        boolean detached = values instanceof OperatorResultList<?>
+                || values instanceof FrozenList<?> && ((FrozenList<?>) values).isDetached();
+        if (!detached) return false;
+        for (Object element : values) {
+            if (element instanceof Map || element instanceof List || element instanceof ValueHandle) return false;
+        }
+        return true;
+    }
+
     private List<Map<String, Object>> materializeSequence(SequenceValue sequence, int size) {
+        if (sequence instanceof SequenceBlock block && size == block.size()) {
+            // 未过滤、未截断的事件序列：块内的不可变事件列表本身就是输出内容，直接返回。
+            return block.eventsView();
+        }
         List<Map<String, Object>> events = new ArrayList<>(size);
         for (int index = 0; index < size; index++) {
             // 事件行在 SequenceBlock 构造时已防御拷贝并不可变化，直接透传属性全集（兼容超集契约）。

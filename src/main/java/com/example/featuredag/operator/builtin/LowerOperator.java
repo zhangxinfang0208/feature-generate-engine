@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -9,7 +10,7 @@ import java.util.List;
 import java.util.Locale;
 
 /** 字符串标量或序列逐元素转小写；使用固定语言规则，Batch 由逐行适配器执行。 */
-public final class LowerOperator extends AbstractBuiltinOperator {
+public final class LowerOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public LowerOperator() {
         super("lower", 1, 1, true, true);
     }

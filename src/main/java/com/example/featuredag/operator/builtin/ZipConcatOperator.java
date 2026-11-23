@@ -4,6 +4,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.BatchOperatorResultBuilder;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -17,7 +18,7 @@ import java.util.Map;
 
 /** 逐位置拼接两个或更多等长序列，可用末尾对象字面量覆盖分隔符。 */
 public final class ZipConcatOperator extends AbstractBuiltinOperator
-        implements RecoverableBatchOperatorKernel {
+        implements BorrowedArgumentsKernel, RecoverableBatchOperatorKernel {
     public ZipConcatOperator() {
         super("zip_concat", 2, Integer.MAX_VALUE, true, true);
     }

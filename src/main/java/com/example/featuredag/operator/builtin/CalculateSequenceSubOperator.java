@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -11,7 +12,7 @@ import java.util.Collections;
 import java.util.List;
 
 /** 按逻辑顺序计算后一个元素减前一个元素，空序列和单元素序列返回空序列。 */
-public final class CalculateSequenceSubOperator extends AbstractBuiltinOperator {
+public final class CalculateSequenceSubOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public CalculateSequenceSubOperator() {
         super("calc_seq_sub", 1, 1, true, true);
     }

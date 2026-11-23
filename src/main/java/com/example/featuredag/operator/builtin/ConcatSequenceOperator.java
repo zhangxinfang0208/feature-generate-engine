@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -10,7 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /** 将两个基础类型序列按参数顺序连接，保留重复项、null 与原始元素载体。 */
-public final class ConcatSequenceOperator extends AbstractBuiltinOperator {
+public final class ConcatSequenceOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public ConcatSequenceOperator() {
         super("concat_seq", 2, 2, true, true);
     }

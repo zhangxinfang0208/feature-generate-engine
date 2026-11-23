@@ -5,6 +5,7 @@ import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.BatchOperatorResultBuilder;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.RecoverableBatchOperatorKernel;
@@ -22,7 +23,7 @@ import java.util.Set;
 
 /** 返回源序列中命中任一目标值的全部逻辑下标，并保持源序列顺序。 */
 public final class FindIndicesAnyOperator extends AbstractBuiltinOperator
-        implements RecoverableBatchOperatorKernel {
+        implements BorrowedArgumentsKernel, RecoverableBatchOperatorKernel {
     /** 低于该长度时实测线性扫描优于索引构建与位置合并。 */
     private static final int MIN_INDEXED_SOURCE_SIZE = 512;
     private static final int MIN_SHARED_ROW_COUNT = 4;

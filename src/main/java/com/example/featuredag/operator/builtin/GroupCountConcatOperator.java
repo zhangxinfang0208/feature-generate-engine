@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -14,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 按值分组计数，并按配置顺序输出 {@code value + delimiter + count}。 */
-public final class GroupCountConcatOperator extends AbstractBuiltinOperator {
+public final class GroupCountConcatOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final String DEFAULT_DELIMITER = "#";
     private static final String FIRST_OCCURRENCE = "FIRST_OCCURRENCE";
     private static final String COUNT_DESC = "COUNT_DESC";

@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorSequence;
@@ -10,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 拼接两个或更多标量值，可用末尾对象字面量覆盖分隔符。 */
-public final class ConcatOperator extends AbstractBuiltinOperator {
+public final class ConcatOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final String DEFAULT_DELIMITER = "#";
 
     public ConcatOperator() {

@@ -1,6 +1,7 @@
 package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -17,7 +18,7 @@ import java.util.List;
  * 每行仍需 bucket 比较，复用收益不足以覆盖批开销（实测 batch 劣化），
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
-public final class DiscreteOperator extends AbstractBuiltinOperator {
+public final class DiscreteOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public DiscreteOperator() {
         super("discrete", 2, 2, true, true);
     }

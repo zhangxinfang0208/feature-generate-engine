@@ -4,6 +4,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.BatchOperatorResultBuilder;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -18,7 +19,7 @@ import java.util.Objects;
 
 /** 返回目标值在序列中的全部逻辑下标，未命中时返回不可变空列表。 */
 public final class FindIndicesOperator extends AbstractBuiltinOperator
-        implements RecoverableBatchOperatorKernel {
+        implements BorrowedArgumentsKernel, RecoverableBatchOperatorKernel {
     private static final Map<Object, List<Integer>> UNINDEXED = Collections.emptyMap();
 
     public FindIndicesOperator() {

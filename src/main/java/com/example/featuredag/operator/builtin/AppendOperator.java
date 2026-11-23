@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.operator.OperatorSequence;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 将两个标量或序列按参数顺序合并为一个序列。 */
-public final class AppendOperator extends AbstractBuiltinOperator {
+public final class AppendOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public AppendOperator() {
         super("append", 2, 2, true, true);
     }

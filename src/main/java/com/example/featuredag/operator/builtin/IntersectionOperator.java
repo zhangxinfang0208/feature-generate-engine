@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 /** 两个基础类型序列求交集，去重并保留左侧首次出现的顺序与元素。 */
-public final class IntersectionOperator extends AbstractBuiltinOperator {
+public final class IntersectionOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public IntersectionOperator() {
         super("intersection", 2, 2, true, true);
     }

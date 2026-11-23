@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -13,7 +14,7 @@ import java.util.List;
 import java.util.Locale;
 
 /** Unix 毫秒时间戳按指定时区和模式格式化，保留毫秒精度。 */
-public final class DateFormatOperator extends AbstractBuiltinOperator {
+public final class DateFormatOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Shanghai");
 
     public DateFormatOperator() {

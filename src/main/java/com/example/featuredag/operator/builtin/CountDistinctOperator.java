@@ -4,6 +4,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.BatchOperatorResultBuilder;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -19,7 +20,7 @@ import java.util.Map;
 
 /** 对序列元素按 equals/hashCode 去重并返回基数，兼容普通集合和零拷贝 OperatorSequence 视图。 */
 public final class CountDistinctOperator extends AbstractBuiltinOperator
-        implements RecoverableBatchOperatorKernel {
+        implements BorrowedArgumentsKernel, RecoverableBatchOperatorKernel {
     public CountDistinctOperator() {
         super("count_distinct", 1, 1, true, true);
     }

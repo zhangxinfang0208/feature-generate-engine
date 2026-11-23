@@ -47,6 +47,9 @@ public final class SubOperator extends AbstractBuiltinOperator implements Borrow
     private Object evaluateScalars(List<Object> arguments) {
         Object left = arguments.get(0);
         Object right = arguments.get(1);
+        // C6：与 add/mul 相同的整型快路径，保持 Long 输出与溢出失败语义。
+        Long exact = OperatorSupport.subtractExactLong(left, right);
+        if (exact != null) return exact;
         BigDecimal difference = OperatorSupport.arithmeticOperand(left, name())
                 .subtract(OperatorSupport.arithmeticOperand(right, name()));
         return OperatorSupport.arithmeticCarrier(difference, left, right, name());

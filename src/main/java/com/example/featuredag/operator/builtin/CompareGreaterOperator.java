@@ -6,8 +6,6 @@ import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -36,15 +34,6 @@ public final class CompareGreaterOperator extends AbstractBuiltinOperator implem
 
     @Override
     public Object evaluate(List<Object> arguments) {
-        Object sequence = arguments.get(0);
-        int size = OperatorSupport.sequenceSize(sequence, name(), "sequence");
-        BigDecimal threshold = OperatorSupport.arithmeticOperand(arguments.get(1), name());
-        List<Integer> result = new ArrayList<Integer>();
-        for (int index = 0; index < size; index++) {
-            if (OperatorSupport.numericSequenceElement(sequence, index, name()).compareTo(threshold) > 0) {
-                result.add(index);
-            }
-        }
-        return OperatorSupport.immutableList(result);
+        return OperatorSupport.indicesMatching(arguments.get(0), arguments.get(1), false, name());
     }
 }

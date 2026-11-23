@@ -36,16 +36,17 @@ public final class CalculateSequenceSubOperator extends AbstractBuiltinOperator 
         int size = OperatorSupport.sequenceSize(sequence, name(), "sequence");
         List<Object> result = new ArrayList<Object>(Math.max(0, size - 1));
         Object previous = null;
-        BigDecimal previousDecimal = null;
         for (int index = 0; index < size; index++) {
             Object current = OperatorSupport.sequenceElementAt(sequence, index, name(), "sequence");
             try {
-                BigDecimal currentDecimal = OperatorSupport.arithmeticOperand(current, name());
                 if (index > 0) {
-                    result.add(OperatorSupport.arithmeticCarrier(
-                            currentDecimal.subtract(previousDecimal), current, previous, name()));
+                    // 相邻元素均为整型载体且不溢出时直接得到 Long，否则回到精确十进制路径。
+                    Long difference = OperatorSupport.subtractExactLong(current, previous);
+                    result.add(difference != null ? difference : preciseDifference(current, previous));
+                } else if (!OperatorSupport.isLongCarrier(current)) {
+                    // 首个元素没有前驱可减，但仍要像原来一样校验它是否为有限数值。
+                    OperatorSupport.arithmeticOperand(current, name());
                 }
-                previousDecimal = currentDecimal;
                 previous = current;
             } catch (RuntimeException error) {
                 throw new IllegalArgumentException(
@@ -53,5 +54,12 @@ public final class CalculateSequenceSubOperator extends AbstractBuiltinOperator 
             }
         }
         return OperatorSupport.immutableList(result);
+    }
+
+    private Object preciseDifference(Object current, Object previous) {
+        return OperatorSupport.arithmeticCarrier(
+                OperatorSupport.arithmeticOperand(current, name())
+                        .subtract(OperatorSupport.arithmeticOperand(previous, name())),
+                current, previous, name());
     }
 }

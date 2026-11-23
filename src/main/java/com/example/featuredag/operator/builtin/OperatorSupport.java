@@ -162,6 +162,20 @@ final class OperatorSupport {
         return Double.valueOf(doubleResult);
     }
 
+    /**
+     * 整型载体的减法快路径：双方均可无损表示为 long 且差值不溢出时直接返回 Long；
+     * 不满足条件或溢出时返回 null，由调用方回到精确十进制路径，保留原有的结果载体与溢出异常文本。
+     */
+    static Long subtractExactLong(Object left, Object right) {
+        if (!isLongCarrier(left) || !isLongCarrier(right)) return null;
+        try {
+            return Long.valueOf(Math.subtractExact(
+                    ((Number) left).longValue(), ((Number) right).longValue()));
+        } catch (ArithmeticException overflow) {
+            return null;
+        }
+    }
+
     static boolean isLongCarrier(Object value) {
         return value instanceof Byte || value instanceof Short
                 || value instanceof Integer || value instanceof Long;
@@ -390,6 +404,16 @@ final class OperatorSupport {
     }
 
     static int truncatedInt(Object value, String operator) {
+        // 可无损表示为 long 的载体无需构造 BigDecimal；Long 超出 int 范围时与精确路径报同一错误。
+        if (value instanceof Integer) return (Integer) value;
+        if (value instanceof Byte || value instanceof Short) return ((Number) value).intValue();
+        if (value instanceof Long) {
+            long longValue = (Long) value;
+            if (longValue < Integer.MIN_VALUE || longValue > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException(operator + " overflow for value: " + value);
+            }
+            return (int) longValue;
+        }
         try {
             return truncatedDecimal(value, operator).intValueExact();
         } catch (ArithmeticException error) {
@@ -398,6 +422,7 @@ final class OperatorSupport {
     }
 
     static long truncatedLong(Object value, String operator) {
+        if (isLongCarrier(value)) return ((Number) value).longValue();
         try {
             return truncatedDecimal(value, operator).longValueExact();
         } catch (ArithmeticException error) {
@@ -434,7 +459,52 @@ final class OperatorSupport {
                 operator + " requires a finite numeric value or decimal string, got: " + value);
     }
 
+    /**
+     * 按阈值筛选序列下标：元素与阈值均为整型载体时按 long 精确比较，不构造 BigDecimal；
+     * 其余元素走精确十进制比较。smaller 为 true 保留小于阈值的下标，否则保留大于阈值的下标。
+     */
+    static List<Integer> indicesMatching(
+            Object sequence, Object rawThreshold, boolean smaller, String operator) {
+        int size = sequenceSize(sequence, operator, "sequence");
+        BigDecimal threshold = arithmeticOperand(rawThreshold, operator);
+        boolean integralThreshold = isLongCarrier(rawThreshold);
+        long thresholdValue = integralThreshold ? ((Number) rawThreshold).longValue() : 0L;
+        List<Integer> result = new ArrayList<Integer>();
+        for (int index = 0; index < size; index++) {
+            Object element = sequenceElementAt(sequence, index, operator, "sequence");
+            int comparison;
+            if (integralThreshold && isLongCarrier(element)) {
+                comparison = Long.compare(((Number) element).longValue(), thresholdValue);
+            } else {
+                comparison = numericSequenceElement(sequence, index, operator).compareTo(threshold);
+            }
+            if (smaller ? comparison < 0 : comparison > 0) result.add(index);
+        }
+        return immutableList(result);
+    }
+
     static Object selectExtreme(List<Object> values, boolean minimum, String operator) {
+        // 全部为整型载体时按 long 精确比较，不构造 BigDecimal；相等时同样保留最左输入。
+        boolean allLongCarriers = true;
+        for (Object value : values) {
+            if (!isLongCarrier(value)) {
+                allLongCarriers = false;
+                break;
+            }
+        }
+        if (allLongCarriers) {
+            Object integralWinner = null;
+            long integralExtreme = 0L;
+            for (Object value : values) {
+                long current = ((Number) value).longValue();
+                if (integralWinner == null
+                        || (minimum ? current < integralExtreme : current > integralExtreme)) {
+                    integralExtreme = current;
+                    integralWinner = value;
+                }
+            }
+            return integralWinner;
+        }
         // 精确十进制比较消除 Integer/Long/Double 混比时的精度歧义；
         // 相等时保留最左输入，并返回胜出参数的原数值载体。
         BigDecimal extreme = null;

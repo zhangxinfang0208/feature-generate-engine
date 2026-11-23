@@ -12,10 +12,19 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Unix 毫秒时间戳按指定时区和模式格式化，保留毫秒精度。 */
 public final class DateFormatOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Shanghai");
+    /** 缓存上限：模式和时区通常是少量常量，超过上限的新组合照常格式化但不缓存。 */
+    private static final int FORMATTER_CACHE_LIMIT = 64;
+    /** 模式 → (时区 → formatter)。DateTimeFormatter 不可变且线程安全，缓存不属于任何请求状态。 */
+    private static final Map<String, Map<String, DateTimeFormatter>> FORMATTERS =
+            new ConcurrentHashMap<String, Map<String, DateTimeFormatter>>();
+    private static final AtomicInteger CACHED_FORMATTERS = new AtomicInteger();
 
     public DateFormatOperator() {
         super("date_format", 2, 3, true, false);
@@ -47,15 +56,31 @@ public final class DateFormatOperator extends AbstractBuiltinOperator implements
             throw new IllegalArgumentException("date_format requires INT or BIGINT milliseconds");
         }
         String pattern = stringArgument(arguments.get(1), "pattern");
+        String zoneText = arguments.size() == 3
+                ? stringArgument(arguments.get(2), "zone") : DEFAULT_ZONE.getId();
         try {
-            ZoneId zone = arguments.size() == 3
-                    ? ZoneId.of(stringArgument(arguments.get(2), "zone")) : DEFAULT_ZONE;
             long timestampMs = ((Number) timestamp).longValue();
-            return DateTimeFormatter.ofPattern(pattern, Locale.ROOT).withZone(zone)
-                    .format(Instant.ofEpochMilli(timestampMs));
+            return formatter(pattern, zoneText).format(Instant.ofEpochMilli(timestampMs));
         } catch (DateTimeException e) {
             throw new IllegalArgumentException("date_format: " + e.getMessage(), e);
         }
+    }
+
+    /** 按模式和时区取 formatter；解析模式与时区的异常与未缓存时完全相同。 */
+    private static DateTimeFormatter formatter(String pattern, String zoneText) {
+        Map<String, DateTimeFormatter> byZone = FORMATTERS.get(pattern);
+        if (byZone != null) {
+            DateTimeFormatter cached = byZone.get(zoneText);
+            if (cached != null) return cached;
+        }
+        DateTimeFormatter created = DateTimeFormatter.ofPattern(pattern, Locale.ROOT)
+                .withZone(ZoneId.of(zoneText));
+        if (CACHED_FORMATTERS.get() < FORMATTER_CACHE_LIMIT) {
+            Map<String, DateTimeFormatter> zones = FORMATTERS.computeIfAbsent(
+                    pattern, ignored -> new ConcurrentHashMap<String, DateTimeFormatter>());
+            if (zones.putIfAbsent(zoneText, created) == null) CACHED_FORMATTERS.incrementAndGet();
+        }
+        return created;
     }
 
     private static String stringArgument(Object value, String name) {

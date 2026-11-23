@@ -151,8 +151,10 @@ public final class DagRuntime {
                         candidateIndex < context.candidates().size();
                         candidateIndex++) {
                     Map<String, Object> candidate = context.candidates().get(candidateIndex);
-                    if (candidate.containsKey(featureName)) {
-                        values.add(candidate.get(featureName));
+                    // 正常非空输入只查找一次；仅 null 时再区分「显式 null」与「缺失」。
+                    Object value = candidate.get(featureName);
+                    if (value != null || candidate.containsKey(featureName)) {
+                        values.add(value);
                     } else if (defaultValue != null) {
                         values.add(defaultValue);
                     } else {
@@ -173,8 +175,9 @@ public final class DagRuntime {
                     groupIndex < context.onlineSharedGroups().size();
                     groupIndex++) {
                 Map<String, Object> group = context.onlineSharedGroups().get(groupIndex);
-                if (group.containsKey(featureName)) {
-                    values.add(group.get(featureName));
+                Object value = group.get(featureName);
+                if (value != null || group.containsKey(featureName)) {
+                    values.add(value);
                 } else if (defaultValue != null) {
                     values.add(defaultValue);
                 } else {
@@ -194,8 +197,9 @@ public final class DagRuntime {
             List<Object> values = new ArrayList<>(context.candidateCount());
             for (int index = 0; index < context.candidates().size(); index++) {
                 Map<String, Object> candidate = context.candidates().get(index);
-                if (candidate.containsKey(featureName)) {
-                    values.add(candidate.get(featureName));
+                Object value = candidate.get(featureName);
+                if (value != null || candidate.containsKey(featureName)) {
+                    values.add(value);
                 } else if (defaultValue != null) {
                     values.add(defaultValue);
                 } else {
@@ -205,11 +209,9 @@ public final class DagRuntime {
             }
             return new CandidateVectorValue(values);
         }
-        if (context.sharedSourceValues().containsKey(featureName)) {
-            return wrapSource(
-                    context.sharedSourceValues().get(featureName),
-                    node.logicalValueShape(),
-                    context);
+        Object sharedSourceValue = context.sharedSourceValues().get(featureName);
+        if (sharedSourceValue != null || context.sharedSourceValues().containsKey(featureName)) {
+            return wrapSource(sharedSourceValue, node.logicalValueShape(), context);
         }
         if (defaultValue == null) {
             throw new IllegalArgumentException("Missing source feature: " + featureName);

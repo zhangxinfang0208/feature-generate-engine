@@ -37,6 +37,10 @@ import java.util.function.UnaryOperator;
 public final class DagRuntime {
     private final OperatorRegistry operatorRegistry;
     private final PhysicalExecutorRegistry executorRegistry;
+    /** 最近一次完成校验的计划及当时的执行器注册表版本；计划不可变，未变化时不逐请求重复校验。 */
+    private volatile ValidatedPlan validatedPlan;
+
+    private record ValidatedPlan(PhysicalPlan plan, int executorGeneration) {}
 
     public DagRuntime(OperatorRegistry operatorRegistry) {
         this(
@@ -61,8 +65,7 @@ public final class DagRuntime {
             throw new IllegalArgumentException(
                     "Plan environment " + plan.environment() + " does not match context " + context.environment());
         }
-        executorRegistry.validate(plan);
-        validateExecutionStages(plan, context);
+        validatePlan(plan);
         // C9：按物理拓扑序逐节点执行，每个节点只写入计划分配的唯一输出槽（slot:N）。
         for (int index = 0; index < plan.nodes().size(); index++) {
             executeNode(plan.nodes().get(index), context);
@@ -1133,12 +1136,30 @@ public final class DagRuntime {
     }
 
     /**
+     * 计划不可变，校验结论只取决于计划内容和执行器注册表：同一计划在注册表未变化时不逐请求重复校验。
+     * 注册表只增不减，新增执行器不会让已校验的计划失效，因此按版本号判断即可；
+     * 校验失败不缓存，下一次调用仍会报错。
+     */
+    private void validatePlan(PhysicalPlan plan) {
+        int executorGeneration = executorRegistry.generation();
+        ValidatedPlan validated = validatedPlan;
+        if (validated != null
+                && validated.plan() == plan
+                && validated.executorGeneration() == executorGeneration) {
+            return;
+        }
+        executorRegistry.validate(plan);
+        validateExecutionStages(plan, plan.environment());
+        validatedPlan = new ValidatedPlan(plan, executorGeneration);
+    }
+
+    /**
      * C10 最小闭环：计划固化阶段与执行上下文一致性校验——
      * OFFLINE 计划只允许 OFFLINE_BATCH 阶段节点，ONLINE 计划只允许候选批/请求共享节点。
      */
-    private static void validateExecutionStages(PhysicalPlan plan, ExecutionContext context) {
+    private static void validateExecutionStages(PhysicalPlan plan, ExecutionEnvironment environment) {
         for (PhysicalNode node : plan.nodes()) {
-            if (context.environment() == ExecutionEnvironment.OFFLINE) {
+            if (environment == ExecutionEnvironment.OFFLINE) {
                 if (node.executionStage() != ExecutionStage.OFFLINE_BATCH) {
                     throw new IllegalArgumentException(
                             "Physical node " + node.physicalNodeId() + " has stage "

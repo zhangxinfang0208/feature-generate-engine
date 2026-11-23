@@ -13,7 +13,6 @@ import com.example.featuredag.operator.RecoverableBatchOperatorKernel;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -39,18 +38,15 @@ public final class CountDistinctOperator extends AbstractBuiltinOperator
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
         // 请求组和序列身份共同构成批内复用键；同一序列只扫描一次，输出仍逐行追加。
-        Map<OperatorSupport.IdentityBatchKey, Integer> counts =
-                new LinkedHashMap<OperatorSupport.IdentityBatchKey, Integer>();
+        OperatorSupport.IdentityBatchCache<Integer> counts = new OperatorSupport.IdentityBatchCache<Integer>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
             Object sequence = call.arguments().get(0).valueAt(rowIndex);
             int groupIndex = call.layout().groupIndexAt(rowIndex);
             try {
-                OperatorSupport.IdentityBatchKey key = OperatorSupport.identityBatchKey(
-                        groupIndex, sequence);
-                Integer count = counts.get(key);
+                Integer count = counts.get(groupIndex, sequence);
                 if (count == null) {
-                    count = count(sequence);
-                    counts.put(key, count);
+                    count = Integer.valueOf(count(sequence));
+                    counts.put(groupIndex, sequence, count);
                 }
                 result.addValue(count);
             } catch (RuntimeException error) {

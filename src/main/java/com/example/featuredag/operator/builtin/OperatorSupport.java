@@ -12,7 +12,9 @@ import java.math.BigInteger;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -431,44 +433,40 @@ final class OperatorSupport {
         return Collections.unmodifiableList(new ArrayList<T>(values));
     }
 
-    static IdentityBatchKey identityBatchKey(int groupIndex, Object... identities) {
-        return new IdentityBatchKey(groupIndex, identities);
-    }
+    /**
+     * 批内按（请求组，单个对象身份）复用的缓存：外层按对象身份定位，内层按组下标直接寻址。
+     * 命中时不分配任何对象，也没有 LinkedHashMap 节点和键对象的开销；只按身份比较，
+     * 不对序列或配置集合做昂贵且语义不安全的深比较。
+     * 仅在一次 Kernel 调用内使用；值必须非 null，可用各 Kernel 自己的哨兵表示“已见过”。
+     */
+    static final class IdentityBatchCache<T> {
+        private final IdentityHashMap<Object, Object[]> groupsByIdentity =
+                new IdentityHashMap<Object, Object[]>();
 
-    static final class IdentityBatchKey {
-        private final int groupIndex;
-        private final Object[] identities;
-        private final int hashCode;
-
-        private IdentityBatchKey(int groupIndex, Object[] identities) {
-            this.groupIndex = groupIndex;
-            // 只按对象身份比较批内广播值，避免对序列或配置集合执行昂贵且语义不安全的深比较。
-            this.identities = identities.clone();
-            int hash = groupIndex;
-            for (Object identity : identities) {
-                hash = 31 * hash + System.identityHashCode(identity);
-            }
-            this.hashCode = hash;
+        @SuppressWarnings("unchecked")
+        T get(int groupIndex, Object identity) {
+            Object[] groups = groupsByIdentity.get(identity);
+            int slot = slot(groupIndex);
+            return groups == null || slot >= groups.length ? null : (T) groups[slot];
         }
 
-        @Override
-        public boolean equals(Object value) {
-            if (this == value) return true;
-            if (!(value instanceof IdentityBatchKey)) return false;
-            IdentityBatchKey other = (IdentityBatchKey) value;
-            if (groupIndex != other.groupIndex
-                    || identities.length != other.identities.length) {
-                return false;
+        @SuppressWarnings("unchecked")
+        void put(int groupIndex, Object identity, T value) {
+            Object[] groups = groupsByIdentity.get(identity);
+            int slot = slot(groupIndex);
+            if (groups == null) {
+                groups = new Object[slot + 1];
+                groupsByIdentity.put(identity, groups);
+            } else if (slot >= groups.length) {
+                groups = Arrays.copyOf(groups, slot + 1);
+                groupsByIdentity.put(identity, groups);
             }
-            for (int index = 0; index < identities.length; index++) {
-                if (identities[index] != other.identities[index]) return false;
-            }
-            return true;
+            groups[slot] = value;
         }
 
-        @Override
-        public int hashCode() {
-            return hashCode;
+        private static int slot(int groupIndex) {
+            // 离线行等没有请求组的批使用 -1；偏移一位后非负，不能直接做数组下标。
+            return groupIndex < 0 ? 0 : groupIndex + 1;
         }
     }
 }

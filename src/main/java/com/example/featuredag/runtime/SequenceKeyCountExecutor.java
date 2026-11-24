@@ -320,7 +320,7 @@ public final class SequenceKeyCountExecutor implements PhysicalExecutor {
     }
 
     private static ValueHandle requireSlot(ExecutionContext context, String slot) {
-        ValueHandle value = context.resultSlots().get(slot);
+        ValueHandle value = context.slotByName(slot);
         if (value == null) throw new IllegalStateException("Input slot not available: " + slot);
         return value;
     }

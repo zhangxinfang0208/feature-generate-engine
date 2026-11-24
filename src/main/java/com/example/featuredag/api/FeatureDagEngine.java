@@ -652,13 +652,18 @@ public final class FeatureDagEngine {
     private ExecutionResult executeRuntime(
             ExecutionContext context,
             ExecutionObservation observation) {
+        // 观测出口与调测出口都关闭时，请求不读取逐节点诊断：运行时不做节点计时和状态快照。
+        // 失败归因仍依赖节点的成功/失败状态，这一点由运行时无条件保留。
+        boolean retainDiagnostics =
+                observation != null || runtimeTraceObserver != RuntimeTraceObserver.NOOP;
         try {
             ExecutionResult result = measure(
                     observation,
                     ExecutionPhase.RUNTIME,
                     () -> runtime.execute(plan, context,
                             context.environment() != ExecutionEnvironment.OFFLINE
-                                    || observation != null || runtimeTraceObserver != RuntimeTraceObserver.NOOP));
+                                    || observation != null || runtimeTraceObserver != RuntimeTraceObserver.NOOP,
+                            retainDiagnostics));
             publishRuntimeTrace(context.executionId(), result);
             return result;
         } catch (RuntimeException error) {

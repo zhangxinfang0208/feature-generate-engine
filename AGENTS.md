@@ -28,6 +28,8 @@
 - `OperatorDefinition` 的 Single Kernel 是语义基准。Native `BatchOperatorKernel` 可选；未提供时使用 `SingleLoopBatchOperatorKernel`。
 - 当前 32 个标准算子中 `find_indices`、`find_indices_any`、`count_distinct`、`zip_concat`、`calc_delta_seq` 提供原生 `BatchOperatorKernel`（批内按 identity 键复用收益显著）；其余算子（包括 `concat`、`append`、`intersection`、`join`、`list_concat`、`hit`）由 `SingleLoopBatchOperatorKernel` 逐行适配。新增算子默认不提供原生 Batch，须按「每行可省计算量 × 批内重复度」成本模型评估后再实现；不得在没有基准数据时增加原生 Batch。
 - Batch 必须逐行等价于 Single，保持行数和顺序；Kernel 实例必须无请求状态且可并发复用。
+- 内置算子的 Single Kernel 只读取参数列表，不保存、修改或返回它，因此全部声明 `BorrowedArgumentsKernel`，由 `SingleLoopBatchOperatorKernel` 在整个 Batch 内复用同一个参数容器；新增标准算子必须声明该标记（`BorrowedArgumentsBuiltinCoverageTest` 检查）。
+- 算子返回的序列列表用 `OperatorSupport.immutableList` 冻结：它只包装、不复制，传入的必须是算子内部刚构建、之后不再修改的列表，不能是输入参数；`ListSequenceValue` 和输出物化凭 `OperatorResultList` 直接复用这类结果。
 - `planning`、`physical`、`runtime` 禁止按业务算子名增加分支；DAG 模式通过 `PhysicalRewriteRule` 注册，专用算法通过 `PhysicalExecutorRegistry` 注册。
 - 缓存只允许 deterministic 且 sideEffectFree 的算子（`sideEffectFree()` 默认 false，内置算子经 `AbstractBuiltinOperator` 显式声明 true；新算子必须显式声明纯度）；缓存 key 必须覆盖域、具体序列视图和所有变化输入。
 - 通用候选批去重路径（CANDIDATE_KEY）与算子估算成本（`estimatedCost`）已移除：批内复用由原生 Batch 的 identity 键承担；`CachePolicy.CANDIDATE_KEY`/`ExecutionMode.CANDIDATE_KEY` 仅保留供融合改写标注，`CachePolicy.REQUEST` 为规划期预留标记、运行时一期不消费。

@@ -37,7 +37,8 @@ public class BorrowedArgumentsBuiltinCoverageTest {
         for (OperatorDefinition definition : InitialBusinessOperators.definitions()) {
             if (!(definition instanceof BorrowedArgumentsKernel)) missing.add(definition.name());
         }
-        assertEquals(Collections.emptyList(), missing);
+        assertEquals("标准算子的 evaluate 只读取参数列表，必须声明 BorrowedArgumentsKernel: " + missing,
+                Collections.emptyList(), missing);
     }
 
     @Test

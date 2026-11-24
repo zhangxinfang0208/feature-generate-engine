@@ -1,6 +1,7 @@
 package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -15,7 +16,7 @@ import java.util.List;
  * 每行仍需对 value 做 Math.log，复用收益不足以覆盖批开销（实测 batch 劣化约 0.1x），
  * 由 SingleLoopBatchOperatorKernel 逐行适配，结果与 Single 完全一致。
  */
-public final class LogBaseOperator extends AbstractBuiltinOperator {
+public final class LogBaseOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public LogBaseOperator() {
         super("log_base", 3, 3, true, true);
     }

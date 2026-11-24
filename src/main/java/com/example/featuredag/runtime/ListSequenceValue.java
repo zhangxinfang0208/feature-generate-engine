@@ -1,6 +1,7 @@
 package com.example.featuredag.runtime;
 
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.OperatorResultList;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,7 +19,16 @@ public final class ListSequenceValue implements ValueHandle {
     public ListSequenceValue(String alignmentId, List<?> values) {
         this.alignmentId = requireText(alignmentId, "alignmentId");
         Objects.requireNonNull(values, "values");
-        this.values = Collections.unmodifiableList(new ArrayList<>(values));
+        // 解码器冻结的列表和算子独占的不可变结果不再防御复制；
+        // 其余来源（公共工厂、配置默认值）保持拷贝语义。
+        this.values = values instanceof FrozenList<?> || values instanceof OperatorResultList<?>
+                ? castValues(values)
+                : Collections.unmodifiableList(new ArrayList<>(values));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> castValues(List<?> values) {
+        return (List<Object>) values;
     }
 
     public String alignmentId() { return alignmentId; }

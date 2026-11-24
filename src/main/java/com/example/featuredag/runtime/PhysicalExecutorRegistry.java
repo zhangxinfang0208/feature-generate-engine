@@ -11,6 +11,7 @@ import java.util.Objects;
 /** 专用物理执行器注册表；核心运行时只按 executorId 路由。 */
 public final class PhysicalExecutorRegistry {
     private final Map<String, PhysicalExecutor> executors = new LinkedHashMap<>();
+    private volatile int generation;
 
     public PhysicalExecutorRegistry register(String executorId, PhysicalExecutor executor) {
         Objects.requireNonNull(executorId, "executorId");
@@ -20,7 +21,13 @@ public final class PhysicalExecutorRegistry {
         if (previous != null) {
             throw new IllegalArgumentException("Physical executor already registered: " + executorId);
         }
+        generation++;
         return this;
+    }
+
+    /** 每新增一个执行器递增；运行时据此判断按计划缓存的校验结论是否仍然有效。 */
+    public int generation() {
+        return generation;
     }
 
     public PhysicalExecutor require(String executorId) {

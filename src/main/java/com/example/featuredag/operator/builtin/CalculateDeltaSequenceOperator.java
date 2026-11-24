@@ -4,6 +4,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.BatchOperatorResultBuilder;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -23,7 +24,7 @@ import java.util.Map;
  * {@code need_ceil} 控制是否对换算结果向上取整。
  */
 public final class CalculateDeltaSequenceOperator extends AbstractBuiltinOperator
-        implements RecoverableBatchOperatorKernel {
+        implements BorrowedArgumentsKernel, RecoverableBatchOperatorKernel {
     private static final String DIRECTION_KEY = "direction";
     private static final String DIVISOR_KEY = "divisor";
     private static final String NEED_CEIL_KEY = "need_ceil";

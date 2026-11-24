@@ -27,8 +27,8 @@ public final class RuntimeNodeState {
     private OperatorInvocationKind operatorInvocationKind;
     private BatchDomain batchDomain;
     private int batchRowCount;
-    private final EnumMap<CacheKind, MutableCacheStats> cacheStats =
-            new EnumMap<>(CacheKind.class);
+    /** 缓存统计只在节点真正访问缓存后才创建；绝大多数节点从不使用缓存。 */
+    private EnumMap<CacheKind, MutableCacheStats> cacheStats;
 
     public RuntimeNodeState(String physicalNodeId) {
         this.physicalNodeId = physicalNodeId;
@@ -51,7 +51,7 @@ public final class RuntimeNodeState {
     public BatchDomain batchDomain() { return batchDomain; }
     public int batchRowCount() { return batchRowCount; }
     public Map<CacheKind, CacheStats> cacheStats() {
-        if (cacheStats.isEmpty()) return Map.of();
+        if (cacheStats == null) return Map.of();
         EnumMap<CacheKind, CacheStats> result = new EnumMap<>(CacheKind.class);
         for (Map.Entry<CacheKind, MutableCacheStats> entry : cacheStats.entrySet()) {
             result.put(entry.getKey(), entry.getValue().snapshot());
@@ -72,7 +72,7 @@ public final class RuntimeNodeState {
         this.durationNanos = durationNanos;
     }
     void recordCacheLookup(CacheKind kind, boolean hit) {
-        cacheStats.computeIfAbsent(kind, ignored -> new MutableCacheStats()).recordLookup(hit);
+        cacheStats(kind).recordLookup(hit);
         if (hit) {
             this.cacheHit = true;
             this.cacheSource = switch (kind) {
@@ -82,7 +82,17 @@ public final class RuntimeNodeState {
         }
     }
     void recordCachePut(CacheKind kind) {
-        cacheStats.computeIfAbsent(kind, ignored -> new MutableCacheStats()).recordPut();
+        cacheStats(kind).recordPut();
+    }
+
+    private MutableCacheStats cacheStats(CacheKind kind) {
+        if (cacheStats == null) cacheStats = new EnumMap<>(CacheKind.class);
+        MutableCacheStats stats = cacheStats.get(kind);
+        if (stats == null) {
+            stats = new MutableCacheStats();
+            cacheStats.put(kind, stats);
+        }
+        return stats;
     }
     void setAllocatedBytes(long value) { this.allocatedBytes = value; }
     void setDedupCounts(int inputCount, int uniqueCount) {
@@ -138,8 +148,11 @@ public final class RuntimeNodeState {
         copy.operatorInvocationKind = operatorInvocationKind;
         copy.batchDomain = batchDomain;
         copy.batchRowCount = batchRowCount;
-        for (Map.Entry<CacheKind, MutableCacheStats> entry : cacheStats.entrySet()) {
-            copy.cacheStats.put(entry.getKey(), entry.getValue().copy());
+        if (cacheStats != null) {
+            copy.cacheStats = new EnumMap<>(CacheKind.class);
+            for (Map.Entry<CacheKind, MutableCacheStats> entry : cacheStats.entrySet()) {
+                copy.cacheStats.put(entry.getKey(), entry.getValue().copy());
+            }
         }
         return copy;
     }

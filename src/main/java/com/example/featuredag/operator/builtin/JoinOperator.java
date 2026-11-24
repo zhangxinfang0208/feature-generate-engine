@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -9,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 使用可选分隔符把序列元素拼接为一个字符串。 */
-public final class JoinOperator extends AbstractBuiltinOperator {
+public final class JoinOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final String DEFAULT_DELIMITER = "#";
 
     public JoinOperator() {

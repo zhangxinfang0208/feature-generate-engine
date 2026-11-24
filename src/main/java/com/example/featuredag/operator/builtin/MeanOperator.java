@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -11,7 +12,7 @@ import java.util.Collections;
 import java.util.List;
 
 /** 数值序列的算术平均值；精确累加后求商，输出有限 DOUBLE，空序列报错。 */
-public final class MeanOperator extends AbstractBuiltinOperator {
+public final class MeanOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public MeanOperator() {
         super("mean", 1, 1, true, true);
     }

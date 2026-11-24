@@ -37,6 +37,12 @@ import java.util.function.UnaryOperator;
 public final class DagRuntime {
     private final OperatorRegistry operatorRegistry;
     private final PhysicalExecutorRegistry executorRegistry;
+    /** 最近一次完成校验的计划及当时的执行器注册表版本；计划不可变，未变化时不逐请求重复校验。 */
+    private volatile ValidatedPlan validatedPlan;
+    /** 最近一次执行所用计划的序号布局；计划不可变，同一计划不重复构建（C9）。 */
+    private volatile RuntimePlanLayout runtimeLayout;
+
+    private record ValidatedPlan(PhysicalPlan plan, int executorGeneration) {}
 
     public DagRuntime(OperatorRegistry operatorRegistry) {
         this(
@@ -52,44 +58,85 @@ public final class DagRuntime {
     }
 
     public ExecutionResult execute(PhysicalPlan plan, ExecutionContext context) {
-        return execute(plan, context, true);
+        return execute(plan, context, true, true);
     }
 
     /** retainIntermediateValues=false 仅用于无需值追踪的执行；公共低层默认保留。 */
     public ExecutionResult execute(PhysicalPlan plan, ExecutionContext context, boolean retainIntermediateValues) {
+        return execute(plan, context, retainIntermediateValues, true);
+    }
+
+    /**
+     * retainDiagnostics=false 表示调用方不读取逐节点诊断：节点仍记录成功/失败状态以便失败归因，
+     * 但不计时，结果也不对节点状态逐个做快照。公共低层调用默认保留诊断。
+     */
+    public ExecutionResult execute(
+            PhysicalPlan plan,
+            ExecutionContext context,
+            boolean retainIntermediateValues,
+            boolean retainDiagnostics) {
         if (plan.environment() != context.environment()) {
             throw new IllegalArgumentException(
                     "Plan environment " + plan.environment() + " does not match context " + context.environment());
         }
-        executorRegistry.validate(plan);
-        validateExecutionStages(plan, context);
+        validatePlan(plan);
+        RuntimePlanLayout layout = layoutFor(plan);
+        context.bind(layout);
+        List<PhysicalNode> nodes = plan.nodes();
         // C9：按物理拓扑序逐节点执行，每个节点只写入计划分配的唯一输出槽（slot:N）。
-        for (int index = 0; index < plan.nodes().size(); index++) {
-            executeNode(plan.nodes().get(index), context);
+        for (int index = 0; index < nodes.size(); index++) {
+            executeNode(nodes.get(index), context, layout, index, retainDiagnostics);
             if (!retainIntermediateValues) {
                 for (PhysicalPlan.SlotRelease release : plan.releasesAfterNode(index)) {
-                    context.releaseIntermediate(release.slot(), release.physicalNodeId());
+                    context.releaseIntermediate(
+                            layout.slotOrdinal(release.slot()),
+                            layout.nodeOrdinal(release.physicalNodeId()));
                 }
             }
         }
-        Map<String, ValueHandle> outputs = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : plan.outputFeatureSlots().entrySet()) {
-            ValueHandle value = context.resultSlots().get(entry.getValue());
-            if (value == null) {
-                throw new IllegalStateException("Output slot not produced: " + entry.getValue());
-            }
-            outputs.put(entry.getKey(), value);
-        }
-        // C9：输出特征只从物理计划声明的一一对应根槽位收集。
-        return new ExecutionResult(
-                outputs, context.nodeStates(), context.runtimeCache().snapshot());
+        return collectOutputs(layout, context, retainDiagnostics);
     }
 
-    private void executeNode(PhysicalNode node, ExecutionContext context) {
-        RuntimeNodeState state = context.state(node.physicalNodeId());
+    private RuntimePlanLayout layoutFor(PhysicalPlan plan) {
+        RuntimePlanLayout layout = runtimeLayout;
+        if (layout == null || layout.plan() != plan) {
+            layout = RuntimePlanLayout.of(plan);
+            runtimeLayout = layout;
+        }
+        return layout;
+    }
+
+    /** C9：输出特征只从物理计划声明的一一对应根槽位收集。 */
+    private static ExecutionResult collectOutputs(
+            RuntimePlanLayout layout, ExecutionContext context, boolean retainDiagnostics) {
+        String[] featureNames = layout.outputFeatureNames();
+        int[] featureSlots = layout.outputFeatureSlots();
+        ValueHandle[] values = new ValueHandle[featureNames.length];
+        for (int index = 0; index < featureNames.length; index++) {
+            ValueHandle value = context.slotValue(featureSlots[index]);
+            if (value == null) {
+                throw new IllegalStateException("Output slot not produced: " + layout.slotName(featureSlots[index]));
+            }
+            values[index] = value;
+        }
+        if (!retainDiagnostics) return ExecutionResult.withoutDiagnostics(featureNames, values, context);
+        Map<String, ValueHandle> outputs = new LinkedHashMap<String, ValueHandle>();
+        for (int index = 0; index < featureNames.length; index++) {
+            outputs.put(featureNames[index], values[index]);
+        }
+        return new ExecutionResult(outputs, context.nodeStates(), context.runtimeCache().snapshot());
+    }
+
+    private void executeNode(
+            PhysicalNode node,
+            ExecutionContext context,
+            RuntimePlanLayout layout,
+            int nodeOrdinal,
+            boolean retainDiagnostics) {
+        RuntimeNodeState state = context.nodeState(nodeOrdinal, node.physicalNodeId());
         // 状态更新与槽写入包在同一异常边界内：成功节点一定有结果，失败节点保留耗时和原始异常。
         state.markRunning();
-        long start = System.nanoTime();
+        long start = retainDiagnostics ? System.nanoTime() : 0L;
         try {
             ValueHandle result = switch (node.executorType()) {
                 case SOURCE_BINDING -> executeSource(node, context);
@@ -97,18 +144,18 @@ public final class DagRuntime {
                         node.executorConfig().get("value"),
                         node.logicalValueShape(),
                         context.executionId());
-                case FEATURE_OUTPUT -> executeFeatureOutput(node, context, state);
-                case GENERIC_OPERATOR -> executeGenericOperator(node, context, state);
+                case FEATURE_OUTPUT -> executeFeatureOutput(node, context, state, layout.inputSlots(nodeOrdinal));
+                case GENERIC_OPERATOR -> executeGenericOperator(node, context, state, layout.inputSlots(nodeOrdinal));
                 case SPECIALIZED -> {
                     state.recordOperatorInvocation(
                             OperatorInvocationKind.SPECIALIZED, null, 0);
                     yield executorRegistry.require(node.executorId()).execute(node, context, state);
                 }
             };
-            context.resultSlots().put(node.outputSlot(), result);
-            state.markSuccess(result, System.nanoTime() - start);
+            context.putSlot(layout.outputSlot(nodeOrdinal), result);
+            state.markSuccess(result, retainDiagnostics ? System.nanoTime() - start : 0L);
         } catch (RuntimeException error) {
-            state.markFailure(error, System.nanoTime() - start);
+            state.markFailure(error, retainDiagnostics ? System.nanoTime() - start : 0L);
             throw error;
         }
     }
@@ -151,8 +198,10 @@ public final class DagRuntime {
                         candidateIndex < context.candidates().size();
                         candidateIndex++) {
                     Map<String, Object> candidate = context.candidates().get(candidateIndex);
-                    if (candidate.containsKey(featureName)) {
-                        values.add(candidate.get(featureName));
+                    // 正常非空输入只查找一次；仅 null 时再区分「显式 null」与「缺失」。
+                    Object value = candidate.get(featureName);
+                    if (value != null || candidate.containsKey(featureName)) {
+                        values.add(value);
                     } else if (defaultValue != null) {
                         values.add(defaultValue);
                     } else {
@@ -173,8 +222,9 @@ public final class DagRuntime {
                     groupIndex < context.onlineSharedGroups().size();
                     groupIndex++) {
                 Map<String, Object> group = context.onlineSharedGroups().get(groupIndex);
-                if (group.containsKey(featureName)) {
-                    values.add(group.get(featureName));
+                Object value = group.get(featureName);
+                if (value != null || group.containsKey(featureName)) {
+                    values.add(value);
                 } else if (defaultValue != null) {
                     values.add(defaultValue);
                 } else {
@@ -194,8 +244,9 @@ public final class DagRuntime {
             List<Object> values = new ArrayList<>(context.candidateCount());
             for (int index = 0; index < context.candidates().size(); index++) {
                 Map<String, Object> candidate = context.candidates().get(index);
-                if (candidate.containsKey(featureName)) {
-                    values.add(candidate.get(featureName));
+                Object value = candidate.get(featureName);
+                if (value != null || candidate.containsKey(featureName)) {
+                    values.add(value);
                 } else if (defaultValue != null) {
                     values.add(defaultValue);
                 } else {
@@ -203,13 +254,11 @@ public final class DagRuntime {
                             "Missing source feature " + featureName + " for candidate " + index);
                 }
             }
-            return new CandidateVectorValue(values);
+            return CandidateVectorValue.owned(values);
         }
-        if (context.sharedSourceValues().containsKey(featureName)) {
-            return wrapSource(
-                    context.sharedSourceValues().get(featureName),
-                    node.logicalValueShape(),
-                    context);
+        Object sharedSourceValue = context.sharedSourceValues().get(featureName);
+        if (sharedSourceValue != null || context.sharedSourceValues().containsKey(featureName)) {
+            return wrapSource(sharedSourceValue, node.logicalValueShape(), context);
         }
         if (defaultValue == null) {
             throw new IllegalArgumentException("Missing source feature: " + featureName);
@@ -235,22 +284,25 @@ public final class DagRuntime {
             }
             filled.set(index, defaultValue);
         }
-        // CandidateVectorValue 保留既有防御复制；正常列不再先按行收集一份中间 List。
+        // filled 与解码列都是引擎独占且不再修改的列表，直接移交句柄，不再防御复制。
         @SuppressWarnings("unchecked")
         List<Object> values = filled != null ? filled
                 : column == null ? List.of() : (List<Object>) column;
-        return new CandidateVectorValue(values);
+        return CandidateVectorValue.owned(values);
     }
 
     /** 通用算子执行（运行时）：从输入槽取出已算好的值句柄，交给算子注册表求值。 */
     private ValueHandle executeGenericOperator(
             PhysicalNode node,
             ExecutionContext context,
-            RuntimeNodeState state) {
+            RuntimeNodeState state,
+            int[] inputSlotOrdinals) {
         String operatorName = String.valueOf(node.executorConfig().get("operatorName"));
-        List<ValueHandle> inputHandles = node.inputSlots().stream()
-                .map(slot -> requireSlot(context, slot))
-                .toList();
+        List<String> inputSlots = node.inputSlots();
+        List<ValueHandle> inputHandles = new ArrayList<ValueHandle>(inputSlotOrdinals.length);
+        for (int index = 0; index < inputSlotOrdinals.length; index++) {
+            inputHandles.add(requireSlot(context, inputSlotOrdinals[index], inputSlots.get(index)));
+        }
         return vectorizedApply(
                 node, operatorName, inputHandles, context, state, node.logicalValueShape());
     }
@@ -327,7 +379,7 @@ public final class DagRuntime {
                 node, operatorName, inputHandles, domain, context, state);
         // C9：result 为本次求值独占列表或 Kernel 已冻结的列表；运行时只读共享，避免二次拷贝。
         return switch (domain) {
-            case SINGLE_CANDIDATE -> new CandidateVectorValue(result);
+            case SINGLE_CANDIDATE -> CandidateVectorValue.owned(result);
             case OFFLINE_ROW -> OfflineBatchValue.owned(result, logicalValueShape);
             case ONLINE_REQUEST -> RequestBatchValue.owned(result, logicalValueShape);
             case ONLINE_CANDIDATE -> CandidateBatchValue.owned(result, logicalValueShape);
@@ -768,11 +820,12 @@ public final class DagRuntime {
         ONLINE_CANDIDATE
     }
 
-    private static ValueHandle requireSingleInput(PhysicalNode node, ExecutionContext context) {
+    private static ValueHandle requireSingleInput(
+            PhysicalNode node, ExecutionContext context, int[] inputSlotOrdinals) {
         if (node.inputSlots().size() != 1) {
             throw new IllegalStateException("Feature output must have exactly one input");
         }
-        return requireSlot(context, node.inputSlots().get(0));
+        return requireSlot(context, inputSlotOrdinals[0], node.inputSlots().get(0));
     }
 
     /**
@@ -783,9 +836,10 @@ public final class DagRuntime {
     private static ValueHandle executeFeatureOutput(
             PhysicalNode node,
             ExecutionContext context,
-            RuntimeNodeState state) {
+            RuntimeNodeState state,
+            int[] inputSlotOrdinals) {
         ValueHandle value = applyFeatureDefault(
-                requireSingleInput(node, context),
+                requireSingleInput(node, context, inputSlotOrdinals),
                 String.valueOf(node.executorConfig().get("featureName")),
                 node.executorConfig().get("defaultValue"),
                 node.logicalValueShape(),
@@ -855,7 +909,7 @@ public final class DagRuntime {
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) replaced.values();
                 yield new DefaultApplication(
-                        new CandidateVectorValue(objectValues),
+                        CandidateVectorValue.owned(objectValues),
                         replaced.replacementCount());
             }
             case OfflineBatchValue batch -> {
@@ -1003,7 +1057,7 @@ public final class DagRuntime {
                 // CandidateVectorValue 的构造器本身已经会拷贝一次。
                 @SuppressWarnings("unchecked")
                 List<Object> objectValues = (List<Object>) widened;
-                yield new CandidateVectorValue(objectValues);
+                yield CandidateVectorValue.owned(objectValues);
             }
             case OfflineBatchValue batch -> {
                 List<?> widened = normalizeBatchValues(
@@ -1131,12 +1185,30 @@ public final class DagRuntime {
     }
 
     /**
+     * 计划不可变，校验结论只取决于计划内容和执行器注册表：同一计划在注册表未变化时不逐请求重复校验。
+     * 注册表只增不减，新增执行器不会让已校验的计划失效，因此按版本号判断即可；
+     * 校验失败不缓存，下一次调用仍会报错。
+     */
+    private void validatePlan(PhysicalPlan plan) {
+        int executorGeneration = executorRegistry.generation();
+        ValidatedPlan validated = validatedPlan;
+        if (validated != null
+                && validated.plan() == plan
+                && validated.executorGeneration() == executorGeneration) {
+            return;
+        }
+        executorRegistry.validate(plan);
+        validateExecutionStages(plan, plan.environment());
+        validatedPlan = new ValidatedPlan(plan, executorGeneration);
+    }
+
+    /**
      * C10 最小闭环：计划固化阶段与执行上下文一致性校验——
      * OFFLINE 计划只允许 OFFLINE_BATCH 阶段节点，ONLINE 计划只允许候选批/请求共享节点。
      */
-    private static void validateExecutionStages(PhysicalPlan plan, ExecutionContext context) {
+    private static void validateExecutionStages(PhysicalPlan plan, ExecutionEnvironment environment) {
         for (PhysicalNode node : plan.nodes()) {
-            if (context.environment() == ExecutionEnvironment.OFFLINE) {
+            if (environment == ExecutionEnvironment.OFFLINE) {
                 if (node.executionStage() != ExecutionStage.OFFLINE_BATCH) {
                     throw new IllegalArgumentException(
                             "Physical node " + node.physicalNodeId() + " has stage "
@@ -1151,8 +1223,8 @@ public final class DagRuntime {
         }
     }
 
-    private static ValueHandle requireSlot(ExecutionContext context, String slot) {
-        ValueHandle value = context.resultSlots().get(slot);
+    private static ValueHandle requireSlot(ExecutionContext context, int slotOrdinal, String slot) {
+        ValueHandle value = context.slotValue(slotOrdinal);
         if (value == null) throw new IllegalStateException("Input slot not available: " + slot);
         return value;
     }

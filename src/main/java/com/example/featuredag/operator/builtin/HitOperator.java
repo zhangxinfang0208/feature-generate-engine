@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -13,7 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** 按 key 集合过滤事件序列，保持源序列顺序并保留重复事件。 */
-public final class HitOperator extends AbstractBuiltinOperator {
+public final class HitOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     private static final String KEY_FIELD = "key";
 
     public HitOperator() {

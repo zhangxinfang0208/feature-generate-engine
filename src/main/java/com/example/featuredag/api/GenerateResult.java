@@ -36,10 +36,10 @@ public final class GenerateResult {
             boolean ownedEncodedValues) {
         this.executionId = Objects.requireNonNull(executionId, "executionId");
         if (ownedEncodedValues) {
-            this.featureValues = Collections.unmodifiableMap(featureValues);
+            this.featureValues = FeatureValueCollections.unmodifiable(featureValues);
             for (int index = 0; index < candidateFeatureValues.size(); index++) {
                 candidateFeatureValues.set(index,
-                        Collections.unmodifiableMap(candidateFeatureValues.get(index)));
+                        FeatureValueCollections.unmodifiable(candidateFeatureValues.get(index)));
             }
             this.candidateFeatureValues = Collections.unmodifiableList(candidateFeatureValues);
         } else {

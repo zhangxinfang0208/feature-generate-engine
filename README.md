@@ -82,6 +82,15 @@ Batch 协议、缓存类型、输出编码错误以及 `Error` 不会被衍生 `
 数值极值和四则运算的序列契约见
 [`docs/architecture/numeric-sequence-operators.md`](docs/architecture/numeric-sequence-operators.md)。
 
+## 输出与性能约定
+
+- `generate()`、`generateBatch()` 返回的每一行都是不可修改的 `Map<String, List<?>>`，键按输出声明顺序排列。
+  同一类输出行共用一份键布局，具体实现类由引擎决定；调用方只依赖 `Map` 接口，不要强转成 `LinkedHashMap`。
+- 算子产出的不可变序列在值句柄和输出边界直接复用，不再逐层复制。输出始终与调用方的输入容器脱离：
+  `borrowed(...)` 请求（包括 `OnlineRequestGroup.borrowed(...)`）返回后可以继续复用输入容器，已返回的结果不受影响。
+- 未配置 `RuntimeObserver` 和 `RuntimeTraceObserver` 时，请求不记录逐节点耗时，也不做节点状态快照；失败归因不受影响。
+  低层 `DagRuntime.execute(...)` 默认仍保留这些诊断。
+
 ## 目录结构
 
 ```text

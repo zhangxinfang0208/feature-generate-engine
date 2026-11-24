@@ -7,16 +7,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import com.example.featuredag.runtime.FrozenList;
+
 final class FeatureValueCollections {
     private FeatureValueCollections() {}
 
     static List<?> immutableList(List<?> values) {
         Objects.requireNonNull(values, "feature values");
-        return Collections.unmodifiableList(new ArrayList<>(values));
+        return FrozenList.copyOf(values);
     }
 
     static List<?> singleton(Object value) {
         return Collections.singletonList(value);
+    }
+
+    /** 引擎自产的不可变输出 Map 原样返回，其余容器包一层只读视图。 */
+    static Map<String, List<?>> unmodifiable(Map<String, List<?>> values) {
+        return values instanceof SharedKeyOutputMap ? values : Collections.unmodifiableMap(values);
     }
 
     /** 以默认负载因子容纳已知元素数量，避免输出组装时反复扩容。 */

@@ -5,6 +5,7 @@ import com.example.featuredag.definition.EntityScope;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.logical.LogicalDag;
 import com.example.featuredag.logical.SourceNode;
+import com.example.featuredag.runtime.FrozenList;
 import com.example.featuredag.runtime.SequenceBlock;
 
 import java.math.BigDecimal;
@@ -105,7 +106,7 @@ final class FeatureInputDecoder {
             if (source.shape() != ValueShape.SEQUENCE && source.shape() != ValueShape.CANDIDATE_VECTOR
                     && source.dataType() != DataType.BIGINT) {
                 // 普通标量列已是运行时载体；数值规范化仍在既有 FEATURE_OUTPUT 边界完成。
-                decoded.put(source.sourceBinding(), Collections.unmodifiableList(column));
+                decoded.put(source.sourceBinding(), FrozenList.wrap(column));
                 continue;
             }
             List<Object> converted = null;
@@ -121,8 +122,7 @@ final class FeatureInputDecoder {
                 if (converted == null && value != original) converted = new ArrayList<>(column);
                 if (converted != null) converted.set(index, value);
             }
-            decoded.put(source.sourceBinding(), Collections.unmodifiableList(
-                    converted == null ? column : converted));
+            decoded.put(source.sourceBinding(), FrozenList.wrap(converted == null ? column : converted));
         }
         return decoded;
     }
@@ -140,11 +140,17 @@ final class FeatureInputDecoder {
                 ? decodeBigintValue(source.sourceBinding(), value, candidateIndex) : value;
     }
 
-    List<Map<String, Object>> decodeOnlineSharedBatch(
+    /**
+     * C1：分组批的只读解码。OnlineRequestGroup 的输入在构造时已冻结或显式借用，
+     * 这里只加只读视图，不再复制特征 Map 与序列；解码结果的所有权交给 ExecutionContext。
+     */
+    List<Map<String, Object>> decodeOnlineSharedBatchReadOnly(
             List<OnlineRequestGroup> groups) {
-        return groups.stream()
-                .map(group -> decodeOnlineShared(group.sharedValues()))
-                .toList();
+        List<Map<String, Object>> decoded = new ArrayList<>(groups.size());
+        for (OnlineRequestGroup group : groups) {
+            decoded.add(decodeOnlineSharedReadOnly(group.sharedValues()));
+        }
+        return decoded;
     }
 
     List<Map<String, Object>> decodeOnlineCandidates(
@@ -152,11 +158,13 @@ final class FeatureInputDecoder {
         return externalCandidates.stream().map(values -> decode(values, itemSources)).toList();
     }
 
-    List<List<Map<String, Object>>> decodeOnlineCandidateBatch(
+    List<List<Map<String, Object>>> decodeOnlineCandidateBatchReadOnly(
             List<OnlineRequestGroup> groups) {
-        return groups.stream()
-                .map(group -> decodeOnlineCandidates(group.candidates()))
-                .toList();
+        List<List<Map<String, Object>>> decoded = new ArrayList<>(groups.size());
+        for (OnlineRequestGroup group : groups) {
+            decoded.add(decodeOnlineCandidatesReadOnly(group.candidates()));
+        }
+        return decoded;
     }
 
     private static Map<String, Object> decode(
@@ -196,14 +204,14 @@ final class FeatureInputDecoder {
                 return decodeBigintValues(source.sourceBinding(), values, readOnlyInputs);
             }
             // 请求已快照冻结或显式只读借用（C1/C6），只加只读视图，不再复制序列。
-            return readOnlyInputs ? Collections.unmodifiableList(values) : FeatureValueCollections.immutableList(values);
+            return readOnlyInputs ? FrozenList.wrap(values) : FrozenList.copyOf(values);
         }
         if (source.shape() == ValueShape.CANDIDATE_VECTOR) {
             // 向量保持全部元素；标量则遵循公共 API 的单元素 List 契约，只读取首项。
             if (source.dataType() == DataType.BIGINT) {
                 return decodeBigintValues(source.sourceBinding(), values, readOnlyInputs);
             }
-            return readOnlyInputs ? Collections.unmodifiableList(values) : FeatureValueCollections.immutableList(values);
+            return readOnlyInputs ? FrozenList.wrap(values) : FrozenList.copyOf(values);
         }
         if (values.isEmpty()) {
             throw new IllegalArgumentException(
@@ -228,9 +236,9 @@ final class FeatureInputDecoder {
             if (decoded != null) decoded.add(converted);
         }
         // 已是 Long 的稳定序列只校验，不分配引用数组；确需转换时才写时复制（C6）。
-        if (decoded == null) return Collections.unmodifiableList(values);
+        if (decoded == null) return FrozenList.wrap(values);
         // 此列表为解码器独占，冻结后直接交给运行时，避免再复制一份引用数组。
-        return Collections.unmodifiableList(decoded);
+        return FrozenList.wrap(decoded);
     }
 
     private static Long decodeBigintValue(String sourceBinding, Object value, int index) {

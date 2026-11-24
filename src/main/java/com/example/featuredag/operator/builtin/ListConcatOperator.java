@@ -2,6 +2,7 @@ package com.example.featuredag.operator.builtin;
 
 import com.example.featuredag.definition.DataType;
 import com.example.featuredag.definition.ValueShape;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInference;
 import com.example.featuredag.operator.OperatorInputMetadata;
 
@@ -10,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /** 将第二个序列的首元素广播到第一个序列，并逐元素拼接为字符串序列。 */
-public final class ListConcatOperator extends AbstractBuiltinOperator {
+public final class ListConcatOperator extends AbstractBuiltinOperator implements BorrowedArgumentsKernel {
     public ListConcatOperator() {
         super("list_concat", 2, 3, true, true);
     }

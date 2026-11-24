@@ -4,6 +4,7 @@ import com.example.featuredag.definition.DataType;
 import com.example.featuredag.operator.BatchOperatorCall;
 import com.example.featuredag.operator.BatchOperatorResult;
 import com.example.featuredag.operator.BatchOperatorResultBuilder;
+import com.example.featuredag.operator.BorrowedArgumentsKernel;
 import com.example.featuredag.operator.OperatorInputMetadata;
 import com.example.featuredag.definition.ValueShape;
 import com.example.featuredag.operator.OperatorInference;
@@ -18,7 +19,7 @@ import java.util.Objects;
 
 /** 返回目标值在序列中的全部逻辑下标，未命中时返回不可变空列表。 */
 public final class FindIndicesOperator extends AbstractBuiltinOperator
-        implements RecoverableBatchOperatorKernel {
+        implements BorrowedArgumentsKernel, RecoverableBatchOperatorKernel {
     private static final Map<Object, List<Integer>> UNINDEXED = Collections.emptyMap();
 
     public FindIndicesOperator() {
@@ -39,27 +40,26 @@ public final class FindIndicesOperator extends AbstractBuiltinOperator
     public BatchOperatorResult evaluateBatch(BatchOperatorCall call) {
         BatchOperatorResultBuilder result = new BatchOperatorResultBuilder(call.rowCount());
         // C10：算法选择留在 Kernel 内；首次查询直接扫描，同组同一序列再次出现才建索引。
-        // 独立序列不支付全量索引成本；所有请求状态仅保存在本次调用的局部 Map 中。
-        Map<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>> indexes =
-                new LinkedHashMap<OperatorSupport.IdentityBatchKey, Map<Object, List<Integer>>>();
+        // 独立序列不支付全量索引成本；所有请求状态仅保存在本次调用的局部缓存中，命中时不分配。
+        OperatorSupport.IdentityBatchCache<Object> indexes = new OperatorSupport.IdentityBatchCache<Object>();
         for (int rowIndex = 0; rowIndex < call.rowCount(); rowIndex++) {
             Object sequence = call.arguments().get(0).valueAt(rowIndex);
             Object target = call.arguments().get(1).valueAt(rowIndex);
             int groupIndex = call.layout().groupIndexAt(rowIndex);
             try {
-                OperatorSupport.IdentityBatchKey key = OperatorSupport.identityBatchKey(
-                        groupIndex, sequence);
-                Map<Object, List<Integer>> index = indexes.get(key);
-                if (index == null) {
+                Object cached = indexes.get(groupIndex, sequence);
+                if (cached == null) {
                     List<Integer> positions = find(sequence, target);
-                    indexes.put(key, UNINDEXED);
+                    indexes.put(groupIndex, sequence, UNINDEXED);
                     result.addValue(positions);
                     continue;
                 }
-                if (index == UNINDEXED) {
-                    index = buildIndex(sequence);
-                    indexes.put(key, index);
+                if (cached == UNINDEXED) {
+                    cached = buildIndex(sequence);
+                    indexes.put(groupIndex, sequence, cached);
                 }
+                @SuppressWarnings("unchecked")
+                Map<Object, List<Integer>> index = (Map<Object, List<Integer>>) cached;
                 List<Integer> positions = index.get(target);
                 result.addValue(positions == null
                         ? Collections.<Integer>emptyList()
